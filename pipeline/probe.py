@@ -52,7 +52,7 @@ def run():
                     session.get(t['warmup'], timeout=20, verify=verify)
                 r = session.request(t.get('method', 'GET'), t['url'], data=t.get('data'),
                                     json=t.get('json'), headers=t.get('headers'),
-                                    timeout=45, verify=verify)
+                                    timeout=t.get('timeout', 45), verify=verify)
                 raw = r.content
                 meta.update(status=r.status_code, final_url=r.url, size=len(raw),
                             content_type=r.headers.get('content-type'),
