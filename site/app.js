@@ -225,13 +225,19 @@
     if (!el || !S.summary) return;
     const L = S.live;
     let cls = '', txt = '';
+    const now = new Date(Date.now() + 8 * 3600e3);
+    const wd = now.getUTCDay(), hm = now.getUTCHours() * 100 + now.getUTCMinutes();
     if (L && L.open) {
       cls = 'open';
       txt = `盤中 · ${L.at ? new Date(L.at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Taipei' }) : ''} 更新`;
     } else if (S.summary.asof === twToday()) {
       txt = `收盤 · ${fmt.d(S.summary.asof)}`;
-    } else {
+    } else if (wd === 0 || wd === 6) {
       txt = `休市 · 資料 ${fmt.d(S.summary.asof)}`;
+    } else if (hm < 900) {
+      txt = `開盤前 · 資料 ${fmt.d(S.summary.asof)}`;
+    } else {
+      txt = `資料 ${fmt.d(S.summary.asof)}`;
     }
     el.className = 'mkt ' + cls;
     el.innerHTML = `<i></i><span>${txt}</span>`;
@@ -271,6 +277,7 @@
         <div class="chg num ${dirCls(ch)}">${arrow(ch)} ${fmt.n(Math.abs(ch ?? NaN), 2)}　${fmt.pct(pc)}</div>
         ${sparkSVG(m.spark, 116, 42, ch)}
         <div class="note" style="grid-column:1/-1">${above == null ? '' : above ? `在季線（${fmt.n(m.ma60, 0)}）之上` : `跌破季線（${fmt.n(m.ma60, 0)}）`}${m.val ? ` · 成交 ${fmt.big(m.val)}元` : ''}</div>
+        ${m.insti ? `<div class="note" style="grid-column:1/-1">${fmt.d(m.insti.date)} 三大法人：${[['外資', m.insti.f], ['投信', m.insti.t], ['自營商', m.insti.d]].map(([k, x]) => `${k} <span class="num ${dirCls(x)}">${x > 0 ? '+' : ''}${fmt.big(x)}</span>`).join('、')}</div>` : ''}
       </section>`;
     }
     html += installCard();
@@ -387,7 +394,8 @@
     if (!rows.length) { list.innerHTML = `<div class="empty">找不到符合的 ETF</div>`; return; }
     list.innerHTML = rows.slice(0, 400).map((r) => {
       const qq = quote(r);
-      return `<button class="lrow" data-code="${r.c}"><span class="nm"><b>${esc(r.n)}</b><span class="num">${r.c}</span> · ${esc(catName(r.k))}${isNum(r.y) && r.y > 0 ? ` · 殖利率 ${r.y.toFixed(1)}%` : ''}</span>${stanceTag(r.st)}<span class="pxc"><div class="p num">${fmt.px(qq.px)}</div><div class="c num ${dirCls(qq.pc)}">${fmt.pct(qq.pc)}</div></span></button>`;
+      const extra = S.all.sort === 'yield' && isNum(r.y) ? ` · 殖利率 ${r.y.toFixed(2)}%` : S.all.sort === 'prem' && isNum(qq.prem) ? ` · ${qq.prem >= 0 ? '溢價' : '折價'} ${Math.abs(qq.prem).toFixed(2)}%` : S.all.sort === 'val' && isNum(r.val) ? ` · ${fmt.big(r.val)}元` : '';
+      return `<button class="lrow" data-code="${r.c}"><span class="nm"><b>${esc(r.n)}</b><span class="meta"><span class="num">${r.c}</span> · ${esc(catName(r.k))}${extra}</span></span>${stanceTag(r.st)}<span class="pxc"><div class="p num">${fmt.px(qq.px)}</div><div class="c num ${dirCls(qq.pc)}">${fmt.pct(qq.pc)}</div></span></button>`;
     }).join('');
     $$('.lrow', list).forEach((b) => b.addEventListener('click', () => openDetail(b.dataset.code)));
   }

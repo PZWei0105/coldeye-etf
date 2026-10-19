@@ -13,6 +13,7 @@ FILES = {
     'divs': 'divs.json',            # {代號: [[除息日, 每單位現金]]}
     'holders': 'holders.json',      # {代號: [[資料日, 人數, 單位數]]}
     'taiex': 'taiex.json',          # {d:[], c:[], val:[]}
+    'mflows': 'mflows.json',        # {yyyymmdd: {f, t, d}} 集中市場三大法人買賣超金額（元）
     'yields': 'yields.json',        # {yyyymmdd: {y10, y20}}
     'views': 'views.json.gz',       # {yyyymmdd: {代號: [stance, score, conf]}}
     'news': 'news.json',            # 最近的公告與新聞
@@ -22,7 +23,7 @@ FILES = {
 
 DEFAULTS = {
     'meta': {}, 'daily': {}, 'flows': {}, 'margin': {}, 'nav': {}, 'units': {}, 'divs': {},
-    'holders': {}, 'taiex': {'d': [], 'c': [], 'val': []}, 'yields': {}, 'views': {}, 'news': [],
+    'holders': {}, 'taiex': {'d': [], 'c': [], 'val': []}, 'mflows': {}, 'yields': {}, 'views': {}, 'news': [],
     'status': {}, 'backfill': {},
 }
 

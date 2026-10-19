@@ -254,28 +254,15 @@ def comp_premium(s, i, live=None):
 
 def comp_yield(s, i, hist_cache):
     d = s.dates[i]
-    divs_2y = [x for x in s.divs if x[0] <= d and x[0] > d - 20000]
-    if len(divs_2y) < 2:
+    n_div = sum(1 for x in s.divs if d - 20000 < x[0] <= d)
+    if n_div < 2 or not s.ttm[i]:
         return None
-    ttm = s.ttm_dividend(d)
-    if not ttm:
-        return None
-    y = ttm / s.raw_c[i] * 100
-    # 近兩年每日殖利率分佈（用當時的 TTM 配息 / 當時收盤）
-    key = (s.code, i)
-    if key not in hist_cache:
-        vals = []
-        for k in range(max(0, i - 500), i + 1, 5):
-            dk = s.dates[k]
-            t = s.ttm_dividend(dk)
-            if t:
-                vals.append(t / s.raw_c[k] * 100)
-        hist_cache[key] = vals
-    vals = hist_cache[key]
+    ttm, y = s.ttm[i], s.yld[i]
+    # 近兩年（約 500 個交易日）每 5 天取一個樣本，看今天的殖利率排在哪裡
+    vals = [s.yld[k] for k in range(max(0, i - 500), i + 1, 5) if s.yld[k]]
     if len(vals) < 40:
         return None
-    below = sum(1 for v in vals if v < y)
-    pctl = below / len(vals)
+    pctl = sum(1 for v in vals if v < y) / len(vals)
     if pctl >= 0.9:
         sc = 2
     elif pctl >= 0.7:
@@ -286,7 +273,7 @@ def comp_yield(s, i, hist_cache):
         sc = -1
     else:
         sc = 0
-    txt = (f'近 12 個月配息合計 {ttm:.2f} 元，以收盤價計殖利率 {y:.2f}%，'
+    txt = (f'近 12 個月配息合計 {ttm:.2f} 元，以收盤價計配息殖利率 {y:.2f}%，'
            f'位於近兩年的 {pctl * 100:.0f}% 分位（{"偏高＝相對便宜" if sc > 0 else "偏低＝相對貴" if sc < 0 else "中間"}）。')
     return {'key': 'yield', 'score': sc, 'text': txt, 'facts': {'ttm': ttm, 'yield': y, 'pctl': pctl},
             'src': 'div'}

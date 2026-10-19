@@ -4,7 +4,7 @@ import pathlib
 
 RAW = pathlib.Path('/tmp/claude-0/-home-claude/2b8d5b7a-3c06-5895-8bd9-d9ac5a2dd931/scratchpad/probe/raw')
 ROUTES = [
-    ('MI_INDEX', 'twse_mi_index_etf'), ('T86', 'twse_t86_etf'), ('MI_MARGN', 'twse_margin_etf'),
+    ('BFI82U', 'twse_bfi82u'), ('MI_INDEX', 'twse_mi_index_etf'), ('T86', 'twse_t86_etf'), ('MI_MARGN', 'twse_margin_etf'),
     ('FMTQIK', 'twse_fmtqik'), ('TWT48U', 'twse_twt48u'), ('TWT49U', 'twse_twt49u'),
     ('announcement/punish', 'twse_punish'), ('announcement/notice', 'twse_notice'),
     ('newsList', 'twse_news'), ('all_etf.txt', 'mis_all_etf'), ('getStockInfo', 'mis_quotes'),

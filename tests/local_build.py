@@ -99,6 +99,7 @@ def main():
     for d in days:
         y += rnd.gauss(0, 0.04)
         state['yields'][str(d2i(d))] = {'y10': round(y - 0.3, 2), 'y20': round(y, 2)}
+    state['mflows']['20261019'] = src.twse_market_flows(h, today)
     news = []
     for fn in (src.twse_news, src.cna_finance, src.fsc_news, src.cbc_news):
         news.extend(fn(h))

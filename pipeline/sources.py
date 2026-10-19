@@ -34,6 +34,7 @@ SOURCE_INFO = {
     'twse_div_pre': ('證交所 除權除息預告表', 'https://www.twse.com.tw/zh/announced/exright/twt48u.html'),
     'tpex_div': ('櫃買中心 除權除息計算結果表', 'https://www.tpex.org.tw/zh-tw/mainboard/trading/info/exright-daily.html'),
     'twse_market': ('證交所 市場成交資訊', 'https://www.twse.com.tw/zh/trading/historical/fmtqik.html'),
+    'twse_mflows': ('證交所 三大法人買賣金額統計', 'https://www.twse.com.tw/zh/trading/foreign/bfi82u.html'),
     'twse_risk': ('證交所 注意／處置股票', 'https://www.twse.com.tw/zh/announcement/punish.html'),
     'tpex_risk': ('櫃買中心 注意／處置股票', 'https://www.tpex.org.tw/zh-tw/announce/market/disposal.html'),
     'tdcc': ('集保結算所 集保戶股權分散表', 'https://www.tdcc.com.tw/portal/zh/smWeb/qryStock'),
@@ -142,6 +143,29 @@ def twse_market_month(http, year, month):
 
 
 # ---------------------------------------------------------------- 籌碼
+
+def twse_market_flows(http, d: dt.date):
+    """BFI82U：集中市場三大法人買賣金額（元）。"""
+    js = http.json(f'{TWSE}/fund/BFI82U?type=day&dayDate={_ymd(d)}&response=json')
+    if not _ok(js):
+        return None
+    out = {'f': 0.0, 't': 0.0, 'd': 0.0}
+    for t in tables_of(js):
+        f = t['fields']
+        iname, inet = find_col(f, '單位名稱'), find_col(f, '買賣差額')
+        if iname is None or inet is None:
+            continue
+        for row in t['data']:
+            name = str(row[iname])
+            v = num(row[inet]) or 0.0
+            if name.startswith('外資'):
+                out['f'] += v
+            elif name.startswith('投信'):
+                out['t'] += v
+            elif name.startswith('自營商'):
+                out['d'] += v
+    return out
+
 
 def twse_flows(http, d: dt.date):
     js = http.json(f'{TWSE}/fund/T86?date={_ymd(d)}&selectType=0099P&response=json')

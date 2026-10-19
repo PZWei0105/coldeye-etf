@@ -283,6 +283,12 @@ def eod(state, log, weekly=False):
                 r = step(log, f'{key}:{d}', fetch_day, state, http, market, kind, d, when)
                 if r:
                     _mark_done(state, key, d)
+    for d in cand[-3:]:
+        if str(d) not in state['mflows']:
+            mf = step(log, f'mflows:{d}', src.twse_market_flows, http_tw, i2d(d))
+            if mf:
+                state['mflows'][str(d)] = mf
+                state.mark('twse_mflows', when=when)
     step(log, 'trickle_backfill', trickle_backfill, state, http_tw, http_tp, when, 24)
     mis = step(log, 'mis_etf', src.mis_etf, http_x) or {}
     if mis:
@@ -378,10 +384,16 @@ RELEVANT = ('ETF', '台股', '加權', '指數', '股市', '證交所', '櫃買'
             '油價', '黃金', '降息', '升息', '股價', '市值', '漲', '跌', '收盤', '上市', '櫃')
 
 
+TWSE_ADMIN = ('股份有限公司', '競價拍賣', '上市審議', '創新板', '承銷', '招募', '職得你來', '奪', '頭版', '研討會',
+              '講座', '徵才', '論壇', '頒獎', '得為融資融券', '開始上市買賣', '終止上市', '公開申購')
+
+
 def classify(item):
     t = item['t']
     if any(k in t for k in NOISE):
         return None
+    if item['src'] == 'twse_news' and 'ETF' not in t.upper() and any(k in t for k in TWSE_ADMIN):
+        return None   # 個別公司的上市、承銷行政公告與活動新聞，和 ETF 投資無關
     if item['kind'] == 'official':
         return 'official'
     if not any(k in t or k in (item.get('desc') or '') for k in RELEVANT):
@@ -613,6 +625,9 @@ def compute(state, extra, out_dir, now):
                   'ma60': r4(ma[1], 2) if ma else None,
                   'val': tx['val'][k] if tx.get('val') else None,
                   'spark': [r4(x, 1) for x in tx['c'][-60:]]}
+        mf_days = sorted(state['mflows'].keys())
+        if mf_days:
+            market['insti'] = {**state['mflows'][mf_days[-1]], 'date': int(mf_days[-1])}
     summary = {
         'generated': now.isoformat(timespec='seconds'), 'asof': asof_all, 'engine': engine.VERSION,
         'horizon': engine.HORIZON, 'market': market, 'etfs': summary_rows,

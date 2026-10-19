@@ -182,6 +182,21 @@ class Series:
         self.lo252 = ind.rolling_min(c, 252)
         self.vavg20 = ind.sma(self.v_adj, 20)
         self.valavg20 = ind.sma(self.val, 20)
+        # 每天的「近 12 個月配息合計」與配息殖利率（雙指標滑動，一次算完）
+        self.ttm = [0.0] * self.n
+        divs = [(d, c) for d, c in self.divs if c]
+        lo = hi = 0
+        acc = 0.0
+        for i, d in enumerate(self.dates):
+            start = d2i(i2d(d) - dt.timedelta(days=365))
+            while hi < len(divs) and divs[hi][0] <= d:
+                acc += divs[hi][1]
+                hi += 1
+            while lo < hi and divs[lo][0] <= start:
+                acc -= divs[lo][1]
+                lo += 1
+            self.ttm[i] = round(acc, 6)
+        self.yld = [(t / c * 100) if (t and c) else None for t, c in zip(self.ttm, self.raw_c)]
 
     # ---------- 查詢 ----------
     def idx(self, d: int):
