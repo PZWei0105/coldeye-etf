@@ -6,7 +6,7 @@ import math
 
 from .series import CATEGORY_NAMES, i2d
 
-VERSION = '1.0'
+VERSION = '1.1'
 
 WEIGHTS = {
     'trend': 0.30,     # 趨勢
@@ -25,6 +25,12 @@ COMPONENT_NAMES = {
     'trend': '趨勢', 'momentum': '動能', 'flows': '籌碼', 'regime': '大環境',
     'premium': '折溢價', 'yield': '殖利率位階',
 }
+
+# 部位訊號（給已持有或準備加碼的人看；不含個人部位資訊，個人化部分在 App 內用固定公式計算）
+CHANDELIER_N = 22      # 移動防守線：近 22 個交易日最高收盤
+CHANDELIER_K = 3.0     # 減 3 倍 ATR
+EXTENDED_ATR = 2.0     # 收盤高於月線超過 2 倍 ATR 視為漲多
+POS_NAMES = {'add': '可加碼', 'wait': '漲多分批', 'hold': '續抱', 'caution': '先不加碼', 'trim': '減碼'}
 
 
 def _sgn(x, band=0.0):
@@ -337,6 +343,49 @@ def _lvl(v, lab, s, i):
     return {'price': tick_round(v * s.raw_price_factor(i)), 'label': lab}
 
 
+# ---------------------------------------------------------------- 部位訊號
+
+def defense_line(s, i):
+    """移動防守線（吊燈式出場）：近 22 個交易日最高收盤 − 3 倍 ATR，回傳還原價。
+    上漲時跟著往上移、下跌時不動；收盤跌破代表這段上漲已經中斷。"""
+    atr = s.atr14[i]
+    if atr is None or i < CHANDELIER_N - 1:
+        return None
+    window = [x for x in s.c[i - CHANDELIER_N + 1:i + 1] if x is not None]
+    if not window:
+        return None
+    return max(window) - CHANDELIER_K * atr
+
+
+def position_signal(s, i, stance, premium, fkeys):
+    """部位訊號，依序判斷（先符合先決定）：
+    1. 觀點偏空且收盤跌破移動防守線 → trim 減碼
+    2. 觀點偏空、收盤跌破防守線、處置／注意中、或溢價超過警戒 → caution 先不加碼
+    3. 觀點偏多但漲多（RSI ≥ 75、爆量、或高於月線 2 倍 ATR）→ wait 漲多分批
+    4. 觀點偏多 → add 可加碼
+    5. 其他（中性）→ hold 續抱
+    """
+    fkeys = set(fkeys or ())
+    c = s.c[i]
+    dl = defense_line(s, i)
+    warn, _ = premium_band(s)
+    m20, atr = s.ma20[i], s.atr14[i]
+    ext = bool(m20 and atr and c > m20 + EXTENDED_ATR * atr)
+    hot = ext or 'overbought' in fkeys or 'volume_spike' in fkeys
+    below = dl is not None and c < dl
+    if stance < 0 and below:
+        key = 'trim'
+    elif stance < 0 or below or fkeys & {'disposal', 'notice'} or (premium is not None and premium > warn):
+        key = 'caution'
+    elif stance > 0 and hot:
+        key = 'wait'
+    elif stance > 0:
+        key = 'add'
+    else:
+        key = 'hold'
+    return {'key': key, 'dl': dl, 'hot': hot, 'ext': ext, 'below': below}
+
+
 # ---------------------------------------------------------------- 主函式
 
 def analyze(s, i, ctx, live=None, hist_cache=None, full=True):
@@ -400,7 +449,11 @@ def analyze(s, i, ctx, live=None, hist_cache=None, full=True):
     else:
         conf = None
 
-    result = {'stance': stance, 'score': round(score, 3), 'conf': conf, 'coverage': round(coverage, 2)}
+    prem_now = next((c['facts'].get('premium') for c in comps if c['key'] == 'premium'), None)
+    pos = position_signal(s, i, stance, prem_now, [f['key'] for f in flags])
+
+    result = {'stance': stance, 'score': round(score, 3), 'conf': conf, 'coverage': round(coverage, 2),
+              'ps': pos['key']}
     if not full:
         return result
 
@@ -446,6 +499,14 @@ def analyze(s, i, ctx, live=None, hist_cache=None, full=True):
         else:
             pull = {'price': tick_round((c + inval[0]) / 2 * s.raw_price_factor(i)), 'label': '現價與作廢線中間'}
     result['levels']['pullback'] = pull
+    f_raw = s.raw_price_factor(i)
+    result['position'] = {
+        'key': pos['key'], 'name': POS_NAMES[pos['key']],
+        'dl': tick_round(pos['dl'] * f_raw) if pos['dl'] is not None else None,
+        'hot': pos['hot'], 'ext': pos['ext'], 'below': pos['below'],
+        'rsi': round(s.rsi14[i], 1) if s.rsi14[i] is not None else None,
+        'ma20': tick_round(s.ma20[i] * f_raw) if s.ma20[i] else None,
+    }
     result['advice'] = advice(s, i, result, live)
     return result
 
@@ -468,7 +529,6 @@ def advice(s, i, r, live):
     p = prem['facts'].get('premium') if prem else None
     warn, _ = premium_band(s)
     inv = lv.get('invalid')
-    s1 = lv['support'][0] if lv['support'] else None
     r1 = lv['resistance'][0] if lv['resistance'] else None
     r2 = lv['resistance'][1] if len(lv['resistance']) > 1 else None
     tail = ''
@@ -478,14 +538,27 @@ def advice(s, i, r, live):
     def px(x):
         return fmt_px(x['price']) if x else '—'
 
+    pos = r.get('position') or {}
+    pk = pos.get('key')
+    dl = fmt_px(pos.get('dl')) if pos.get('dl') is not None else '—'
+    restricted = bool(flags & {'disposal', 'notice'})
+
     if stance > 0:
         if p is not None and p > warn:
             return {'action': '等溢價收斂再買',
                     'detail': f'方向偏多，但現在溢價 {p:.2f}%，等回到 {warn:.1f}% 以內再分批；收盤跌破 {px(inv)} 元觀點作廢。' + tail}
-        if 'overbought' in flags or 'volume_spike' in flags:
+        if restricted:
+            return {'action': '暫緩買進',
+                    'detail': '方向偏多，但被列為注意／處置標的，交易受限，先觀察；解除後再看。' + tail}
+        if pk == 'caution' and pos.get('below'):
+            return {'action': '偏多但急跌，先等站穩',
+                    'detail': f'價格跌破移動防守線 {dl} 元，等收盤站回再分批；收盤跌破 {px(inv)} 元觀點作廢。' + tail}
+        if pk == 'wait':
             pb = lv.get('pullback')
-            return {'action': '偏多，等拉回再分批',
-                    'detail': f'短線過熱，等拉回 {px(pb)} 元（{pb["label"] if pb else ""}）再分批；收盤跌破 {px(inv)} 元觀點作廢。' + tail}
+            why = '短線漲多' if pos.get('ext') and 'overbought' not in flags else '短線過熱'
+            return {'action': '偏多但漲多，分批進場',
+                    'detail': f'{why}，可先買預定金額的三分之一，其餘等拉回 {px(pb)} 元（{pb["label"] if pb else ""}）再補；'
+                              f'收盤跌破 {px(inv)} 元觀點作廢。' + tail}
         if conf is not None and conf >= 70:
             tgt = f'參考目標 {px(r1)}' + (f'／{px(r2)}' if r2 else '') + ' 元；' if r1 else ''
             return {'action': '可分批布局',
@@ -493,8 +566,16 @@ def advice(s, i, r, live):
         return {'action': '小部位試單',
                 'detail': f'訊號偏多但把握度普通，只用小部位；收盤跌破 {px(inv)} 元出場。' + tail}
     if stance < 0:
+        if pk == 'trim':
+            return {'action': '偏空，持有者依紀律減碼',
+                    'detail': f'觀點偏空，而且收盤已跌破移動防守線 {dl} 元；新資金先不進場，已持有者可依紀律減碼。'
+                              f'收盤站上 {px(inv)} 元觀點作廢。' + tail}
         return {'action': '暫不買進',
-                'detail': f'新資金先不進場；已持有者若收盤跌破 {px(s1)} 元可考慮減碼，收盤站上 {px(inv)} 元觀點作廢。' + tail}
+                'detail': f'新資金先不進場；已持有者若收盤跌破移動防守線 {dl} 元再考慮減碼，收盤站上 {px(inv)} 元觀點作廢。' + tail}
+    if pk == 'caution' and pos.get('below'):
+        return {'action': '觀望，先別加碼',
+                'detail': f'收盤跌破移動防守線 {dl} 元，前一段上漲已經中斷；收盤站上 {px(lv.get("turn_bull"))} 元轉偏多、'
+                          f'跌破 {px(lv.get("turn_bear"))} 元轉偏空。' + tail}
     return {'action': '觀望',
             'detail': f'收盤站上 {px(lv.get("turn_bull"))} 元轉偏多、跌破 {px(lv.get("turn_bear"))} 元轉偏空，條件出現前不急著動作。' + tail}
 

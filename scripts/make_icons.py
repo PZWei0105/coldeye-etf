@@ -1,18 +1,21 @@
-"""產生 App 圖示：一把刻度尺穿過一隻冷靜的眼睛，指針停在偏右的位置。"""
+"""產生 App 圖示：「冷眼瞳」——極夜藍底上的一圈刻度、分段的資產環與瞄準十字，和 App 首頁的資產環同一套語言。"""
+import math
 import pathlib
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 OUT = pathlib.Path(__file__).resolve().parent.parent / 'site' / 'icons'
-BG_TOP = (21, 29, 39)
-BG_BOT = (11, 15, 20)
-ICE = (143, 205, 228)
-ICE2 = (79, 176, 211)
-TICK = (88, 108, 130)
+BG_TOP = (12, 27, 52)
+BG_BOT = (5, 11, 22)
+GLACIER = (92, 225, 255)
+FROST = (234, 242, 255)
+TICK = (52, 76, 112)
+TICK_MAJOR = (116, 137, 170)
+SEGS = [((57, 135, 229), 0.42), ((144, 133, 233), 0.24), ((217, 89, 38), 0.16), ((92, 225, 255), 0.18)]
 
 
-def draw(size, maskable=False):
-    S = 1024
+def draw(size, maskable=False, scale=None):
+    S = 2048
     im = Image.new('RGB', (S, S), BG_BOT)
     px = im.load()
     for y in range(S):
@@ -20,35 +23,50 @@ def draw(size, maskable=False):
         c = tuple(int(BG_TOP[k] * (1 - t) + BG_BOT[k] * t) for k in range(3))
         for x in range(S):
             px[x, y] = c
+    # 冰藍光暈
+    glow = Image.new('L', (S, S), 0)
+    gd = ImageDraw.Draw(glow)
+    gd.ellipse([S * 0.18, S * 0.14, S * 0.82, S * 0.78], fill=120)
+    glow = glow.filter(ImageFilter.GaussianBlur(S * 0.09))
+    im = Image.composite(Image.new('RGB', (S, S), (20, 88, 120)), im, glow)
     d = ImageDraw.Draw(im)
-    scale = 0.74 if maskable else 1.0
-    cx, cy = S / 2, S / 2
+    if scale is None:
+        scale = 0.78 if maskable else 1.0
+    cx = cy = S / 2
 
-    def sx(v):
-        return cx + (v - S / 2) * scale
+    def P(r, a):
+        return (cx + r * scale * math.cos(a), cy + r * scale * math.sin(a))
 
-    def sy(v):
-        return cy + (v - S / 2) * scale
-
-    # 刻度尺
-    y0 = 512
-    d.line([(sx(150), sy(y0)), (sx(874), sy(y0))], fill=TICK, width=int(10 * scale))
-    for k in range(0, 21):
-        x = 150 + k * (724 / 20)
-        h = 46 if k % 5 == 0 else 22
-        col = ICE if k % 5 == 0 and k in (5, 15) else TICK
-        d.line([(sx(x), sy(y0 - h)), (sx(x), sy(y0))], fill=col, width=int((9 if k % 5 == 0 else 6) * scale))
-    # 眼睛外框（兩條弧線）
-    box = [sx(230), sy(300), sx(794), sy(724)]
-    d.arc(box, start=200, end=340, fill=ICE, width=int(22 * scale))
-    d.arc(box, start=20, end=160, fill=ICE, width=int(22 * scale))
-    # 虹膜與指針
-    r = 112
-    d.ellipse([sx(512 - r), sy(512 - r), sx(512 + r), sy(512 + r)], outline=ICE, width=int(20 * scale))
-    nx = 596
-    d.line([(sx(nx), sy(372)), (sx(nx), sy(612))], fill=ICE2, width=int(14 * scale))
-    # 游標三角形（像量尺上的讀數記號）
-    d.polygon([(sx(nx - 38), sy(318)), (sx(nx + 38), sy(318)), (sx(nx), sy(378))], fill=ICE2)
+    # 外圈刻度
+    for k in range(72):
+        a = k / 72 * math.tau - math.pi / 2
+        major = k % 6 == 0
+        r1, r2 = (700 if major else 728), 770
+        d.line([P(r1, a), P(r2, a)], fill=TICK_MAJOR if major else TICK, width=int((16 if major else 9) * scale))
+    # 北方指標
+    n = [P(800, -math.pi / 2 - 0.035), P(800, -math.pi / 2 + 0.035), P(740, -math.pi / 2)]
+    d.polygon(n, fill=GLACIER)
+    # 分段資產環
+    R = 560
+    w = int(118 * scale)
+    box = [cx - R * scale, cy - R * scale, cx + R * scale, cy + R * scale]
+    a0 = -90.0
+    gap = 4.0
+    for col, frac in SEGS:
+        ang = frac * 360
+        d.arc(box, start=a0 + gap / 2, end=a0 + ang - gap / 2, fill=col, width=w)
+        a0 += ang
+    # 內圈瞄準十字
+    for k in range(4):
+        a = k * math.pi / 2
+        d.line([P(440, a), P(370, a)], fill=TICK_MAJOR, width=int(18 * scale))
+    # 瞳孔
+    r = 150 * scale
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=FROST)
+    r2 = 72 * scale
+    d.ellipse([cx - r2, cy - r2, cx + r2, cy + r2], fill=BG_TOP)
+    hl = 30 * scale
+    d.ellipse([cx + 40 * scale - hl, cy - 70 * scale - hl, cx + 40 * scale + hl, cy - 70 * scale + hl], fill=GLACIER)
     if not maskable:
         mask = Image.new('L', (S, S), 0)
         ImageDraw.Draw(mask).rounded_rectangle([0, 0, S - 1, S - 1], radius=int(S * 0.22), fill=255)
@@ -62,7 +80,7 @@ def main():
     draw(512).save(OUT / 'icon-512.png', optimize=True)
     draw(512, maskable=True).save(OUT / 'icon-maskable-512.png', optimize=True)
     # iOS 會自己裁圓角，給滿版方形
-    draw(180, maskable=True).save(OUT / 'apple-touch-icon.png', optimize=True)
+    draw(180, maskable=True, scale=0.92).save(OUT / 'apple-touch-icon.png', optimize=True)
     draw(32).save(OUT / 'favicon-32.png', optimize=True)
 
 

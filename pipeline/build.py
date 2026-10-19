@@ -556,8 +556,8 @@ def compute(state, extra, out_dir, now):
         except Exception:  # noqa: BLE001
             traceback.print_exc()
     cats = {c: s.cat for c, s in series.items()}
-    sim_idx = backtest.similar_index(bt_rows, cats)
     ctx['cat_edge'] = backtest.category_edge(bt_rows, cats)
+    pos_cat = backtest.pos_stats_by_cat(bt_rows, cats)
     overall_edge = backtest.category_edge({'*': [r for rows in bt_rows.values() for r in rows]}, {'*': '*'}, min_n=1).get('*', {})
 
     def similar_of(cat, stance):
@@ -593,8 +593,9 @@ def compute(state, extra, out_dir, now):
             continue
         r['summary'] = narrative.summarize(s.name, r)
         r['similar'] = similar_of(s.cat, r['stance'])
-        views_today[code] = [r['stance'], r['score'], r['conf']]
-        write_detail(out_dir, s, r, state, bt_rows.get(code) or [], next_div.get(code), m, ctx)
+        views_today[code] = [r['stance'], r['score'], r['conf'], r['ps']]
+        write_detail(out_dir, s, r, state, bt_rows.get(code) or [], next_div.get(code), m, ctx,
+                     pos_cat.get(s.cat) or pos_cat.get('*'))
         summary_rows.append(summary_row(s, r, m, next_div.get(code), state))
 
     # 上市不久、資料不足的 ETF 也列出來（沒有觀點）
@@ -624,7 +625,12 @@ def compute(state, extra, out_dir, now):
 
     live_rows, pending = backtest.live_record(state['views'], series)
     track = make_track(bt_rows, live_rows, pending, cats, series)
+    track['pos'] = pos_cat
+    track['pos_adj'] = backtest.pos_adjusted(pos_cat)
+    live_all = [r for rows in live_rows.values() for r in rows]
+    track['live_pos'] = backtest.pos_stats(live_all) if live_all else None
     write_json(out_dir / 'track.json', track)
+    write_json(out_dir / 'divs.json', make_divs(state, series, summary_rows, now))
 
     summary_rows.sort(key=lambda x: x['c'])
     tx = state['taiex']
@@ -675,6 +681,9 @@ def summary_row(s, r, m, nd, state):
     u_last = units[max(units, key=int)] if units else None
     nav = (m or {}).get('est_nav') or s.nav[i]
     h = s.holders[-1] if s.holders else None
+    pos = r.get('position') or {}
+    yp = comps.get('yield', {}).get('facts', {}).get('pctl') if 'yield' in comps else None
+    pb = lv.get('pullback')
     return {
         'c': s.code, 'n': s.name, 'k': s.cat, 'm': s.market, 'd': s.dates[i],
         'p': raw[i], 'pc': r4((s.c[i] / s.c[i - 1] - 1) * 100, 2) if i else None,
@@ -690,10 +699,14 @@ def summary_row(s, r, m, nd, state):
         'aum': r4(u_last * nav, 0) if (u_last and nav) else None,
         'hd': h[1] if h else None, 'cov': r['coverage'],
         'sim': r.get('similar'),
+        # 部位訊號與個人化計算要用的價位（實際成交價格）
+        'ps': pos.get('key'), 'dl': pos.get('dl'), 'pb': pb['price'] if pb else None,
+        'atr': (r.get('risk') or {}).get('atr'), 'rsi': pos.get('rsi'), 'm20': pos.get('ma20'),
+        'yp': r4(yp, 3), 'hot': pos.get('hot'), 'blw': pos.get('below'), 'fx': s.foreign,
     }
 
 
-def write_detail(out_dir, s, r, state, bt, nd, m, ctx):
+def write_detail(out_dir, s, r, state, bt, nd, m, ctx, pos_bt=None):
     i = s.n - 1
     k0 = max(0, s.n - 260)
     f = s.raw_price_factor(i)
@@ -728,8 +741,23 @@ def write_detail(out_dir, s, r, state, bt, nd, m, ctx):
         'holders': s.holders[-26:],
         'units': sorted([[int(k), v] for k, v in (state['units'].get(s.code) or {}).items()])[-60:],
         'mis': m, 'bt': backtest.stats(bt), 'bt_calib': backtest.calibration(bt) if bt else None,
+        'pos_bt': pos_bt, 'pos_bt_self': backtest.pos_stats(bt) if bt else None,
     }
     write_json(out_dir / 'etf' / f'{s.code}.json', detail)
+
+
+def make_divs(state, series, rows, now):
+    """給 App 算持股配息用：每檔 ETF 近三年的除息紀錄（除息日、每單位現金）與分割紀錄。"""
+    today = d2i(now.date())
+    out = {}
+    for row in rows:
+        code = row['c']
+        s = series.get(code)
+        divs = [list(x) for x in (s.divs if s else state['divs'].get(code, [])) if x[0] >= today - 30000 and x[1]]
+        splits = [list(x) for x in (s.splits if s else [])]
+        if divs or splits:
+            out[code] = {'d': divs, 's': splits}
+    return out
 
 
 def make_track(bt_rows, live_rows, pending, cats, series):
@@ -746,15 +774,22 @@ def make_track(bt_rows, live_rows, pending, cats, series):
                          'base': st['base_up'], 'bull_n': st['bull']['n'], 'bear_hit': st['bear']['hit'],
                          'bear_n': st['bear']['n'], 'edge': r4((st['bull']['avg'] or 0) - (st['bear']['avg'] or 0), 4)})
     edge = backtest.category_edge(bt_rows, cats)
+    by_cat_stats = {k: backtest.stats(sorted(v)) for k, v in by_cat.items() if v}
+    live_by_cat = {}
+    for code, rows in live_rows.items():
+        live_by_cat.setdefault(cats.get(code), []).extend(rows)
+    live_cat_stats = {k: backtest.stats(sorted(v)) for k, v in live_by_cat.items() if v}
     return {
         'edge': edge,
         'method': {'step': backtest.STEP, 'horizon': engine.HORIZON,
                    'note': '每 5 個交易日取一次樣本，只用當天以前的資料；報酬為 20 個交易日後的含息報酬。'
                            '樣本期間彼此部分重疊，實際獨立樣本約為筆數的四分之一。'},
         'overall': backtest.stats(sorted(allrows)),
-        'calib': backtest.calibration(allrows),
-        'by_cat': {k: backtest.stats(sorted(v)) for k, v in by_cat.items() if v},
+        'overall_adj': backtest.adjusted_base(by_cat_stats),
+        'calib': backtest.calibration_by_cat(bt_rows, cats),
+        'by_cat': by_cat_stats,
         'live': backtest.stats(sorted(live_all)) if live_all else None,
+        'live_adj': backtest.adjusted_base(live_cat_stats) if live_cat_stats else None,
         'live_pending': pending,
         'per_etf': sorted(best, key=lambda x: x['c']),
     }
@@ -769,7 +804,13 @@ def sources_status(state):
 
 
 def make_news(state, pre, risk, series, now):
-    items = [x for x in state['news'] if x.get('d') and x['d'] >= d2i(now.date() - dt.timedelta(days=21))]
+    items = []
+    for x in state['news']:
+        if not x.get('d') or x['d'] < d2i(now.date() - dt.timedelta(days=21)):
+            continue
+        k = classify(x)   # 過濾規則更新後，舊資料也重新套用一次
+        if k:
+            items.append({**x, 'kind': k})
     names = {c: (s.name if hasattr(s, 'name') else s) for c, s in series.items()} or \
         {c: m.get('name', c) for c, m in state['meta'].items()}
     for it in items:
@@ -788,4 +829,6 @@ def rules_doc():
     return {
         'version': engine.VERSION, 'horizon': engine.HORIZON, 'weights': engine.WEIGHTS, 'weak_edge': engine.WEAK_EDGE,
         'names': engine.COMPONENT_NAMES, 'bull': engine.BULL_TH, 'bear': engine.BEAR_TH,
+        'position': {'chandelier_n': engine.CHANDELIER_N, 'chandelier_k': engine.CHANDELIER_K,
+                     'extended_atr': engine.EXTENDED_ATR, 'names': engine.POS_NAMES},
     }

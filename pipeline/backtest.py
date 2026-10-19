@@ -24,7 +24,7 @@ def run_series(s, ctx, start=None):
         f = s.fwd(i, engine.HORIZON)
         if f is None:
             continue
-        rows.append((s.dates[i], r['stance'], r['score'], r['conf'], f))
+        rows.append((s.dates[i], r['stance'], r['score'], r['conf'], f, r.get('ps')))
     return rows
 
 
@@ -70,6 +70,49 @@ def calibration(rows):
         out.append({'lo': lo, 'hi': hi, 'n': len(sel), 'n_bull': nb,
                     'hit': round(sum(hits) / len(hits), 4) if hits else None,
                     'base': round(base, 4) if base is not None else None})
+    return out
+
+
+def calibration_by_cat(rows_by_code, cats):
+    """同上，但「亂猜」的基準用每一筆訊號所屬類別的上漲比例計算，避免類別組成造成的假優勢。"""
+    cnt = {}
+    for code, rows in rows_by_code.items():
+        u = cnt.setdefault(cats.get(code), [0, 0])
+        for r in rows:
+            u[0] += 1 if r[4] > 0 else 0
+            u[1] += 1
+    upr = {c: u[0] / u[1] for c, u in cnt.items() if u[1]}
+    out = []
+    for lo, hi in BUCKETS:
+        n = nb = hits = 0
+        base = 0.0
+        for code, rows in rows_by_code.items():
+            u = upr.get(cats.get(code), 0.5)
+            for r in rows:
+                if r[1] == 0 or r[3] is None or not (lo <= r[3] < hi):
+                    continue
+                n += 1
+                nb += 1 if r[1] == 1 else 0
+                hits += 1 if (r[1] == 1 and r[4] > 0) or (r[1] == -1 and r[4] < 0) else 0
+                base += u if r[1] == 1 else 1 - u
+        out.append({'lo': lo, 'hi': hi, 'n': n, 'n_bull': nb,
+                    'hit': round(hits / n, 4) if n else None, 'base': round(base / n, 4) if n else None})
+    return out
+
+
+def adjusted_base(by_cat):
+    """「同類別基準」：依各類 ETF 的訊號次數，加權各類自己「一直看多／一直看空」的命中率。
+    直接拿全部 ETF 混在一起的基準比較，會因為類別組成（例如債券 ETF 偏多訊號少、上漲比例低）而高估規則的優勢。"""
+    out = {}
+    for key in ('bull', 'bear'):
+        num = den = 0.0
+        for st in by_cat.values():
+            if not st or not st[key]['n']:
+                continue
+            n = st[key]['n']
+            num += n * (st['base_up'] if key == 'bull' else 1 - st['base_up'])
+            den += n
+        out[key] = round(num / den, 4) if den else None
     return out
 
 
@@ -141,6 +184,57 @@ def category_edge(rows_by_code, cats, min_n=100):
     return out
 
 
+POS_KEYS = ('add', 'wait', 'hold', 'caution', 'trim')
+
+
+def _dist(xs):
+    """一組 20 日後報酬的分布：次數、平均、上漲比例、最差 10% 與中位數。"""
+    xs = sorted(xs)
+    n = len(xs)
+    if not n:
+        return {'n': 0}
+    return {'n': n, 'avg': round(sum(xs) / n, 5), 'up': round(sum(1 for x in xs if x > 0) / n, 4),
+            'p10': round(xs[int(0.1 * (n - 1))], 5), 'p50': round(xs[int(0.5 * (n - 1))], 5)}
+
+
+def pos_stats(rows):
+    """部位訊號出現之後 20 個交易日的報酬，和「任何一天」（all）的基準並列。"""
+    if not rows:
+        return None
+    out = {'all': _dist(r[4] for r in rows)}
+    for k in POS_KEYS:
+        out[k] = _dist(r[4] for r in rows if len(r) > 5 and r[5] == k)
+    return out
+
+
+def pos_stats_by_cat(rows_by_code, cats):
+    by = {}
+    for code, rows in rows_by_code.items():
+        by.setdefault(cats.get(code), []).extend(rows)
+    out = {k: pos_stats(v) for k, v in by.items() if v}
+    out['*'] = pos_stats([r for rows in rows_by_code.values() for r in rows])
+    return out
+
+
+def pos_adjusted(pos_cat):
+    """每種部位訊號的「同類別基準」：該訊號在各類別出現的次數，加權各類別任何一天的表現。"""
+    out = {}
+    for k in POS_KEYS:
+        n_tot = 0
+        up = avg = p10 = 0.0
+        for cat, st in pos_cat.items():
+            if cat == '*' or not st or not st[k].get('n'):
+                continue
+            n, a = st[k]['n'], st['all']
+            n_tot += n
+            up += n * a['up']
+            avg += n * a['avg']
+            p10 += n * a['p10']
+        out[k] = ({'up': round(up / n_tot, 4), 'avg': round(avg / n_tot, 5), 'p10': round(p10 / n_tot, 5)}
+                  if n_tot else None)
+    return out
+
+
 def live_record(views, series, max_days=400):
     """把上線後每天記下的觀點，用之後 20 個交易日的實際含息報酬驗證。"""
     rows_by_code = {}
@@ -158,5 +252,5 @@ def live_record(views, series, max_days=400):
             if f is None:
                 pending += 1
                 continue
-            rows_by_code.setdefault(code, []).append((d, v[0], v[1], v[2], f))
+            rows_by_code.setdefault(code, []).append((d, v[0], v[1], v[2], f, v[3] if len(v) > 3 else None))
     return rows_by_code, pending
