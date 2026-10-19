@@ -40,10 +40,23 @@ def summarize(name, r):
     for c in comps:
         if c['key'] == 'trend':
             continue
+        tag = (c.get('facts') or {}).get('tag')
         if c['score'] >= 1:
-            plus.append(_regime_phrase(c, True) if c['key'] == 'regime' else PLUS[c['key']])
+            if c['key'] == 'regime':
+                plus.append(_regime_phrase(c, True))
+            elif c['key'] == 'flows' and tag == 'margin_down':
+                plus.append('融資退場、籌碼變乾淨')
+            else:
+                plus.append(PLUS[c['key']])
         elif c['score'] <= -1:
-            minus.append(_regime_phrase(c, False) if c['key'] == 'regime' else MINUS[c['key']])
+            if c['key'] == 'regime':
+                minus.append(_regime_phrase(c, False))
+            elif c['key'] == 'flows' and tag == 'margin_up':
+                minus.append('融資逆勢增加')
+            elif c['key'] == 'flows':
+                minus.append('外資與投信賣超')
+            else:
+                minus.append(MINUS[c['key']])
     parts = [f'{name}目前{lead}。']
     if plus and minus:
         parts.append(f'加分的是{"、".join(plus)}；扣分的是{"、".join(minus)}。')

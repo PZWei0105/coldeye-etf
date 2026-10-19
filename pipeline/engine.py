@@ -18,6 +18,7 @@ WEIGHTS = {
 }
 BULL_TH = 0.5
 BEAR_TH = -0.5
+WEAK_EDGE = 0.02   # 類別回測命中率比基準高不到 2 個百分點，視為沒有優勢
 HORIZON = 20
 
 COMPONENT_NAMES = {
@@ -165,8 +166,9 @@ def comp_flows(s, i):
     if margin_note:
         txt += '；' + margin_note
     score = _clamp(f1 + f2, -2, 2)
+    tag = 'margin_up' if f2 < 0 and f1 >= 0 else 'margin_down' if f2 > 0 and f1 <= 0 else ('buy' if net >= 0 else 'sell')
     return {'key': 'flows', 'score': score, 'text': txt + '。',
-            'facts': {'net20': net, 'ratio': ratio, 'margin': mb_now}, 'src': 'flows'}
+            'facts': {'net20': net, 'ratio': ratio, 'margin': mb_now, 'tag': tag}, 'src': 'flows'}
 
 
 def comp_regime(s, i, ctx):
@@ -371,6 +373,15 @@ def analyze(s, i, ctx, live=None, hist_cache=None, full=True):
     for f in (ctx.get('extra_flags') or {}).get(s.code, []):
         flags.append(f)
 
+    edge = ((ctx.get('cat_edge') or {}).get(s.cat) or {}).get(stance) if stance != 0 else None
+    if edge and edge['delta'] < WEAK_EDGE:
+        cname = CATEGORY_NAMES.get(s.cat, s.cat)
+        word = '偏多' if stance > 0 else '偏空'
+        always = '一直看多' if stance > 0 else '一直看空'
+        flags.append({'key': 'weak_edge',
+                      'text': f'過去回測中，{cname} ETF 的{word}訊號沒有比{always}更準'
+                              f'（{edge["hit"] * 100:.0f}% 對 {edge["base"] * 100:.0f}%），這個觀點請當參考就好'})
+
     if stance != 0:
         agree = sum(1 for c in comps if c['score'] * stance > 0) / len(comps)
         strength = _clamp((abs(score) - 0.5) / 1.0, 0, 1)
@@ -383,6 +394,8 @@ def analyze(s, i, ctx, live=None, hist_cache=None, full=True):
             conf -= 10
         if any(f['key'] in ('disposal', 'notice') for f in flags):
             conf -= 10
+        if any(f['key'] == 'weak_edge' for f in flags):
+            conf -= 15
         conf = int(round(_clamp(conf, 20, 95)))
     else:
         conf = None

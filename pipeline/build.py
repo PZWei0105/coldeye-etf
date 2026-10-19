@@ -559,6 +559,17 @@ def compute(state, extra, out_dir, now):
             traceback.print_exc()
     cats = {c: s.cat for c, s in series.items()}
     sim_idx = backtest.similar_index(bt_rows, cats)
+    ctx['cat_edge'] = backtest.category_edge(bt_rows, cats)
+    overall_edge = backtest.category_edge({'*': [r for rows in bt_rows.values() for r in rows]}, {'*': '*'}, min_n=1).get('*', {})
+
+    def similar_of(cat, stance):
+        if stance == 0:
+            return None
+        e = (ctx['cat_edge'].get(cat) or {}).get(stance)
+        if e:
+            return {**e, 'scope': 'cat'}
+        e = overall_edge.get(stance)
+        return {**e, 'scope': 'all'} if e else None
 
     # ---- 今天的觀點
     views_today = {}
@@ -581,7 +592,7 @@ def compute(state, extra, out_dir, now):
         if r is None:
             continue
         r['summary'] = narrative.summarize(s.name, r)
-        r['similar'] = backtest.similar_lookup(sim_idx, s.cat, r['stance'], r['conf'])
+        r['similar'] = similar_of(s.cat, r['stance'])
         views_today[code] = [r['stance'], r['score'], r['conf']]
         write_detail(out_dir, s, r, state, bt_rows.get(code) or [], next_div.get(code), m, ctx)
         summary_rows.append(summary_row(s, r, m, next_div.get(code), state))
@@ -686,9 +697,10 @@ def write_detail(out_dir, s, r, state, bt, nd, m, ctx):
     # 過去 120 天每天的觀點（畫在圖上看規則的軌跡）
     hist = []
     cache = {}
+    ctx_hist = {k: v for k, v in ctx.items() if k != 'cat_edge'}
     for k in range(max(130, s.n - 120), s.n):
         try:
-            v = engine.analyze(s, k, ctx, live=None, hist_cache=cache, full=False)
+            v = engine.analyze(s, k, ctx_hist, live=None, hist_cache=cache, full=False)
         except Exception:  # noqa: BLE001
             v = None
         if v:
@@ -726,7 +738,9 @@ def make_track(bt_rows, live_rows, pending, cats, series):
             best.append({'c': code, 'n': series[code].name, 'k': cats.get(code), 'bull_hit': st['bull']['hit'],
                          'base': st['base_up'], 'bull_n': st['bull']['n'], 'bear_hit': st['bear']['hit'],
                          'bear_n': st['bear']['n'], 'edge': r4((st['bull']['avg'] or 0) - (st['bear']['avg'] or 0), 4)})
+    edge = backtest.category_edge(bt_rows, cats)
     return {
+        'edge': edge,
         'method': {'step': backtest.STEP, 'horizon': engine.HORIZON,
                    'note': '每 5 個交易日取一次樣本，只用當天以前的資料；報酬為 20 個交易日後的含息報酬。'
                            '樣本期間彼此部分重疊，實際獨立樣本約為筆數的四分之一。'},
@@ -765,6 +779,6 @@ def make_news(state, pre, risk, series, now):
 
 def rules_doc():
     return {
-        'version': engine.VERSION, 'horizon': engine.HORIZON, 'weights': engine.WEIGHTS,
+        'version': engine.VERSION, 'horizon': engine.HORIZON, 'weights': engine.WEIGHTS, 'weak_edge': engine.WEAK_EDGE,
         'names': engine.COMPONENT_NAMES, 'bull': engine.BULL_TH, 'bear': engine.BEAR_TH,
     }

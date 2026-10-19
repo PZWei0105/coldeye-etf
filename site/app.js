@@ -308,6 +308,7 @@
     }
     if (isNum(row.y)) chips.push(`<span class="chip">殖利率 <span class="num">${row.y.toFixed(2)}%</span></span>`);
     if (row.dv) chips.push(`<span class="chip ice">${ICON.cal.replace('<svg', '<svg width="12" height="12"')} ${fmt.d(row.dv.d)} 除息 ${row.dv.cash ? row.dv.cash.toFixed(3).replace(/0+$/, '').replace(/\.$/, '') + ' 元' : '金額待公告'}</span>`);
+    if ((row.fl || []).includes('weak_edge')) chips.push(`<span class="chip">此類規則回測無明顯優勢</span>`);
     if ((row.fl || []).includes('disposal')) chips.push(`<span class="chip warn">處置中</span>`);
     if ((row.fl || []).includes('notice')) chips.push(`<span class="chip warn">注意股</span>`);
     return `<button class="card wcard" data-code="${row.c}" aria-label="${esc(row.n)} 詳情">
@@ -465,9 +466,11 @@
       <div class="sec-h"><h2>信心分數準不準</h2><span class="aside">方向正確率－同條件亂猜</span></div>
       <section class="card pad vs">${calibRows(T.calib)}
       <p class="disclaim" style="margin:4px 0 0">每一列是該信心區間的方向正確率，減去「同樣多空比例下亂猜」的正確率。往右越多代表這個區間的判斷越有參考價值；次數少的區間看看就好。</p></section>`;
-    const cats = Object.entries(T.by_cat || {}).filter(([, s]) => s && s.n >= 30);
+    const cats = Object.entries(T.by_cat || {}).filter(([, s]) => s && s.n >= 30).sort((a, b) => b[1].n - a[1].n);
     if (cats.length) {
-      html += `<div class="sec-h"><h2>各類 ETF</h2></div><section class="card tbl-wrap"><table class="t"><thead><tr><th>類別</th><th class="r">看多命中</th><th class="r">基準</th><th class="r">看空命中</th><th class="r">樣本</th></tr></thead><tbody>${cats.map(([k, s]) => `<tr><td>${esc(catName(k))}</td><td class="r num">${pc(s.bull.hit)}</td><td class="r num muted">${pc(s.base_up)}</td><td class="r num">${pc(s.bear.hit)}</td><td class="r num muted">${fmt.n(s.n)}</td></tr>`).join('')}</tbody></table></section>`;
+      const dd = (hit, base, n) => (isNum(hit) && n >= 30 ? `<span class="num">${pc(hit)}</span><br><small style="color:${hit - base >= 0.02 ? 'var(--ice)' : 'var(--warn)'}">${hit - base >= 0 ? '+' : '−'}${Math.abs((hit - base) * 100).toFixed(1)} 點</small>` : '<span class="muted">—</span>');
+      html += `<div class="sec-h"><h2>各類 ETF</h2><span class="aside">差距＝命中率－基準</span></div><section class="card tbl-wrap"><table class="t"><thead><tr><th>類別</th><th class="r">看多命中</th><th class="r">看空命中</th><th class="r">一直看多</th></tr></thead><tbody>${cats.map(([k, s]) => `<tr><td>${esc(catName(k))}<br><small class="muted">${fmt.n(s.n)} 次</small></td><td class="r">${dd(s.bull.hit, s.base_up, s.bull.n)}</td><td class="r">${dd(s.bear.hit, 1 - s.base_up, s.bear.n)}</td><td class="r num muted">${pc(s.base_up)}</td></tr>`).join('')}</tbody></table></section>
+      <p class="disclaim">冰藍色代表規則比基準準 2 個百分點以上；黃色代表沒有明顯優勢，這類 ETF 的觀點會自動降低信心並標示提醒。</p>`;
     }
     html += `<div class="sec-h"><h2>上線後的實際紀錄</h2></div>`;
     if (T.live && T.live.n) {
@@ -551,7 +554,8 @@
       <p><b>折溢價（10%）</b>台股 ETF 溢價超過 0.5% 扣 1 分、超過 1% 扣 2 分；海外、債券、期貨型門檻放寬為 1% 與 2%。折價加 1 分。</p>
       <p><b>殖利率位階（15%）</b>近 12 個月配息除以股價，和自己近兩年的分布比：前 10% 加 2 分、前 30% 加 1 分，後 30% 扣 1 分、後 10% 扣 2 分。</p>
       <p><b>信心</b>＝35 ＋ 35×訊號強度 ＋ 30×面向一致的比例；短線過熱、超賣、資料不足、注意／處置會扣分。中性不給信心。</p>
-      <p><b>作廢線</b>偏多時取離現價至少 1 個 ATR 的第一個支撐，偏空時取至少 1 個 ATR 的第一個壓力。收盤跌破（站上）就代表觀點失效。</p>`;
+      <p><b>作廢線</b>偏多時取離現價至少 1 個 ATR 的第一個支撐，偏空時取至少 1 個 ATR 的第一個壓力。收盤跌破（站上）就代表觀點失效。</p>
+      <p><b>類別回測把關</b>如果某一類 ETF 在回測中，同方向訊號的命中率沒有比「一直看多／一直看空」高 2 個百分點以上，該類的觀點會標示「回測無明顯優勢」並把信心扣 15 分。</p>`;
   }
 
   function applyTheme() {
@@ -655,7 +659,7 @@
       <div class="verdict-top"><span class="big ${st.cls}">${V.stance > 0 ? ICON.up : V.stance < 0 ? ICON.down : ICON.flat}${st.t}</span>
         <span class="meta">${V.conf != null ? `<span>信心 <b>${V.conf}</b></span>` : '<span>訊號分歧，不給信心</span>'}<span>規則分數 <b>${V.score >= 0 ? '+' : ''}${V.score.toFixed(2)}</b></span></span></div>
       ${gaugeSVG(V.score, V.stance, true)}
-      ${sim ? `<div class="src">過去同類訊號（${sim.scope === 'cat' ? catName(row.k) + '、' : '所有 ETF、'}${V.stance > 0 ? '偏多' : '偏空'}、信心 ${bucketText(sim.bucket)}）20 日後方向正確 <b class="num">${(sim.hit * 100).toFixed(0)}%</b>，共 ${fmt.n(sim.n)} 次。</div>` : ''}
+      ${sim ? `<div class="src">回測中${sim.scope === 'cat' ? catName(row.k) + ' ETF' : '所有 ETF'}的${V.stance > 0 ? '偏多' : '偏空'}訊號，20 日後方向正確 <b class="num">${(sim.hit * 100).toFixed(0)}%</b>；同期${V.stance > 0 ? '一直看多' : '一直看空'}是 ${(sim.base * 100).toFixed(0)}%，${sim.delta >= 0 ? '高' : '低'} <b class="num">${Math.abs(sim.delta * 100).toFixed(1)}</b> 個百分點（${fmt.n(sim.n)} 次）。</div>` : ''}
       <div class="advice"><div class="act">${esc(V.advice.action)}</div><div class="det">${esc(V.advice.detail)}</div></div>
     </section>`;
     h += `<section class="card pad summary">${esc(V.summary)}</section>`;

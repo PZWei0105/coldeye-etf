@@ -83,11 +83,16 @@ def bucket_of(conf):
 
 
 def similar_index(rows_by_code, cats):
-    """{(類別, 立場, 信心區間): [命中數, 樣本數, 報酬加總]}，以及不分類別的版本。"""
+    """{(類別, 立場, 信心區間): [命中數, 樣本數, 報酬加總]}，以及每個類別「一直看多」的上漲比例。"""
     idx = {}
+    up = {}
     for code, rows in rows_by_code.items():
         cat = cats.get(code)
         for r in rows:
+            for key in (cat, '*'):
+                u = up.setdefault(key, [0, 0])
+                u[0] += 1 if r[4] > 0 else 0
+                u[1] += 1
             if r[1] == 0:
                 continue
             b = bucket_of(r[3])
@@ -97,6 +102,7 @@ def similar_index(rows_by_code, cats):
                 a[0] += hit
                 a[1] += 1
                 a[2] += r[4]
+    idx['_up'] = {k: v[0] / v[1] for k, v in up.items() if v[1]}
     return idx
 
 
@@ -107,9 +113,32 @@ def similar_lookup(idx, cat, stance, conf, min_n=40):
     for key, scope in (((cat, stance, b), 'cat'), (('*', stance, b), 'all')):
         a = idx.get(key)
         if a and a[1] >= min_n:
-            return {'hit': round(a[0] / a[1], 4), 'n': a[1], 'avg': round(a[2] / a[1], 5), 'scope': scope,
-                    'bucket': b}
+            up = idx['_up'].get(cat if scope == 'cat' else '*', 0.5)
+            base = up if stance > 0 else 1 - up
+            hit = a[0] / a[1]
+            return {'hit': round(hit, 4), 'n': a[1], 'avg': round(a[2] / a[1], 5), 'scope': scope,
+                    'bucket': b, 'base': round(base, 4), 'delta': round(hit - base, 4)}
     return None
+
+
+def category_edge(rows_by_code, cats, min_n=100):
+    """每類 ETF、每個方向，規則命中率減去「一直看多／一直看空」的基準。"""
+    by = {}
+    for code, rows in rows_by_code.items():
+        by.setdefault(cats.get(code), []).extend(rows)
+    out = {}
+    for cat, rows in by.items():
+        st = stats(rows)
+        if not st:
+            continue
+        e = {}
+        for stance, key, base in ((1, 'bull', st['base_up']), (-1, 'bear', 1 - st['base_up'])):
+            part = st[key]
+            if part['n'] >= min_n and part['hit'] is not None:
+                e[stance] = {'hit': part['hit'], 'base': round(base, 4), 'delta': round(part['hit'] - base, 4),
+                             'n': part['n']}
+        out[cat] = e
+    return out
 
 
 def live_record(views, series, max_days=400):
