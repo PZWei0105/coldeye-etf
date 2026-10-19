@@ -17,7 +17,7 @@ MINUS = {
 
 
 def _regime_phrase(comp, plus):
-    if comp['src'] == 'fred':
+    if comp['src'] == 'ust':
         return '美債殖利率下降' if plus else '美債殖利率上升'
     return '大盤環境偏多' if plus else '大盤環境轉弱'
 

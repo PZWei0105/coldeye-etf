@@ -48,11 +48,7 @@ def _clamp(x, lo, hi):
 def fmt_px(x):
     if x is None:
         return '—'
-    if x >= 100:
-        return f'{x:,.1f}'
-    if x >= 10:
-        return f'{x:,.2f}'
-    return f'{x:,.3f}'
+    return f'{x:,.2f}'
 
 
 def pct(x, digits=1, sign=True):
@@ -192,7 +188,7 @@ def comp_regime(s, i, ctx):
         txt = f'美國 20 年期公債殖利率 {now:.2f}%，近一個月{"上升" if d20 > 0 else "下降"} {abs(d20):.2f} 個百分點'
         txt += '（殖利率下降對長天期債券 ETF 有利）。'
         return {'key': 'regime', 'score': score, 'text': txt, 'facts': {'us20y': now, 'd20': d20},
-                'src': 'fred'}
+                'src': 'ust'}
     if s.foreign:
         return None
     t = ctx.get('taiex_at')(d) if ctx.get('taiex_at') else None
@@ -243,9 +239,9 @@ def comp_premium(s, i, live=None):
         sc = 1
     else:
         sc = 0
-    kind = '投信預估淨值' if info.get('kind') == 'est' else '淨值'
+    kind = '投信預估淨值' if info.get('kind') == 'est' else '官方淨值'
     word = '溢價' if p >= 0 else '折價'
-    txt = f'市價相對{kind} {fmt_px(info.get("nav"))}{word} {abs(p):.2f}%'
+    txt = f'市價 {fmt_px(s.raw_c[i])} 相對{kind} {fmt_px(info.get("nav"))}，{word} {abs(p):.2f}%'
     if sc <= -1:
         txt += f'（超過 {warn:.1f}%，現在買等於多付錢）'
     elif sc == 1:
@@ -339,9 +335,17 @@ def key_levels(s, i):
     return sup, res, atr
 
 
+def tick_round(p):
+    """ETF 升降單位：未滿 50 元為 0.01 元，50 元以上為 0.05 元。"""
+    if p is None:
+        return None
+    t = 0.01 if p < 50 else 0.05
+    return round(round(p / t) * t, 2)
+
+
 def _lvl(v, lab, s, i):
     # 還原價 → 實際價格（最近一次配息／分割之後的價格與還原價相同）
-    return {'price': round(v * s.raw_price_factor(i), 4), 'label': lab}
+    return {'price': tick_round(v * s.raw_price_factor(i)), 'label': lab}
 
 
 # ---------------------------------------------------------------- 主函式
@@ -428,10 +432,20 @@ def analyze(s, i, ctx, live=None, hist_cache=None, full=True):
         if s.hi252[i] and s.lo252[i] and s.hi252[i] > s.lo252[i] else None,
         'value20': round(s.valavg20[i]) if s.valavg20[i] else None,
     }
-    if stance > 0 and res and result['levels']['invalid']:
-        up = res[0][0] - c
+    if stance > 0 and result['levels']['invalid']:
+        tgt = next((x for x in res if x[0] - c >= atr), None)
         down = c - inval[0]
-        result['risk']['rr'] = round(up / down, 2) if down > 0 else None
+        if tgt and down > 0:
+            result['risk']['rr'] = round((tgt[0] - c) / down, 2)
+    pull = None
+    if stance > 0 and inval:
+        m20 = s.ma20[i]
+        floor = inval[0] + 0.5 * atr
+        if m20 and floor < m20 < c:
+            pull = {'price': tick_round(m20 * s.raw_price_factor(i)), 'label': '月線附近'}
+        else:
+            pull = {'price': tick_round((c + inval[0]) / 2 * s.raw_price_factor(i)), 'label': '現價與作廢線中間'}
+    result['levels']['pullback'] = pull
     result['advice'] = advice(s, i, result, live)
     return result
 
@@ -469,8 +483,9 @@ def advice(s, i, r, live):
             return {'action': '等溢價收斂再買',
                     'detail': f'方向偏多，但現在溢價 {p:.2f}%，等回到 {warn:.1f}% 以內再分批；收盤跌破 {px(inv)} 元觀點作廢。' + tail}
         if 'overbought' in flags or 'volume_spike' in flags:
+            pb = lv.get('pullback')
             return {'action': '偏多，等拉回再分批',
-                    'detail': f'短線過熱，等回到 {px(s1)} 元附近再分批；收盤跌破 {px(inv)} 元觀點作廢。' + tail}
+                    'detail': f'短線過熱，等拉回 {px(pb)} 元（{pb["label"] if pb else ""}）再分批；收盤跌破 {px(inv)} 元觀點作廢。' + tail}
         if conf is not None and conf >= 70:
             tgt = f'參考目標 {px(r1)}' + (f'／{px(r2)}' if r2 else '') + ' 元；' if r1 else ''
             return {'action': '可分批布局',
