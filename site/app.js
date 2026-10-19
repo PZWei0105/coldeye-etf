@@ -85,6 +85,7 @@
       return Math.round(h / 24) + ' 天前';
     },
   };
+  const cash = (x) => (isNum(x) ? x.toFixed(3).replace(/0$/, '') : '—');
   const twToday = () => {
     const d = new Date(Date.now() + 8 * 3600e3);
     return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
@@ -133,19 +134,19 @@
     const L = S.live;
     if (!L || !L.etfs || !L.etfs[code]) return null;
     const x = L.etfs[code];
-    return { px: x[0], nav: x[1], prem: x[2], time: x[3], uchg: x[4] };
+    return { px: x[0], nav: x[1], prem: x[2], time: x[3], uchg: x[4], date: x[5] || L.date };
   }
 
   // 合併收盤資料與盤中資料：盤中日期比收盤資料新時，用盤中價格
   function quote(row) {
     const lv = liveOf(row.c);
     const L = S.live;
-    if (lv && L && L.date && row.d && L.date > row.d && isNum(lv.px)) {
+    if (lv && lv.date && row.d && lv.date > row.d && isNum(lv.px) && lv.px > 0) {
       let ref = row.p;
-      if (row.dv && row.dv.d === L.date && isNum(row.dv.cash)) ref = row.p - row.dv.cash;
-      return { px: lv.px, ch: lv.px - ref, pc: (lv.px / ref - 1) * 100, prem: lv.prem, live: true, time: lv.time, date: L.date };
+      if (row.dv && row.dv.d === lv.date && isNum(row.dv.cash)) ref = row.p - row.dv.cash;
+      return { px: lv.px, ch: lv.px - ref, pc: (lv.px / ref - 1) * 100, prem: lv.prem, live: true, time: lv.time, date: lv.date };
     }
-    return { px: row.p, ch: row.ch, pc: row.pc, prem: lv && L && L.date === row.d ? (lv.prem ?? row.pr) : row.pr, live: false, time: lv ? lv.time : null, date: row.d };
+    return { px: row.p, ch: row.ch, pc: row.pc, prem: lv && lv.date === row.d ? (lv.prem ?? row.pr) : row.pr, live: false, time: lv ? lv.time : null, date: row.d };
   }
 
   // ------------------------------------------------------------ 圖形元件
@@ -732,7 +733,7 @@
       [q.prem >= 0 ? '溢價' : '折價', isNum(q.prem) ? `${Math.abs(q.prem).toFixed(2)}<small>%</small>` : '—'],
       ['近 12 月殖利率', ttm ? `${ttm.toFixed(2)}<small>%</small>` : '—'],
       ['受益人數', hNow ? `${fmt.n(hNow[1])}<small>${hPrev ? ` 人（週 ${fmt.pct((hNow[1] / hPrev[1] - 1) * 100, 1)}）` : ' 人'}</small>` : '—'],
-      ['近 20 日單位數', isNum(u20) ? `${fmt.pct(u20 * 100, 1)}<small> 申購／贖回</small>` : '—'],
+      ['近 20 日單位數', isNum(u20) ? `${fmt.pct(u20 * 100, 1)}<small> ${u20 >= 0 ? '淨申購' : '淨贖回'}</small>` : '<small>資料累積中</small>'],
     ];
     let h = `<div class="sec-h"><h2>ETF 體檢</h2><span class="aside">${srcLink('tdcc', '受益人數：集保')}</span></div><section class="card kv">${cells.map(([k, val]) => `<div><div class="k">${k}</div><div class="v num">${val}</div></div>`).join('')}</section>`;
     const nav = det.nav || {};
@@ -740,7 +741,7 @@
     const pv = prem.filter(isNum);
     if (pv.length >= 5) h += `<section class="card pad"><div class="muted" style="font-size:12.5px;margin-bottom:6px">收盤價相對官方淨值的折溢價（近 ${pv.length} 日）</div>${divBars(prem.slice(-40), (x) => x.toFixed(2) + '%', (x) => x.toFixed(2) + '%')}<div class="src">來源：${srcLink('mis_etf', '投信公告淨值（證交所 MIS）')}</div></section>`;
     if (divs.length) {
-      h += `<section class="card tbl-wrap"><table class="t"><thead><tr><th>除息日</th><th class="r">每單位配息</th></tr></thead><tbody>${det.div_next ? `<tr class="hl"><td class="num">${fmt.dy(det.div_next.d)}（預告）</td><td class="r num">${det.div_next.cash ? det.div_next.cash + ' 元' : '待公告'}</td></tr>` : ''}${divs.map((x) => `<tr><td class="num">${fmt.dy(x[0])}</td><td class="r num">${x[1]} 元</td></tr>`).join('')}</tbody></table></section>`;
+      h += `<section class="card tbl-wrap"><table class="t"><thead><tr><th>除息日</th><th class="r">每單位配息</th></tr></thead><tbody>${det.div_next ? `<tr class="hl"><td class="num">${fmt.dy(det.div_next.d)}（預告）</td><td class="r num">${det.div_next.cash ? cash(det.div_next.cash) + ' 元' : '待公告'}</td></tr>` : ''}${divs.map((x) => `<tr><td class="num">${fmt.dy(x[0])}</td><td class="r num">${cash(x[1])} 元</td></tr>`).join('')}</tbody></table></section>`;
     }
     return h;
   }

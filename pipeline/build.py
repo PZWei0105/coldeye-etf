@@ -449,10 +449,18 @@ def build_ctx(state):
     return {'taiex_at': taiex_at, 'us20y_before': us20y_before, 'extra_flags': {}}
 
 
+def active_codes(state):
+    """最近 10 個交易日內有成交紀錄的 ETF；更早就停止交易的（下市、合併、暫停）不列入。"""
+    days = trading_days(state)
+    cutoff = days[-10] if len(days) >= 10 else 0
+    return {c for c, d in state['daily'].items() if d['d'] and d['d'][-1] >= cutoff}
+
+
 def make_series(state):
     out = {}
+    active = active_codes(state)
     for code, daily in state['daily'].items():
-        if len(daily['d']) < MIN_BARS:
+        if code not in active or len(daily['d']) < MIN_BARS:
             continue
         meta = state['meta'].get(code, {})
         try:
@@ -509,9 +517,10 @@ def make_live(state, extra, now, mode):
     mis = extra.get('mis') or {}
     etfs = {}
     for code, m in mis.items():
-        if m.get('px') is None:
+        if not m.get('px') or not m.get('est_nav'):
             continue
-        etfs[code] = [m.get('px'), m.get('est_nav'), m.get('premium'), m.get('time'), m.get('units_chg')]
+        etfs[code] = [m.get('px'), m.get('est_nav'), m.get('premium'), m.get('time'), m.get('units_chg'),
+                      int(m['date']) if str(m.get('date', '')).isdigit() else None]
     tx = extra.get('taiex_live')
     hm = now.hour * 100 + now.minute
     open_now = now.weekday() < 5 and 900 <= hm <= 1335
@@ -571,8 +580,10 @@ def compute(state, extra, out_dir, now):
         asof_all = max(asof_all, d)
         m = mis.get(code)
         live = None
-        if m and m.get('premium') is not None and str(m.get('date')) == str(d):
+        if mis_ok(m, d) and m.get('premium') is not None:
             live = {'premium': m['premium'], 'nav': m.get('est_nav'), 'time': m.get('time'), 'kind': 'est'}
+        elif not mis_ok(m, d):
+            m = None
         try:
             r = engine.analyze(s, i, ctx, live=live, hist_cache=hist_cache)
         except Exception:  # noqa: BLE001
@@ -587,8 +598,9 @@ def compute(state, extra, out_dir, now):
         summary_rows.append(summary_row(s, r, m, next_div.get(code), state))
 
     # 上市不久、資料不足的 ETF 也列出來（沒有觀點）
+    active = active_codes(state)
     for code, daily in state['daily'].items():
-        if code in series or not daily['d']:
+        if code in series or not daily['d'] or code not in active:
             continue
         meta = state['meta'].get(code, {})
         k = len(daily['d']) - 1
@@ -598,7 +610,8 @@ def compute(state, extra, out_dir, now):
             'c': code, 'n': meta.get('name', code), 'k': meta.get('cat') or _cat(code, meta.get('name', '')),
             'm': meta.get('market', 'tse'), 'p': daily['c'][k], 'pc': r4((daily['c'][k] / prev - 1) * 100, 2) if prev else None,
             'st': None, 'young': len(daily['d']), 'd': daily['d'][k],
-            'pr': m.get('premium') if m else None, 'sp': [r4(x, 3) for x in daily['c'][-40:]],
+            'pr': m.get('premium') if mis_ok(m, daily['d'][k]) else None, 'sp': [r4(x, 3) for x in daily['c'][-40:]],
+            'dv': next_div.get(code),
         })
 
     # ---- 記錄今天的觀點，供日後驗證（只在收盤資料到齊後）
@@ -636,6 +649,11 @@ def compute(state, extra, out_dir, now):
     write_json(out_dir / 'summary.json', summary)
     write_json(out_dir / 'news.json', make_news(state, pre, risk, series, now))
     write_json(out_dir / 'rules.json', rules_doc())
+
+
+def mis_ok(m, d):
+    """MIS 的預估淨值與折溢價，只有在資料日期等於該 ETF 最後交易日、而且有成交價時才可信。"""
+    return bool(m) and str(m.get('date')) == str(d) and bool(m.get('px')) and bool(m.get('est_nav'))
 
 
 def _cat(code, name):

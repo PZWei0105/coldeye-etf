@@ -428,7 +428,7 @@ details.rules .in { padding: 0 16px 14px; }
 .toast {
   position: fixed; left: 50%; bottom: calc(var(--tabbar) + 18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
   z-index: 60; background: var(--fg); color: var(--bg); padding: 9px 16px; border-radius: 12px; font-size: 13.5px; box-shadow: var(--shadow);
-  max-width: calc(100vw - 32px);
+  max-width: calc(100vw - 32px); pointer-events: none;
 }
 .skeleton { height: 92px; border-radius: var(--r); background: linear-gradient(90deg, var(--card) 0%, var(--card-2) 50%, var(--card) 100%); background-size: 200% 100%; animation: sk 1.4s infinite; border: 1px solid var(--line); }
 @keyframes sk { to { background-position: -200% 0; } }
