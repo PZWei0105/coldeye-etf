@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'auto / intraday / eod / backfill / probe'
+        description: 'auto / intraday / eod / backfill / probe / deploy'
         default: auto
 
 permissions:
@@ -23,16 +23,16 @@ permissions:
   id-token: write
 
 concurrency:
-  group: coldeye
+  group: coldeye-data
   cancel-in-progress: false
 
 jobs:
+  # 抓資料、計算、把網站打包好（不碰 Pages 環境，Pages 有狀況時資料照樣更新）
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 170
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+    outputs:
+      deploy: ${{ steps.pipe.outputs.deploy }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -49,7 +49,16 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: public
-      - if: steps.pipe.outputs.deploy == 'true'
-        id: deploy
+
+  # 發布到 GitHub Pages
+  deploy:
+    needs: run
+    if: needs.run.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
         uses: actions/deploy-pages@v4
-        continue-on-error: true
