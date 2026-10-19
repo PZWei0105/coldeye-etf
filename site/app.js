@@ -315,7 +315,7 @@
       <div class="w-row1">
         <div class="w-id"><div class="w-code">${row.c} · ${esc(catName(row.k))}${row.m === 'otc' ? ' · 上櫃' : ''}</div><div class="w-name">${esc(row.n)}</div></div>
         ${sparkSVG(row.sp, 64, 30, q.pc)}
-        <div class="w-px"><div class="p num">${fmt.px(q.px)}</div><div class="c num ${dirCls(q.pc)}">${arrow(q.pc)}${fmt.pct(q.pc)}</div></div>
+        <div class="w-px"><div class="p num">${fmt.px(q.px)}</div><div class="c num ${dirCls(q.pc)}">${arrow(q.pc)}${isNum(q.pc) ? Math.abs(q.pc).toFixed(2) + '%' : '—'}</div></div>
       </div>
       <div class="w-gauge">${gaugeSVG(row.sc, row.st)}<div class="conf">${stanceTag(row.st)}<div style="margin-top:3px">${conf}</div></div></div>
       ${row.st != null ? `<div class="w-advice"><b>${esc(row.a || '')}</b>${isNum(row.iv) ? `<span class="muted">作廢線 <span class="num">${fmt.px(row.iv)}</span></span>` : isNum(row.r1) && row.st === 0 ? `<span class="muted">站上 <span class="num">${fmt.px(row.r1)}</span> 轉偏多</span>` : ''}</div>` : `<div class="w-advice muted">上市 ${row.young || 0} 個交易日，資料還不夠計算觀點</div>`}

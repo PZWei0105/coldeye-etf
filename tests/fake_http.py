@@ -3,6 +3,9 @@ import json
 import pathlib
 
 RAW = pathlib.Path('/tmp/claude-0/-home-claude/2b8d5b7a-3c06-5895-8bd9-d9ac5a2dd931/scratchpad/probe/raw')
+RAW2 = pathlib.Path('/tmp/claude-0/-home-claude/2b8d5b7a-3c06-5895-8bd9-d9ac5a2dd931/scratchpad/probe2/raw')
+ROUTES2 = [('bulletin/exDailyQ', 'tpex_exright_v1'), ('tpex_exright_prepost', 'tpex_exright_prepost_api'),
+           ('daily-treasury-rates', 'ust_yields_2026')]
 ROUTES = [
     ('BFI82U', 'twse_bfi82u'), ('MI_INDEX', 'twse_mi_index_etf'), ('T86', 'twse_t86_etf'), ('MI_MARGN', 'twse_margin_etf'),
     ('FMTQIK', 'twse_fmtqik'), ('TWT48U', 'twse_twt48u'), ('TWT49U', 'twse_twt49u'),
@@ -25,6 +28,9 @@ class FakeHttp:
         self.log = []
 
     def get(self, url, **kw):
+        for key, name in ROUTES2:
+            if key in url:
+                return R((RAW2 / f'{name}.txt').read_bytes())
         for key, name in ROUTES:
             if key in url:
                 return R((RAW / f'{name}.txt').read_bytes())

@@ -334,25 +334,44 @@ def twse_dividend_preview(http):
     return out
 
 
-def tpex_dividends_api(http):
-    """櫃買 OpenAPI：最近的除權息計算結果與預告（只有最新一批，逐日累積）。"""
-    done, pre = [], []
-    try:
-        rows = http.json(f'{TPEX_API}/tpex_exright_daily')
-        for r in rows if isinstance(rows, list) else []:
-            code = str(r.get('SecuritiesCompanyCode') or r.get('Code') or '').strip()
+def tpex_dividends(http, start: dt.date, end: dt.date):
+    """櫃買中心 除權除息計算結果表（可查一段期間）。"""
+    js = http.json(f'{TPEX}/bulletin/exDailyQ?startDate={_slash(start)}&endDate={_slash(end)}&id=&response=json')
+    if not _ok(js):
+        return []
+    out = []
+    for t in tables_of(js):
+        f = t['fields']
+        idt, ic, ival, ikind = find_col(f, '除權息日期'), find_col(f, '代號'), find_col(f, '息值'), find_col(f, '權/息')
+        ipre = find_col(f, '除權息前收盤價')
+        if idt is None or ic is None or ival is None:
+            continue
+        for row in t['data']:
+            code = str(row[ic]).strip()
             if not is_etf_code(code):
                 continue
-            d = roc_date(r.get('ExRrightsExDividendDate') or r.get('Date') or r.get('ExDate'))
-            cash = None
-            for k, v in r.items():
-                if 'Dividend' in k and 'Cash' in k or k in ('CashDividend', 'Dividend'):
-                    cash = num(v)
+            if ikind is not None and '息' not in str(row[ikind]):
+                continue
+            d = roc_date(row[idt])
+            cash = num(row[ival])
             if d and cash:
-                done.append({'code': code, 'd': d, 'cash': cash})
-    except Exception:  # noqa: BLE001
-        pass
-    return done, pre
+                out.append({'code': code, 'd': d, 'cash': cash,
+                            'pre': num(row[ipre]) if ipre is not None else None})
+    return out
+
+
+def tpex_dividend_preview(http):
+    """櫃買 OpenAPI 除權除息預告表。"""
+    rows = http.json(f'{TPEX_API}/tpex_exright_prepost')
+    out = []
+    for r in rows if isinstance(rows, list) else []:
+        code = str(r.get('SecuritiesCompanyCode') or '').strip()
+        if not is_etf_code(code) or '息' not in str(r.get('ExRrightsExDividend', '息')):
+            continue
+        cash = num(r.get('CashDividend'))
+        out.append({'code': code, 'name': str(r.get('CompanyName') or '').strip(),
+                    'd': roc_date(r.get('ExRrightsExDividendDate')), 'cash': cash or None, 'tba': not cash})
+    return out
 
 
 # ---------------------------------------------------------------- 風險名單

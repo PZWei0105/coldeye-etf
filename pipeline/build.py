@@ -187,7 +187,6 @@ def backfill(state, log, budget_s):
     # 配息歷史（證交所可一次查一段期間）
     step(log, 'twse_div_history', twse_dividend_history, state, http, now.date())
     step(log, 'tpex_div_history', tpex_dividend_history, state, now.date())
-    step(log, 'derive_otc_div', derive_otc_dividends, state)
     step(log, 'yields_history', update_yields, state, Http(1.5), [now.year - 2, now.year - 1, now.year])
 
 
@@ -209,38 +208,24 @@ def twse_dividend_history(state, http, today):
     return got
 
 
-def derive_otc_dividends(state):
-    """上櫃行情的「漲跌」是相對除息參考價計算；前一日收盤 −（收盤 − 漲跌）＝ 當天除息金額。"""
-    found = 0
-    for code, meta in state['meta'].items():
-        if meta.get('market') != 'otc':
-            continue
-        dd = state['daily'].get(code)
-        if not dd or 'ch' not in dd:
-            continue
-        known = {x[0] for x in state['divs'].get(code, [])}
-        for k in range(1, len(dd['d'])):
-            c0, c1, ch = dd['c'][k - 1], dd['c'][k], dd['ch'][k]
-            if c0 is None or c1 is None or ch is None:
-                continue
-            ref = c1 - ch
-            cash = round(c0 - ref, 4)
-            if cash >= 0.005 and cash < c0 * 0.2 and dd['d'][k] not in known:
-                o = dd['o'][k] or c1
-                if c0 and (o / c0 < 1 / 1.45 or o / c0 > 1.45):
-                    continue  # 分割，不是配息
-                add_div(state, code, dd['d'][k], cash)
-                found += 1
-    return found
-
-
 def tpex_dividend_history(state, today):
-    """櫃買中心的除權息歷史查詢沒有穩定的 JSON 介面時，改用官方 OpenAPI 的最近資料逐日累積。"""
-    http = Http(1.5)
-    done, _ = src.tpex_dividends_api(http)
-    for r in done:
-        add_div(state, r['code'], d2i(r['d']), r['cash'])
-    return len(done)
+    """櫃買中心 除權除息計算結果表，每季查一段，補齊近三年上櫃 ETF（多為債券 ETF）的配息。"""
+    http = Http(2.3)
+    got = 0
+    cur = dt.date(today.year - 3, 1, 1)
+    while cur <= today:
+        nxt = dt.date(cur.year + (cur.month + 3 > 12), (cur.month + 2) % 12 + 1, 1)
+        end = min(nxt - dt.timedelta(days=1), today)
+        try:
+            for r in src.tpex_dividends(http, cur, end):
+                add_div(state, r['code'], d2i(r['d']), r['cash'])
+                got += 1
+        except Exception as e:  # noqa: BLE001
+            print(f'[tpex_div {cur}] {e!r}', flush=True)
+        cur = nxt
+    state.mark('tpex_div', when=now_tw().isoformat(timespec='minutes'))
+    state['backfill']['tpex_div_hist'] = [d2i(today)]
+    return got
 
 
 def add_div(state, code, d, cash):
@@ -300,9 +285,14 @@ def eod(state, log, weekly=False):
     if divs:
         state.mark('twse_div', when=when)
     pre = step(log, 'twse_div_pre', src.twse_dividend_preview, http_tw) or []
-    tp_done, _ = step(log, 'tpex_div', src.tpex_dividends_api, http_x) or ([], [])
-    for r in tp_done:
+    pre += step(log, 'tpex_div_pre', src.tpex_dividend_preview, http_x) or []
+    if not state['backfill'].get('tpex_div_hist'):
+        step(log, 'tpex_div_history', tpex_dividend_history, state, today)
+    tp = step(log, 'tpex_div', src.tpex_dividends, http_tp, today - dt.timedelta(days=45), today) or []
+    for r in tp:
         add_div(state, r['code'], d2i(r['d']), r['cash'])
+    if tp:
+        state.mark('tpex_div', when=when)
     step(log, 'yields', update_yields, state, http_x, [today.year])
     risk = (step(log, 'twse_risk', src.twse_risk, http_tw) or []) + (step(log, 'tpex_risk', src.tpex_risk, http_x) or [])
     if risk:
@@ -323,7 +313,6 @@ def eod(state, log, weekly=False):
                     lst.append([hd, n, units])
                     del lst[:-60]
             state.mark('tdcc', when=when)
-    step(log, 'derive_otc_div', derive_otc_dividends, state)
     state['_extra'] = {'mis': mis, 'pre': pre, 'risk': risk, 'news': news}
     store_news(state, news)
 
