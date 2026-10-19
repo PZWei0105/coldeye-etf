@@ -126,7 +126,9 @@ function factorAfter(d, splits) {
 
 // ------------------------------------------------------------------ 單一持股：移動平均成本
 export function sortLots(lots) {
-  return lots.slice().sort((a, b) => (a.d || 0) - (b.d || 0) || String(a.at || '').localeCompare(String(b.at || '')));
+  // 沒填日期的買進排最前（當作很早以前買的），沒填日期的賣出排最後，這樣賣出才有股票可賣
+  const key = (l) => l.d || (l.side === 'sell' ? 99999999 : 0);
+  return lots.slice().sort((a, b) => key(a) - key(b) || String(a.at || '').localeCompare(String(b.at || '')));
 }
 
 /**
@@ -257,12 +259,24 @@ export function buildPortfolio(pf, rows, quoteOf, divsData, cfg, today) {
     divAll += rec.total;
     undatedAll += rec.undated;
     const cat = row ? row.k : null;
-    if (!(h.sh > 0)) {
-      closed.push({ code, row, name: row ? row.n : code, h, divRecv: rec.total });
-      continue;
-    }
     const q = row ? quoteOf(row) : null;
     const px = q && isNum(q.px) ? q.px : null;
+    if (!(h.sh > 0)) {
+      let dayC = null;
+      if (q && isNum(q.ch) && px != null) {
+        const qd = q.date || today;
+        let before = 0;
+        let tp = 0;
+        for (const l of sortLots(lots).map((x) => normLot(x, splits))) {
+          if (l.d && l.d >= qd) tp += (l.side === 'sell' ? l.npx - px : px - l.npx) * l.nsh;
+          else before += (l.side === 'sell' ? -1 : 1) * l.nsh;
+        }
+        dayC = Math.max(0, before) * q.ch + tp;
+        if (!(Math.abs(dayC) > 1e-9) || !lots.some((l) => l.d && l.d >= qd)) dayC = null;   // 只算今天清掉的
+      }
+      closed.push({ code, row, name: row ? row.n : code, h, divRecv: rec.total, day: dayC });
+      continue;
+    }
     const mv = px != null ? h.sh * px : null;
     const sv = px != null ? sellValue(h.sh, px, cat, today, cfg) : null;
     const pnl = sv ? sv.net - h.cost : null;
@@ -294,7 +308,7 @@ export function buildPortfolio(pf, rows, quoteOf, divsData, cfg, today) {
   const mvAll = holdings.reduce((a, x) => a + (x.mv || 0), 0);
   const costAll = holdings.reduce((a, x) => a + x.h.cost, 0);
   const pnlAll = holdings.reduce((a, x) => a + (x.pnl || 0), 0);
-  const dayAll = holdings.reduce((a, x) => a + (x.day || 0), 0);
+  const dayAll = holdings.reduce((a, x) => a + (x.day || 0), 0) + closed.reduce((a, x) => a + (x.day || 0), 0);
   const T = mvAll + cash;
   for (const x of holdings) x.w = T > 0 && x.mv != null ? x.mv / T : null;
   holdings.sort((a, b) => (b.mv || 0) - (a.mv || 0));
@@ -531,7 +545,9 @@ export function planAdd(H, ctx, opt = {}) {
   else { stop = tickDown(px - 2 * atr); stopName = '2 倍 ATR'; }
   const mv = H.sh > 0 ? H.sh * px : 0;
   const budget = T * prof.loss;
-  const perRisk = Math.max(px - stop, tick(px));
+  const feeDisc = (ctx.fee && ctx.fee.disc) ?? 1;
+  // 每股最壞虧損 = 價差 + 買賣手續費 + 賣出證交稅（保守用 0.1%）
+  const perRisk = Math.max(px - stop, tick(px)) + px * FEE_RATE * feeDisc + stop * (FEE_RATE * feeDisc + 0.001);
   const byRisk = Math.floor(budget / perRisk);
   const byCap = Math.floor(Math.max(0, cap * T - mv) / px);
   const cash = ctx.cash || 0;
@@ -550,21 +566,22 @@ export function planAdd(H, ctx, opt = {}) {
   let p3 = p2 != null ? tickDown(Math.max(stop + 0.4 * atr, p2 - 0.5 * atr)) : null;
   if (p3 != null && !(p2 - p3 >= 0.3 * atr)) p3 = null;
   const base = Math.floor(n / 3);
+  const rest = n - base * 3;   // 除不盡的零頭放在第 1 批
   const slots = [
     { px: p1, lim: null, when: '現價附近' },
     { px: p2 ?? p1, lim: p2, when: p2 != null ? '拉回到這個價位，或一週後' : '一週後' },
     { px: p3 ?? p2 ?? p1, lim: p3, when: p3 != null ? '拉回到這個價位，或兩週後' : '兩週後' },
   ];
-  const parts = slots.map((x, i) => ({ ...x, sh: i < 2 ? base : n - base * 2 })).filter((x) => x.sh > 0);
+  const parts = slots.map((x, i) => ({ ...x, sh: i === 0 ? base + rest : base })).filter((x) => x.sh > 0);
   let spend = 0;
   let fees = 0;
   let lossAtStop = 0;
   for (const t of parts) {
     // 沒等到拉回、照時間買的批次，用現價估算（最保守）
-    const c = tradeCost('buy', t.sh, t.lim != null ? t.px : p1, cat, ctx.today, ctx.fee);
+    const c = tradeCost('buy', t.sh, p1, cat, ctx.today, ctx.fee);
     spend += c.net;
     fees += c.fee;
-    lossAtStop += t.sh * ((t.lim != null ? t.px : p1) - stop) + c.fee;
+    lossAtStop += t.sh * (p1 - stop) + c.fee;
   }
   if (n > 0) {
     const out = tradeCost('sell', n, stop, cat, ctx.today, ctx.fee);
@@ -675,10 +692,17 @@ export function makeBackup(data) {
 }
 export function readBackup(obj) {
   if (!obj || obj.app !== 'coldeye' || !obj.pf || !Array.isArray(obj.pf.lots)) throw new Error('不是冷眼的備份資料');
+  const okNum = (x) => typeof x === 'number' && Number.isFinite(x);
+  const ids = new Set();
   for (const l of obj.pf.lots) {
-    if (typeof l.c !== 'string' || !(l.sh > 0) || !(l.px > 0) || !['buy', 'sell'].includes(l.side)) {
+    const okD = l.d == null || l.d === 0 || (Number.isInteger(l.d) && l.d >= 19000101 && l.d <= 21001231);
+    const okOpt = (x) => x == null || (okNum(x) && x >= 0);
+    if (typeof l.c !== 'string' || !okNum(l.sh) || !(l.sh > 0) || !okNum(l.px) || !(l.px > 0) || !['buy', 'sell'].includes(l.side)
+      || !okD || !okOpt(l.fee) || !okOpt(l.tax) || typeof l.id !== 'string' || !l.id || ids.has(l.id)) {
       throw new Error('備份裡有格式不正確的交易紀錄');
     }
+    ids.add(l.id);
   }
+  if (obj.pf.cash != null && !okNum(obj.pf.cash)) throw new Error('備份裡的現金格式不正確');
   return obj;
 }

@@ -194,7 +194,7 @@ export function openTradeForm(o = {}) {
     if (!(px > 0)) problems.push('請輸入成交價');
     if (!f.undated && !d) problems.push('請選成交日期，或勾選「不記得日期」');
     if (d && d > today()) problems.push('成交日期不能是未來');
-    if (row && px > 0 && (px > row.p * 3 || px < row.p / 3) && !(d && d < 20251231)) problems.push(`成交價和目前價格（${fmt.px(row.p)}）差太多，請確認`);
+    if (row && px > 0 && (px > row.p * 3 || px < row.p / 3) && !(!d || d < 20251231)) problems.push(`成交價和目前價格（${fmt.px(row.p)}）差太多，請確認`);
     if (f.side === 'sell' && row) {
       const held = PF.holdingFromLots(book.lots.filter((x) => x.c === f.code && (!lot || x.id !== lot.id)), (S.divs && S.divs[f.code] && S.divs[f.code].s) || []);
       if (Math.round(sh) > held.sh + 1e-9) problems.push(`目前記錄的持股只有 ${PF.sharesText(held.sh)}，賣出數量超過了`);

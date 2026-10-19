@@ -848,7 +848,7 @@ async function boot() {
     if (!S.summary) { $('#view').innerHTML = '<section class="panel empty">資料還在準備中，請稍後再開。</section>'; return; }
     toast('連不上伺服器，顯示的是上次的資料');
   }
-  await Promise.all([ensureTrack(), ensureDivs()]);
+  await Promise.all([ensureTrack(), ensureDivs(true)]);
   diffSeen();
   computePF();
   render();
@@ -858,7 +858,7 @@ async function boot() {
   setInterval(() => { if (document.visibilityState === 'visible' && S.live && S.live.open) refreshLive(); }, 60000);
   setInterval(() => {
     if (document.visibilityState !== 'visible') return;
-    loadCore().then(() => { diffSeen(); computePF(); if (!S.openCode) render(); }).catch(() => {});
+    Promise.all([loadCore(), ensureDivs(true)]).then(() => { diffSeen(); computePF(); if (!S.openCode) render(); }).catch(() => {});
   }, 15 * 60000);
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 }

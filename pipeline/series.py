@@ -23,7 +23,7 @@ def infer_category(code: str, name: str) -> str:
     n = name or ''
     if c.endswith('L') or '正2' in n or '2倍' in n or '槓桿' in n:
         return 'lev'
-    if c.endswith('R') or '反1' in n or '反向' in n or '-1' in n:
+    if c.endswith('R') or '反1' in n or '反向' in n or '-1倍' in n or '-1X' in n.upper():
         return 'inv'
     if c.endswith('U') or any(k in n for k in FUT_MARKERS):
         return 'fut'

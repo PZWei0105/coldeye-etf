@@ -199,7 +199,10 @@ export function quote(row) {
   const lv = liveOf(row.c);
   if (lv && lv.date && row.d && lv.date > row.d && isNum(lv.px) && lv.px > 0) {
     let ref = row.p;
-    if (row.dv && row.dv.d === lv.date && isNum(row.dv.cash)) ref = row.p - row.dv.cash;
+    // 收盤資料之後才生效的分割（例如 1 拆 4）：昨收要換算成分割後的價格，不然漲跌會差好幾倍
+    const sp = ((S.divs && S.divs[row.c] && S.divs[row.c].s) || []).filter(([d]) => d > row.d && d <= lv.date);
+    for (const [, k] of sp) ref /= k;
+    if (row.dv && row.dv.d === lv.date && isNum(row.dv.cash)) ref -= row.dv.cash;
     return { px: lv.px, ch: lv.px - ref, pc: (lv.px / ref - 1) * 100, prem: lv.prem, live: true, time: lv.time, date: lv.date };
   }
   return { px: row.p, ch: row.ch, pc: row.pc, prem: lv && lv.date === row.d ? (lv.prem ?? row.pr) : row.pr, live: false, time: lv ? lv.time : null, date: row.d };
@@ -219,7 +222,7 @@ export function computePF() {
   // 兩輪：先看有幾檔「可加碼」，再把現金平均分給它們（至少分 3 份）
   S.adv = new Map();
   const first = new Map(P.holdings.map((x) => [x.code, PF.advise(holdingInput(x), ctxFor(x.code, P))]));
-  const nAdd = [...first.values()].filter((a) => a.key === 'add').length;
+  const nAdd = [...first.values()].filter((a) => a.plan && a.plan.n > 0).length;   // 所有會拿到加碼計畫的（含減半的續抱）
   const share = P.totals.cash / Math.max(PF.CASH_SLICES, nAdd);
   for (const x of P.holdings) S.adv.set(x.code, PF.advise(holdingInput(x), ctxFor(x.code, P, share)));
   P.nAdd = nAdd;

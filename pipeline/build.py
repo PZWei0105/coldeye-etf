@@ -747,13 +747,13 @@ def write_detail(out_dir, s, r, state, bt, nd, m, ctx, pos_bt=None):
 
 
 def make_divs(state, series, rows, now):
-    """給 App 算持股配息用：每檔 ETF 近三年的除息紀錄（除息日、每單位現金）與分割紀錄。"""
+    """給 App 算持股配息用：每檔 ETF 完整歷史的除息紀錄（除息日、每單位現金）與分割紀錄。"""
     today = d2i(now.date())
     out = {}
     for row in rows:
         code = row['c']
         s = series.get(code)
-        divs = [list(x) for x in (s.divs if s else state['divs'].get(code, [])) if x[0] >= today - 30000 and x[1]]
+        divs = [list(x) for x in (s.divs if s else state['divs'].get(code, [])) if x[1]]
         splits = [list(x) for x in (s.splits if s else [])]
         if divs or splits:
             out[code] = {'d': divs, 's': splits}
