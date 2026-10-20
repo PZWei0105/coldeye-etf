@@ -1,6 +1,7 @@
 """每一輪更新的流程：抓官方資料 → 存進 state 分支 → 算觀點與戰績 → 輸出 App 用的 JSON。"""
 import bisect
 import datetime as dt
+import hashlib
 import json
 import math
 import pathlib
@@ -511,12 +512,22 @@ def publish(state, log, mode):
     write_json(PUBLIC / 'data' / 'live.json', live)
     write_json(PUBLIC / 'data' / 'version.json', {'built': now.isoformat(timespec='seconds'), 'mode': mode})
     (PUBLIC / '.nojekyll').write_text('', encoding='utf-8')
-    # 讓 service worker 每次部署都能偵測到新版本
+    # service worker 的版本號 = 介面檔案內容的指紋：程式真的有改才換新版，
+    # 盤中每 5 分鐘一次的資料更新不會讓手機每次打開都重新下載整個 App
     sw = PUBLIC / 'sw.js'
     if sw.exists():
-        sw.write_text(sw.read_text(encoding='utf-8').replace('__BUILD__', now.strftime('%Y%m%d%H%M%S')),
-                      encoding='utf-8')
+        sw.write_text(sw.read_text(encoding='utf-8').replace('__BUILD__', site_fingerprint()), encoding='utf-8')
     return True
+
+
+def site_fingerprint():
+    h = hashlib.sha1()
+    for f in sorted(SITE.rglob('*')):
+        if f.is_file() and f.name != 'sw.js' and '__pycache__' not in f.parts:
+            h.update(str(f.relative_to(SITE)).encode('utf-8'))
+            h.update(f.read_bytes())
+    h.update((SITE / 'sw.js').read_bytes())
+    return h.hexdigest()[:12]
 
 
 def make_live(state, extra, now, mode):

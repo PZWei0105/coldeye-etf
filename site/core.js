@@ -1,5 +1,6 @@
 /* 冷眼 — 共用核心：狀態、設定、資料載入、格式、圖示、小元件。 */
 import * as PF from './pf.js';
+import { breadth } from './calc.js';
 
 export { PF };
 
@@ -30,22 +31,44 @@ const savedSettings = store.get('settings', {});
 export const settings = Object.assign({
   watch: DEFAULT_WATCH.slice(), risk: 'mid', fee: { ...PF.DEFAULT_FEE }, name: 'PZ', theme: 'system',
   privacy: false, opinion: false, dca: true, installHidden: false, rules: DEFAULT_RULES.slice(),
+  mode: 'real', explain: false, boot: true, heatMode: 'chg', radarView: 'list', duel: null, tm: null,
 }, savedSettings);
+if (!['real', 'paper'].includes(settings.mode)) settings.mode = 'real';
 if (!PF.PROFILES[settings.risk]) settings.risk = 'mid';
 settings.fee = Object.assign({ ...PF.DEFAULT_FEE }, settings.fee || {});
 delete settings.capital;   // 舊版的「投資本金」改由「部位」裡的現金與持股計算
 export const saveSettings = () => store.set('settings', settings);
 
 // ------------------------------------------------------------------ 我的部位、提醒（只存在這支手機）
-export const book = Object.assign({ cash: 0, lots: [], colors: {} }, store.get('pf', {}));
-export const saveBook = () => { book.updated = new Date().toISOString(); return store.set('pf', book); };
+// 真實部位存在 coldeye.pf，模擬倉存在 coldeye.paper；book 永遠指向目前這一個（同一個物件，切換時換內容）
+export const isPaper = () => settings.mode === 'paper';
+const bookKey = () => (isPaper() ? 'paper' : 'pf');
+const EMPTY_BOOK = () => ({ cash: 0, lots: [], colors: {} });
+export const book = Object.assign(EMPTY_BOOK(), store.get(bookKey(), {}));
+export const saveBook = () => { book.updated = new Date().toISOString(); return store.set(bookKey(), book); };
+export function switchMode(mode) {
+  if (mode === settings.mode) return;
+  saveBook();
+  settings.mode = mode;
+  saveSettings();
+  for (const k of Object.keys(book)) delete book[k];
+  Object.assign(book, EMPTY_BOOK(), store.get(bookKey(), {}));
+}
+/** 換掉目前這一本（還原備份、重設模擬倉用） */
+export function replaceBook(next) {
+  for (const k of Object.keys(book)) delete book[k];
+  Object.assign(book, EMPTY_BOOK(), next || {});
+  saveBook();
+}
+/** 另一本（真實／模擬）目前存的內容，備份時一起帶走 */
+export const otherBook = () => store.get(isPaper() ? 'pf' : 'paper', null);
 export const alerts = store.get('alerts', []);
 export const saveAlerts = () => store.set('alerts', alerts);
 export const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
 // ------------------------------------------------------------------ 全域狀態與事件
 export const S = {
-  summary: null, live: null, news: null, track: null, divs: null, detail: {},
+  summary: null, live: null, news: null, track: null, divs: null, detail: {}, hist: {}, breadth: null, pxSeen: new Map(),
   tab: store.get('tab', 'home'), all: { q: '', cat: '*', sig: '*', sort: 'score' }, newsTab: 'official',
   range: 120, rows: new Map(), deferredInstall: null, P: null, adv: new Map(), openCode: null,
   firstPaint: true, changes: [],
@@ -160,6 +183,7 @@ export async function loadCore() {
   S.summary = summary;
   S.live = live;
   S.rows = new Map(summary.etfs.map((r) => [r.c, r]));
+  S.breadth = breadth(summary.etfs);
   store.set('cache.summary', summary);
   if (live) store.set('cache.live', live);
 }
@@ -168,6 +192,7 @@ export function useCache() {
   if (!cached) return false;
   S.summary = cached;
   S.rows = new Map(cached.etfs.map((r) => [r.c, r]));
+  S.breadth = breadth(cached.etfs);
   S.live = store.get('cache.live', null);
   S.divs = store.get('cache.divs', null);
   return true;
@@ -181,6 +206,11 @@ export async function ensureDivs(force = false) {
   if (S.divs && !force) return S.divs;
   try { S.divs = await getJSON('divs.json'); store.set('cache.divs', S.divs); } catch { /* 用快取 */ }
   return S.divs;
+}
+export async function ensureHist(code) {
+  if (S.hist[code]) return S.hist[code];
+  try { S.hist[code] = await getJSON(`hist/${code}.json`); } catch { return null; }
+  return S.hist[code];
 }
 export async function ensureDetail(code) {
   if (S.detail[code]) return S.detail[code];
@@ -211,13 +241,27 @@ export function quote(row) {
 // ------------------------------------------------------------------ 我的部位：計算與建議
 export function hasBook() { return book.lots.length > 0 || book.cash > 0; }
 
+export function paperCash(P0) {
+  if (!book.start) return 0;
+  let c = book.start.cash0 || 0;
+  for (const l of book.lots) {
+    const amt = l.sh * l.px;
+    c += l.side === 'sell' ? amt - (l.fee || 0) - (l.tax || 0) : -(amt + (l.fee || 0));
+  }
+  return c + (P0 ? P0.totals.divRecv : 0);
+}
 export function computePF() {
   if (!S.summary) { S.P = null; return null; }
   const td = today();
+  if (isPaper()) {
+    // 模擬倉的現金不用手填：先算一次拿到已領股息，再把現金補進去重算
+    const P0 = PF.buildPortfolio({ ...book, cash: 0 }, S.rows, quote, S.divs || {}, settings.fee, td);
+    book.cash = Math.max(0, Math.round(paperCash(P0) * 100) / 100);
+  }
   const P = PF.buildPortfolio(book, S.rows, quote, S.divs || {}, settings.fee, td);
   const codes = P.holdings.map((x) => x.code);
   const colors = PF.assignColors(book, codes);
-  if (JSON.stringify(colors) !== JSON.stringify(book.colors || {})) { book.colors = colors; store.set('pf', book); }
+  if (JSON.stringify(colors) !== JSON.stringify(book.colors || {})) { book.colors = colors; saveBook(); }
   for (const x of P.holdings) x.slot = colors[x.code] ?? null;
   // 兩輪：先看有幾檔「可加碼」，再把現金平均分給它們（至少分 3 份）
   S.adv = new Map();
@@ -259,11 +303,11 @@ export function stanceChip(st, extra = '') {
   if (st == null) return '<span class="chip stance na">資料不足</span>';
   const s = ST[String(st)];
   const ic = st > 0 ? ICON.up : st < 0 ? ICON.down : ICON.flat;
-  return `<span class="chip stance ${s.cls}">${ic}${s.t}${extra}</span>`;
+  return `<span class="chip stance ${s.cls}" data-term="st">${ic}${s.t}${extra}</span>`;
 }
 export function posChip(ps) {
   if (!ps || !POS[ps]) return '';
-  return `<span class="chip act ${POS[ps].cls}">${POS[ps].t}</span>`;
+  return `<span class="chip act ${POS[ps].cls}" data-term="ps">${POS[ps].t}</span>`;
 }
 export function actChip(a) {
   if (!a) return '';

@@ -27,7 +27,7 @@ def infer_category(code: str, name: str) -> str:
         return 'inv'
     if c.endswith('U') or any(k in n for k in FUT_MARKERS):
         return 'fut'
-    if c.endswith('B') or '債' in n:
+    if c.endswith('B') or c.endswith('D') or '債' in n:   # D 是主動式債券 ETF
         return 'bond'
     if c.endswith('A') or '主動' in n:
         return 'active'

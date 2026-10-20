@@ -347,7 +347,8 @@ def _lvl(v, lab, s, i):
 
 def defense_line(s, i):
     """移動防守線（吊燈式出場）：近 22 個交易日最高收盤 − 3 倍 ATR，回傳還原價。
-    上漲時跟著往上移、下跌時不動；收盤跌破代表這段上漲已經中斷。"""
+    創新高時跟著往上移；下跌時多半停在原地，但波動（ATR）變大、或高點已超過 22 個交易日時也會往下移。
+    收盤跌破代表這段上漲已經中斷。"""
     atr = s.atr14[i]
     if atr is None or i < CHANDELIER_N - 1:
         return None

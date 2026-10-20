@@ -5,7 +5,10 @@
 // ------------------------------------------------------------------ 交易成本
 export const FEE_RATE = 0.001425;          // 券商手續費率（法定上限），實際依折扣
 export const ETF_TAX = 0.001;              // ETF 賣出證交稅 0.1%
-export const BOND_TAX_FREE_UNTIL = 20261231; // 債券 ETF 停徵證交稅到 2026/12/31
+export const BOND_TAX_FREE_UNTIL = 20261231; // 被動式債券 ETF 停徵證交稅到 2026/12/31
+// 主動式債券 ETF（代號尾碼 D）目前不在停徵範圍，賣出照課 0.1%。行政院 2026/10 已提案：被動式延長到 2036/12/31、
+// 主動式從 2027/1/1 起納入。立法院三讀後，把上一行改成 20361231、下一行改成 20270101，並同步更新設定頁與看懂模式的說明。
+export const ACTIVE_BOND_FREE_FROM = null;
 export const DEFAULT_FEE = { disc: 1, min: 20, minOdd: 1 };
 export const NHI_RATE = 0.0211;            // 二代健保補充保費
 export const NHI_THRESHOLD = 20000;        // 單次給付 2 萬元以上才扣
@@ -83,8 +86,14 @@ export function feeOf(amount, odd, cfg = DEFAULT_FEE) {
   const raw = Math.floor(amount * FEE_RATE * (cfg.disc ?? 1) + 1e-9);
   return Math.max(raw, odd ? (cfg.minOdd ?? 1) : (cfg.min ?? 20));
 }
+/** 算證交稅用的類別：主動式債券 ETF（代號尾碼 D）和被動式的停徵範圍不同，要分開。 */
+export function taxCat(row) {
+  if (!row) return null;
+  return row.k === 'bond' && /D$/i.test(row.c || '') ? 'abond' : row.k;
+}
 export function taxRateOf(cat, date) {
   if (cat === 'bond' && (!date || date <= BOND_TAX_FREE_UNTIL)) return 0;
+  if (cat === 'abond' && ACTIVE_BOND_FREE_FROM && date && date >= ACTIVE_BOND_FREE_FROM && date <= BOND_TAX_FREE_UNTIL) return 0;
   return ETF_TAX;
 }
 /** 一筆買賣的費用。整股（1000 股的倍數）與零股要分開下單，所以分開計算。 */
@@ -259,6 +268,7 @@ export function buildPortfolio(pf, rows, quoteOf, divsData, cfg, today) {
     divAll += rec.total;
     undatedAll += rec.undated;
     const cat = row ? row.k : null;
+    const tcat = taxCat(row);
     const q = row ? quoteOf(row) : null;
     const px = q && isNum(q.px) ? q.px : null;
     if (!(h.sh > 0)) {
@@ -278,7 +288,7 @@ export function buildPortfolio(pf, rows, quoteOf, divsData, cfg, today) {
       continue;
     }
     const mv = px != null ? h.sh * px : null;
-    const sv = px != null ? sellValue(h.sh, px, cat, today, cfg) : null;
+    const sv = px != null ? sellValue(h.sh, px, tcat, today, cfg) : null;
     const pnl = sv ? sv.net - h.cost : null;
     // 今日損益：今天以前就持有的股數 × 今日漲跌；今天買的用買進價計算
     // 今日損益：報價日以前就持有的股數 × 今日漲跌；報價日當天的買賣，用成交價和現價的差計算
@@ -301,7 +311,7 @@ export function buildPortfolio(pf, rows, quoteOf, divsData, cfg, today) {
       day, divRecv: rec.total, divItems: rec.items, undated: rec.undated,
       ttm: tr.ttm, months: tr.months.map((x) => x * h.sh), annual: tr.ttm * h.sh,
       nextDiv: nd ? { ...nd, amt: nd.cash ? Math.floor(nd.cash * h.sh + 1e-9) : null } : null,
-      be: breakEven(h.sh, h.cost, cat, today, cfg), sell: sv,
+      be: breakEven(h.sh, h.cost, tcat, today, cfg), sell: sv,
     });
   }
   const cash = isNum(pf.cash) && pf.cash > 0 ? pf.cash : 0;
@@ -501,7 +511,7 @@ export function advise(H, ctx) {
       add('warn', `目前帳面虧損 ${pctS(-pnlPct)}。成本高低不會影響之後的漲跌，不要為了攤平而加碼。`);
     }
     if (isNum(r.dl) && r.dl < px) {
-      const at = sellValue(H.sh, r.dl, cat, ctx.today, ctx.fee).net - H.cost;
+      const at = sellValue(H.sh, r.dl, taxCat(r), ctx.today, ctx.fee).net - H.cost;
       if (at > 0) add('pro', `就算跌到防守線 ${pxS(r.dl)} 出場，仍保有約 ${ntS(at)} 元獲利。`);
       else add('info', `如果跌到防守線 ${pxS(r.dl)} 出場，約虧 ${ntS(-at)} 元${T > 0 ? `（總資產 ${pctS(-at / T)}）` : ''}。`);
     }
@@ -578,13 +588,13 @@ export function planAdd(H, ctx, opt = {}) {
   let lossAtStop = 0;
   for (const t of parts) {
     // 沒等到拉回、照時間買的批次，用現價估算（最保守）
-    const c = tradeCost('buy', t.sh, p1, cat, ctx.today, ctx.fee);
+    const c = tradeCost('buy', t.sh, p1, taxCat(r), ctx.today, ctx.fee);
     spend += c.net;
     fees += c.fee;
     lossAtStop += t.sh * (p1 - stop) + c.fee;
   }
   if (n > 0) {
-    const out = tradeCost('sell', n, stop, cat, ctx.today, ctx.fee);
+    const out = tradeCost('sell', n, stop, taxCat(r), ctx.today, ctx.fee);
     lossAtStop += out.fee + out.tax;
   }
   const newSh = H.sh + n;
@@ -601,7 +611,8 @@ export function planAdd(H, ctx, opt = {}) {
 export function simulateAdd(H, sh, px, ctx) {
   const r = H.row;
   const cat = r ? r.k : null;
-  const c = tradeCost('buy', sh, px, cat, ctx.today, ctx.fee);
+  const tcat = taxCat(r);
+  const c = tradeCost('buy', sh, px, tcat, ctx.today, ctx.fee);
   const T0 = ctx.T || 0;
   const mvAfter = (H.sh + sh) * (H.px || px);
   // 買進後總資產：現金轉成股票不變；現金不夠的部分是新投入的錢
@@ -633,7 +644,7 @@ export function simulateAdd(H, sh, px, ctx) {
   }
   let risk = null;
   if (stop != null) {
-    const out = tradeCost('sell', sh, stop, cat, ctx.today, ctx.fee);
+    const out = tradeCost('sell', sh, stop, tcat, ctx.today, ctx.fee);
     risk = sh * (px - stop) + c.fee + out.fee + out.tax;
     if (T > 0) {
       const budget = T * prof.loss;
@@ -647,16 +658,16 @@ export function simulateAdd(H, sh, px, ctx) {
   const fails = checks.filter((x) => x.ok === false).length;
   return {
     amount: c.amount, fee: c.fee, net: c.net, newSh, newAvg, newW, stop, risk, checks, fails,
-    be: breakEven(newSh, newCost, cat, ctx.today, ctx.fee),
+    be: breakEven(newSh, newCost, tcat, ctx.today, ctx.fee),
   };
 }
 
 /** 賣出試算：手續費、交易稅、已實現損益、剩下的比重。 */
 export function simulateSell(H, sh, px, ctx, why = '') {
   const r = H.row;
-  const cat = r ? r.k : null;
+  const tcat = taxCat(r);
   const n = Math.min(sh, H.sh);
-  const c = tradeCost('sell', n, px, cat, ctx.today, ctx.fee);
+  const c = tradeCost('sell', n, px, tcat, ctx.today, ctx.fee);
   const avg = H.avg || 0;
   const realized = c.net - avg * n;
   const restSh = H.sh - n;
@@ -664,7 +675,7 @@ export function simulateSell(H, sh, px, ctx, why = '') {
   return {
     n, px, amount: c.amount, fee: c.fee, tax: c.tax, net: c.net, realized, why,
     restSh, restW: T > 0 ? (restSh * (H.px || px)) / T : null,
-    taxFree: c.tax === 0 && n > 0,
+    taxFree: n > 0 && taxRateOf(tcat, ctx.today) === 0,
   };
 }
 
@@ -693,16 +704,27 @@ export function makeBackup(data) {
 export function readBackup(obj) {
   if (!obj || obj.app !== 'coldeye' || !obj.pf || !Array.isArray(obj.pf.lots)) throw new Error('不是冷眼的備份資料');
   const okNum = (x) => typeof x === 'number' && Number.isFinite(x);
-  const ids = new Set();
-  for (const l of obj.pf.lots) {
-    const okD = l.d == null || l.d === 0 || (Number.isInteger(l.d) && l.d >= 19000101 && l.d <= 21001231);
-    const okOpt = (x) => x == null || (okNum(x) && x >= 0);
-    if (typeof l.c !== 'string' || !okNum(l.sh) || !(l.sh > 0) || !okNum(l.px) || !(l.px > 0) || !['buy', 'sell'].includes(l.side)
-      || !okD || !okOpt(l.fee) || !okOpt(l.tax) || typeof l.id !== 'string' || !l.id || ids.has(l.id)) {
-      throw new Error('備份裡有格式不正確的交易紀錄');
+  const checkLots = (lots) => {
+    const ids = new Set();
+    for (const l of lots) {
+      const okD = l.d == null || l.d === 0 || (Number.isInteger(l.d) && l.d >= 19000101 && l.d <= 21001231);
+      const okOpt = (x) => x == null || (okNum(x) && x >= 0);
+      if (!l || typeof l.c !== 'string' || !okNum(l.sh) || !(l.sh > 0) || !okNum(l.px) || !(l.px > 0) || !['buy', 'sell'].includes(l.side)
+        || !okD || !okOpt(l.fee) || !okOpt(l.tax) || typeof l.id !== 'string' || !l.id || ids.has(l.id)) {
+        throw new Error('備份裡有格式不正確的交易紀錄');
+      }
+      ids.add(l.id);
     }
-    ids.add(l.id);
-  }
+  };
+  checkLots(obj.pf.lots);
   if (obj.pf.cash != null && !okNum(obj.pf.cash)) throw new Error('備份裡的現金格式不正確');
+  if (obj.paper != null) {
+    const p = obj.paper;
+    const st = p && p.start;
+    if (!p || !Array.isArray(p.lots) || !st || !okNum(st.cash0) || !(st.cash0 > 0) || !okNum(st.px0) || !(st.px0 > 0) || !Number.isInteger(st.d)) {
+      throw new Error('備份裡的模擬倉格式不正確');
+    }
+    checkLots(p.lots);
+  }
   return obj;
 }
