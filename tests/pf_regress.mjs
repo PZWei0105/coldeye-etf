@@ -30,4 +30,7 @@ const pre=PF.buildPortfolio({cash:0,lots:lots2},rows,()=>({px:30,date:20261019})
 const post=PF.buildPortfolio({cash:0,lots:lots2},rows,()=>({px:29,date:20261020}),divs,PF.DEFAULT_FEE,20261020);
 assert.equal(pre.totals.divRecv,0);
 assert.equal(post.totals.divRecv,1000);
+// 除息後還沒有新成交的冷門 ETF：價格（10/15 成交）還含著 10/16 的配息，先不算
+const stale=PF.buildPortfolio({cash:0,lots:lots2},new Map([['0056',{c:'0056',k:'div',p:30,d:20261015}]]),()=>({px:30,date:20261015}),{'0056':{d:[[20261016,1]],s:[]}},PF.DEFAULT_FEE,20261019);
+assert.equal(stale.totals.divRecv,0);
 console.log('回歸測試通過');

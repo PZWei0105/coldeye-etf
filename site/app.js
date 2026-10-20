@@ -5,7 +5,7 @@ import {
   $, $$, esc, clamp, isNum, reduceMotion, store, settings, saveSettings, book, alerts, saveAlerts, S, bus, fmt, money, sharesOf, cash3,
   dirCls, arrow, twParts, CAT, catName, POS, ST, ICON, getJSON, loadCore, useCache, ensureTrack, ensureDivs, quote,
   computePF, hasBook, heldOf, slotVar, stanceChip, posChip, actChip, gaugeSVG, animateNeedles, sparkSVG, toast, countUp,
-  today, PF, premBand, DEFAULT_RULES, isPaper, switchMode,
+  today, PF, premBand, DEFAULT_RULES, isPaper, switchMode, reloadBook, isBookKey,
 } from './core.js';
 import { openDetail, closeDetail, renderDetail, refreshDetailQuote } from './sheet.js';
 import { openTradeForm, openCashForm, openBackup, checkAlerts, closeModal, modalOpen, wipeBook, openPaperStart, PAPER_FRESH_MIN } from './forms.js';
@@ -129,7 +129,10 @@ function freshness() {
   }
   if (S.summary.asof === td) return { key: 'idle', txt: `${fmt.d(S.summary.asof)} 收盤　${agoShort(minsAgo(gen))}更新`, stall };
   // 收盤後到晚上的完整計算跑完之前：畫面上已經是今天的收盤價，只是分析還是昨天的
-  if (weekday && liveToday && hm > 1335) return { key: 'idle', txt: `今天收盤　${hhmm(L.at)} 的價格・完整分析${hm < 1500 ? '約 14:30 ' : '稍晚'}更新`, stall };
+  if (weekday && liveToday && hm > 1335) {
+    if (isoHm(L.at) >= 1330) return { key: 'idle', txt: `今天收盤　${hhmm(L.at)} 的價格・完整分析${hm < 1500 ? '約 14:30 ' : '稍晚'}更新`, stall };
+    return { key: 'lag', txt: `今天 ${hhmm(L.at)} 的價格・收盤價還沒送來`, stall };
+  }
   if (!weekday) return { key: 'idle', txt: `休市　資料到 ${fmt.d(S.summary.asof)}`, stall };
   if (hm < 900) return { key: 'idle', txt: `開盤前　資料到 ${fmt.d(S.summary.asof)}`, stall };
   return { key: 'idle', txt: `資料到 ${fmt.d(S.summary.asof)}　${agoShort(minsAgo(gen))}更新`, stall };
@@ -1076,7 +1079,8 @@ function bootLines() {
     const last = ss.map((s) => s.ok_at).filter(Boolean).sort().pop();
     return { k, v, ok, t: ok ? `連線 ${last ? fmt.d(Number(last.slice(0, 10).replace(/-/g, ''))) + ' ' + last.slice(11, 16) : ''}` : '部分異常' };
   });
-  rows.push({ k: '規則引擎', v: `v${S.summary ? S.summary.engine : '—'}・回測含 2022 年大跌`, ok: true, t: '就緒' });
+  const bt = S.track && S.track.overall && S.track.overall.start;
+  rows.push({ k: '規則引擎', v: `v${S.summary ? S.summary.engine : '—'}・${bt ? `回測從 ${Math.floor(bt / 10000)} 年${bt <= 20220101 ? '起，含 2022 年大跌' : ' ' + (Math.floor(bt / 100) % 100) + ' 月起'}` : '固定規則、可重現'}`, ok: true, t: '就緒' });
   rows.push({ k: '駕駛員', v: settings.name || 'PZ', ok: true, t: '認證', me: true });
   return rows;
 }
@@ -1180,6 +1184,12 @@ async function boot() {
     if (document.visibilityState !== 'visible') return;
     Promise.all([loadCore(), ensureDivs(true)]).then(() => { diffSeen(); computePF(); if (!S.openCode) render(); }).catch(() => {});
   }, 15 * 60000);
+  // 同一支手機開了兩個冷眼分頁：另一邊記了交易或提醒，這邊馬上重讀，免得用舊的內容蓋回去
+  window.addEventListener('storage', (e) => {
+    if (!e.key) return;
+    if (isBookKey(e.key)) { reloadBook(); bus.emit('book'); }
+    else if (e.key === 'coldeye.alerts') { alerts.splice(0, alerts.length, ...store.get('alerts', [])); bus.emit('alerts'); }
+  });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 boot();

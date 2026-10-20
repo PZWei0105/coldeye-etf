@@ -24,7 +24,8 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(
       fetch(e.request)
         .then((res) => {
-          if (res.ok) caches.open(DATA).then((c) => c.put(key, res.clone()));
+          // 一定要在把回應交給頁面「之前」複製，頁面讀完之後就不能再複製了
+          if (res.ok) { const copy = res.clone(); caches.open(DATA).then((c) => c.put(key, copy)); }
           return res;
         })
         // 連不上網路：給上次存下的資料，並標記「這是離線的舊資料」，App 才不會說成最新
@@ -41,7 +42,7 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(
       caches.match(e.request, { ignoreSearch: true }).then((hit) => {
         const net = fetch(e.request).then((res) => {
-          if (res.ok) caches.open(SHELL).then((c) => c.put(e.request, res.clone()));
+          if (res.ok) { const copy = res.clone(); caches.open(SHELL).then((c) => c.put(e.request, copy)); }
           return res;
         }).catch(() => hit);
         return hit || net;

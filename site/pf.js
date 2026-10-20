@@ -289,8 +289,9 @@ export function buildPortfolio(pf, rows, quoteOf, divsData, cfg, today) {
     const cat = row ? row.k : null;
     const tcat = taxCat(row);
     const q = row ? quoteOf(row) : null;
-    // 除息日開盤前，價格還是除息前的昨收：這時候先不算當天的配息，不然股息會被算兩次（價格裡一次、已領配息一次）
-    const divAsOf = q && q.date && q.date < today ? today - 1 : today;
+    // 配息只算到「畫面上價格的日期」為止：除息日開盤前（價格還是昨收）、或除息後還沒有新成交的冷門 ETF，
+    // 價格裡還含著那次配息，這時候先不算，不然股息會被算兩次（價格裡一次、已領配息一次）
+    const divAsOf = q && q.date ? Math.min(q.date, today) : today;
     const rec = dividendsReceived(lots, dv.d, splits, divAsOf);
     realizedAll += h.realized;
     divAll += rec.total;

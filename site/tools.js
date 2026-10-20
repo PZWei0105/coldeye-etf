@@ -230,7 +230,7 @@ function tmResult(res, row) {
       <div class="tm-sub muted">領到股息 ${money(base.div)} 元・手續費 ${money(base.fee)} 元・現在約 ${fmt.n(base.sh)} 股</div>
     </section>
     <div class="sec-h"><h2>照冷眼的訊號買，會更好嗎？</h2></div>
-    ${res.hasSig ? '' : '<section class="panel pad calm"><b>這檔上市還不到半年，規則還沒有足夠的資料判讀。</b><span class="muted">所以這裡只看定期定額；等它累積更多交易日，就能比較照訊號買的結果。</span></section>'}
+    ${res.hasSig ? '' : '<section class="panel pad calm"><b>這檔有成交的交易日還不夠多（上市不久，或平常很少成交），規則還沒有足夠的資料判讀。</b><span class="muted">所以這裡只看定期定額；等它累積更多交易日，就能比較照訊號買的結果。</span></section>'}
     <section class="panel list tm-list">${Object.entries(S3).map(([k, s]) => `<div class="tm-row${k === 'dca' ? ' base' : ''}" style="--c:${col[k]}">
         <div class="tm-r1"><span class="tm-n"><i></i><b>${esc(s.name)}</b>${k === 'dca' ? '<small>基準</small>' : ''}</span><b class="num tm-v">${money(s.value)}</b></div>
         <div class="tm-r2"><span class="muted">${esc(s.desc)}</span></div>

@@ -15,16 +15,23 @@ const isoD = (iso) => (iso ? +iso.slice(0, 10).replace(/-/g, '') : 0);
  */
 export function paperFill(row) {
   if (!row) return { ok: false, why: '' };
+  const at = S.live && S.live.at;
+  const now = Date.now();
+  // 手機時間比冷眼的資料還早（時間被調過）：不成交，不然等於拿「未來」才知道的價格下單
+  const newest = Math.max(at ? Date.parse(at) || 0 : 0, S.summary && S.summary.generated ? Date.parse(S.summary.generated) || 0 : 0);
+  if (newest > now + 2 * 60e3) return { ok: false, why: '手機的日期或時間比冷眼的資料還早，請先確認手機的時間設定。' };
   const { wd, h, min } = twParts();
   const hm = h * 100 + min;
   if (wd < 1 || wd > 5 || hm < 900 || hm >= 1430) return { ok: false, why: '模擬倉只在交易日 09:00–14:30 成交（13:30 以後用收盤價），跟真的下單一樣。現在可以先看建議、設到價提醒。' };
   const q = quote(row);
   if (q.date !== today() || !isNum(q.px) || !(q.px > 0)) return { ok: false, why: `${row.n} 今天還沒有成交價，等它有成交再下單。` };
-  const at = S.live && S.live.at;
+  // 成交很少的 ETF：盤中資料的日期是今天，但價格可能是好幾天前最後一筆成交
+  if (row.d !== today() && S.summary && row.d < S.summary.asof) return { ok: false, why: `${row.n} 成交很少，上一個交易日沒有成交，盤中顯示的可能是好幾天前的價格，模擬倉先不提供。` };
   if (hm < 1325) {
-    const age = at ? (Date.now() - new Date(at).getTime()) / 60000 : Infinity;
+    const age = at ? (now - Date.parse(at)) / 60000 : Infinity;
     if (!(age <= PAPER_FRESH_MIN)) return { ok: false, why: `盤中價格已經 ${isFinite(age) ? Math.round(age) + ' 分鐘' : '一陣子'}沒有更新，等後台送來新價格再下單，避免用舊價格成交。` };
-  } else if (!(isoD(at) === today() && isoHm(at) >= 1330) && !(row.d === today())) {
+  } else if (row.d !== today() && !(q.live && q.time && String(q.time) >= '13:30')) {
+    // 13:25 以後：要等證交所 13:30 收盤後的資料（看這檔資料本身的時間，不是後台發布的時間）
     return { ok: false, why: hm < 1340 ? '13:25–13:30 是收盤集合競價，等收盤價出來（大約 13:35）再下單。' : '後台還沒送來今天的收盤價，稍後再試。' };
   }
   return { ok: true, px: q.px, qat: at || null };
@@ -291,7 +298,9 @@ export function openTradeForm(o = {}) {
 export function paperUndoable(lot) {
   const lots = PF.sortLots(book.lots);
   const last = lots[lots.length - 1];
-  return !!(last && last.id === lot.id && lot.d === today() && lot.qat && S.live && lot.qat === S.live.at);
+  const mins = (Date.now() - (Date.parse(lot.at) || 0)) / 60000;
+  return !!(last && last.id === lot.id && lot.d === today() && lot.qat && S.live && lot.qat === S.live.at
+    && mins >= -2 && mins <= PAPER_FRESH_MIN);
 }
 function openPaperLot(lot) {
   const row = S.rows.get(lot.c);
@@ -301,7 +310,7 @@ function openPaperLot(lot) {
       <h2 class="m-title">模擬${sell ? '賣出' : '買進'}・${esc(row ? row.n : lot.c)}</h2>
       <p class="m-desc"><span class="num">${fmt.dy(lot.d)}</span>　${PF.sharesText(lot.sh)} × <b class="num">${fmt.px(lot.px)}</b>，手續費 <span class="num">${fmt.n(lot.fee || 0)}</span>${sell ? `、證交稅 <span class="num">${fmt.n(lot.tax || 0)}</span>` : ''}</p>
       ${lot.note ? `<p class="m-desc">筆記：${esc(lot.note)}</p>` : ''}
-      <p class="m-desc">模擬倉的交易成交後就不能修改，跟真的下單一樣。${can ? '價格還沒更新，可以撤銷這一筆。' : '只有最新一筆、而且價格還沒更新以前可以撤銷（價格一變就知道結果了，再撤銷等於事後反悔）。'}</p>
+      <p class="m-desc">模擬倉的交易成交後就不能修改，跟真的下單一樣。${can ? '價格還沒更新，可以撤銷這一筆。' : `只有最新一筆、下單 ${PAPER_FRESH_MIN} 分鐘內、而且價格還沒更新以前可以撤銷（價格一變就知道結果了，再撤銷等於事後反悔）。`}</p>
       <div class="m-actions">${can ? '<button type="button" class="btn danger ghost" id="pl-undo">撤銷這筆</button>' : ''}<button type="button" class="btn ghost" data-close>關閉</button></div>
     </div>`, { label: '模擬交易' });
   const u = $('#pl-undo', card);
@@ -492,6 +501,13 @@ export function openBackup() {
   });
   const go = $('#b-go', card);
   const disarm = () => { go.dataset.armed = ''; go._obj = null; go.textContent = '還原'; };
+  // 模擬倉不能用比較舊的備份蓋掉（不然買了賠錢就還原，等於事後反悔）；換手機時模擬倉是空的，照常還原
+  const activity = (b) => Math.max(0, ...((b && b.lots) || []).map((l) => Date.parse(l.at) || 0), b && b.start && b.start.d ? Date.parse(isoOf(b.start.d)) || 0 : 0);
+  const paperOk = (obj) => {
+    if (!obj.paper) return false;
+    const cur = isPaper() ? book : otherBook();
+    return !(cur && cur.start && activity(cur) > activity(obj.paper));
+  };
   $('#b-in', card).addEventListener('input', disarm);
   const restore = (txt) => {
     const err = $('#b-err', card);
@@ -510,11 +526,12 @@ export function openBackup() {
       const other = otherBook();
       const nReal = isPaper() ? ((other && other.lots) || []).length : book.lots.length;
       const nPaper = isPaper() ? book.lots.length : ((other && other.lots) || []).length;
-      go.textContent = `確定還原？真實部位：備份 ${obj.pf.lots.length} 筆取代目前 ${nReal} 筆${obj.paper ? `；模擬倉：備份 ${obj.paper.lots.length} 筆取代目前 ${nPaper} 筆` : '（模擬倉不變）'}`;
+      go.textContent = `確定還原？真實部位：備份 ${obj.pf.lots.length} 筆取代目前 ${nReal} 筆${paperOk(obj) ? `；模擬倉：備份 ${obj.paper.lots.length} 筆取代目前 ${nPaper} 筆` : obj.paper ? '；模擬倉有備份之後的新交易，維持現狀' : '（模擬倉不變）'}`;
       return;
     }
     const real = { cash: obj.pf.cash || 0, lots: obj.pf.lots, colors: obj.pf.colors || {} };
-    setBooks(obj.paper ? { real, paper: obj.paper } : { real });
+    const withPaper = paperOk(obj);
+    setBooks(withPaper ? { real, paper: obj.paper } : { real });
     alerts.splice(0, alerts.length, ...(obj.alerts || []));
     saveAlerts();
     if (obj.prefs) {
@@ -523,7 +540,7 @@ export function openBackup() {
     }
     closeModal();
     buzz();
-    toast(`已還原 ${obj.pf.lots.length} 筆交易${obj.paper ? `、模擬倉 ${obj.paper.lots.length} 筆` : ''}`);
+    toast(`已還原 ${obj.pf.lots.length} 筆交易${withPaper ? `、模擬倉 ${obj.paper.lots.length} 筆` : ''}`);
     bus.emit('book');
   };
   go.addEventListener('click', () => restore($('#b-in', card).value));

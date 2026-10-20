@@ -54,6 +54,12 @@ export function switchMode(mode) {
   for (const k of Object.keys(book)) delete book[k];
   Object.assign(book, EMPTY_BOOK(), store.get(bookKey(), {}));
 }
+/** 另一個分頁改了儲存的資料：重新讀進來，免得這個分頁用舊的內容蓋回去 */
+export function reloadBook() {
+  for (const k of Object.keys(book)) delete book[k];
+  Object.assign(book, EMPTY_BOOK(), store.get(bookKey(), {}));
+}
+export const isBookKey = (k) => k === 'coldeye.' + bookKey();
 /** 換掉目前這一本（還原備份、重設模擬倉用） */
 export function replaceBook(next) {
   for (const k of Object.keys(book)) delete book[k];
