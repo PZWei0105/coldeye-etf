@@ -22,8 +22,14 @@ PUBLIC = ROOT / 'public'
 STATE_DIR = '.state'
 
 MIN_BARS = 70
-BACKFILL_MONTHS = 26
-FLOW_DAYS = 260
+# 歷史資料從 2020 年起：回測要包含 2022 年的大跌，不能只看一段多頭
+HISTORY_START = dt.date(2020, 1, 1)
+DIV_HISTORY_START = dt.date(2019, 1, 1)   # 還原權息要比價格早一點開始
+DONE_KEEP = 6000                           # 回補完成日期清單保留的筆數（要大於歷史交易日數）
+
+
+def backfill_months(today: dt.date) -> int:
+    return (today.year - HISTORY_START.year) * 12 + today.month - HISTORY_START.month + 1
 
 
 def run(mode: str) -> bool:
@@ -110,8 +116,8 @@ def _mark_done(state, key, d):
     if d not in lst:
         lst.append(d)
         lst.sort()
-        if len(lst) > 900:
-            del lst[:len(lst) - 900]
+        if len(lst) > DONE_KEEP:
+            del lst[:len(lst) - DONE_KEEP]
 
 
 def fetch_day(state, http, market, kind, d: int, when):
@@ -146,10 +152,10 @@ def backfill(state, log, budget_s):
     now = now_tw()
     when = now.isoformat(timespec='minutes')
     http = Http(2.3)
-    step(log, 'taiex_months', update_taiex, state, http, _months_back(now.date(), BACKFILL_MONTHS))
+    step(log, 'taiex_months', update_taiex, state, http, _months_back(now.date(), backfill_months(now.date())))
     days = sorted(trading_days(state), reverse=True)
-    days = [d for d in days if d <= d2i(now.date())]
-    plan = [('daily', days), ('flows', days[:FLOW_DAYS]), ('margin', days[:FLOW_DAYS])]
+    days = [d for d in days if d2i(HISTORY_START) <= d <= d2i(now.date())]
+    plan = [('daily', days), ('flows', days), ('margin', days)]
     counters = {}
 
     def worker(market):
@@ -187,13 +193,12 @@ def backfill(state, log, budget_s):
     # 配息歷史（證交所可一次查一段期間）
     step(log, 'twse_div_history', twse_dividend_history, state, http, now.date())
     step(log, 'tpex_div_history', tpex_dividend_history, state, now.date())
-    step(log, 'yields_history', update_yields, state, Http(1.5), [now.year - 2, now.year - 1, now.year])
+    step(log, 'yields_history', update_yields, state, Http(1.5), list(range(DIV_HISTORY_START.year, now.year + 1)))
 
 
 def twse_dividend_history(state, http, today):
-    start = dt.date(today.year - 3, 1, 1)
     got = 0
-    cur = start
+    cur = DIV_HISTORY_START
     while cur <= today:
         nxt = dt.date(cur.year + (cur.month + 3 > 12), (cur.month + 2) % 12 + 1, 1)
         end = min(nxt - dt.timedelta(days=1), today)
@@ -209,10 +214,10 @@ def twse_dividend_history(state, http, today):
 
 
 def tpex_dividend_history(state, today):
-    """櫃買中心 除權除息計算結果表，每季查一段，補齊近三年上櫃 ETF（多為債券 ETF）的配息。"""
+    """櫃買中心 除權除息計算結果表，每季查一段，補齊上櫃 ETF（多為債券 ETF）的歷史配息。"""
     http = Http(2.3)
     got = 0
-    cur = dt.date(today.year - 3, 1, 1)
+    cur = DIV_HISTORY_START
     while cur <= today:
         nxt = dt.date(cur.year + (cur.month + 3 > 12), (cur.month + 2) % 12 + 1, 1)
         end = min(nxt - dt.timedelta(days=1), today)
@@ -319,8 +324,8 @@ def eod(state, log, weekly=False):
 
 def trickle_backfill(state, http_tw, http_tp, when, per_market):
     """大量回補若被中斷，平常每次收盤後的更新順便補幾天，幾天內就能補齊。"""
-    days = sorted([d for d in trading_days(state) if d <= d2i(now_tw().date())], reverse=True)
-    plan = [('daily', days), ('flows', days[:FLOW_DAYS]), ('margin', days[:FLOW_DAYS])]
+    days = sorted([d for d in trading_days(state) if d2i(HISTORY_START) <= d <= d2i(now_tw().date())], reverse=True)
+    plan = [('daily', days), ('flows', days), ('margin', days)]
     done_n = 0
     for market, http in (('tse', http_tw), ('otc', http_tp)):
         budget = per_market
@@ -456,11 +461,12 @@ def active_codes(state):
     return {c for c, d in state['daily'].items() if d['d'] and d['d'][-1] >= cutoff}
 
 
-def make_series(state):
+def make_series(state, inactive=False):
+    """預設只做還在交易的 ETF；inactive=True 只做已經下市、停止交易的（回測要算進去，避免只看「活下來的」造成高估）。"""
     out = {}
     active = active_codes(state)
     for code, daily in state['daily'].items():
-        if code not in active or len(daily['d']) < MIN_BARS:
+        if (code in active) == inactive or len(daily['d']) < MIN_BARS:
             continue
         meta = state['meta'].get(code, {})
         try:
@@ -541,6 +547,7 @@ def compute(state, extra, out_dir, now):
             ctx['extra_flags'].setdefault(r['code'], []).append(
                 {'key': r['kind'], 'text': ('處置中：' if r['kind'] == 'disposal' else '列入注意股：') + (r.get('period') or r.get('text') or '')[:80]})
     series = make_series(state)
+    series_bt = {**make_series(state, inactive=True), **series}
     mis = extra.get('mis') or {}
     pre = extra.get('pre') or []
     next_div = {}
@@ -550,12 +557,12 @@ def compute(state, extra, out_dir, now):
 
     # ---- 回測（全部 ETF）
     bt_rows = {}
-    for code, s in series.items():
+    for code, s in series_bt.items():
         try:
             bt_rows[code] = backtest.run_series(s, ctx)
         except Exception:  # noqa: BLE001
             traceback.print_exc()
-    cats = {c: s.cat for c, s in series.items()}
+    cats = {c: s.cat for c, s in series_bt.items()}
     ctx['cat_edge'] = backtest.category_edge(bt_rows, cats)
     pos_cat = backtest.pos_stats_by_cat(bt_rows, cats)
     overall_edge = backtest.category_edge({'*': [r for rows in bt_rows.values() for r in rows]}, {'*': '*'}, min_n=1).get('*', {})
@@ -624,13 +631,15 @@ def compute(state, extra, out_dir, now):
             del state['views'][k]
 
     live_rows, pending = backtest.live_record(state['views'], series)
-    track = make_track(bt_rows, live_rows, pending, cats, series)
+    track = make_track(bt_rows, live_rows, pending, cats, series_bt)
+    track['delisted_n'] = sum(1 for c in series_bt if c not in series)
     track['pos'] = pos_cat
     track['pos_adj'] = backtest.pos_adjusted(pos_cat)
     live_all = [r for rows in live_rows.values() for r in rows]
     track['live_pos'] = backtest.pos_stats(live_all) if live_all else None
     write_json(out_dir / 'track.json', track)
     write_json(out_dir / 'divs.json', make_divs(state, series, summary_rows, now))
+    write_hist(out_dir, series, bt_rows, ctx)
 
     summary_rows.sort(key=lambda x: x['c'])
     tx = state['taiex']
@@ -667,6 +676,22 @@ def _cat(code, name):
     return infer_category(code, name)
 
 
+def perf_stats(s, i, days=250):
+    """近一年（250 個交易日）的含息報酬、年化波動、最大回檔，都用還原權息價計算。資料不滿一年回傳 None。"""
+    if i < days:
+        return None, None, None
+    c = s.c[i - days:i + 1]
+    r1y = c[-1] / c[0] - 1
+    rets = [math.log(c[k] / c[k - 1]) for k in range(1, len(c)) if c[k] and c[k - 1]]
+    mu = sum(rets) / len(rets)
+    vol = math.sqrt(sum((x - mu) ** 2 for x in rets) / max(1, len(rets) - 1)) * math.sqrt(250)
+    peak, mdd = c[0], 0.0
+    for x in c:
+        peak = max(peak, x)
+        mdd = max(mdd, 1 - x / peak)
+    return r1y, vol, mdd
+
+
 def summary_row(s, r, m, nd, state):
     i = s.n - 1
     raw = s.raw_c
@@ -684,6 +709,7 @@ def summary_row(s, r, m, nd, state):
     pos = r.get('position') or {}
     yp = comps.get('yield', {}).get('facts', {}).get('pctl') if 'yield' in comps else None
     pb = lv.get('pullback')
+    r1y, vol1y, mdd1y = perf_stats(s, i)
     return {
         'c': s.code, 'n': s.name, 'k': s.cat, 'm': s.market, 'd': s.dates[i],
         'p': raw[i], 'pc': r4((s.c[i] / s.c[i - 1] - 1) * 100, 2) if i else None,
@@ -703,6 +729,8 @@ def summary_row(s, r, m, nd, state):
         'ps': pos.get('key'), 'dl': pos.get('dl'), 'pb': pb['price'] if pb else None,
         'atr': (r.get('risk') or {}).get('atr'), 'rsi': pos.get('rsi'), 'm20': pos.get('ma20'),
         'yp': r4(yp, 3), 'hot': pos.get('hot'), 'blw': pos.get('below'), 'fx': s.foreign,
+        # ETF 對決用：近一年含息報酬、年化波動、最大回檔（小數，0.12 = 12%）
+        'r1y': r4(r1y), 'vol': r4(vol1y), 'mdd': r4(mdd1y), 'since': s.dates[0],
     }
 
 
@@ -744,6 +772,30 @@ def write_detail(out_dir, s, r, state, bt, nd, m, ctx, pos_bt=None):
         'pos_bt': pos_bt, 'pos_bt_self': backtest.pos_stats(bt) if bt else None,
     }
     write_json(out_dir / 'etf' / f'{s.code}.json', detail)
+
+
+def write_hist(out_dir, series, bt_rows, ctx):
+    """存股時光機用：每檔 ETF 的完整日收盤（實際成交價，非還原）、配息、分割，
+    以及每 5 個交易日一次的部位訊號（和回測同一套取樣；最後 20 天回測沒有樣本，另外補算）。"""
+    hdir = out_dir / 'hist'
+    hdir.mkdir(parents=True, exist_ok=True)
+    ctx_hist = {k: v for k, v in ctx.items() if k != 'cat_edge'}
+    for code, s in series.items():
+        sig = [[r[0], r[5]] for r in (bt_rows.get(code) or []) if r[5]]
+        k = (s.idx(sig[-1][0]) + backtest.STEP) if sig else 130
+        cache = {}
+        while k < s.n:
+            try:
+                v = engine.analyze(s, k, ctx_hist, live=None, hist_cache=cache, full=False)
+            except Exception:  # noqa: BLE001
+                v = None
+            if v and v.get('ps'):
+                sig.append([s.dates[k], v['ps']])
+            k += backtest.STEP
+        write_json(hdir / f'{code}.json', {
+            'c': code, 'd': s.dates, 'p': [r4(x, 3) for x in s.raw_c], 'sig': sig,
+            'splits': [list(x) for x in s.splits], 'divs': [list(x) for x in s.divs if x[1]],
+        })
 
 
 def make_divs(state, series, rows, now):
