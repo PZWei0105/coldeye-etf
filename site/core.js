@@ -317,7 +317,7 @@ export function toast(msg) {
   t.textContent = msg;
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, 2400);
+  toastTimer = setTimeout(() => { t.hidden = true; }, Math.min(6000, 1800 + String(msg).length * 70));   // 字多就停久一點
 }
 export function buzz(ms = 12) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch { /* 不支援 */ } }
 

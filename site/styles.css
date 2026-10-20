@@ -143,6 +143,8 @@ small { font-size: 12px; }
 .status span { overflow: hidden; text-overflow: ellipsis; }
 .status i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--frost-3); }
 .status.open i { background: var(--glacier); animation: pulse 2.4s infinite; }
+.status.stale { color: var(--amber); }
+.status.stale i { background: var(--amber); }
 .status.busy { opacity: .6; }
 .status.busy i { animation: blink .6s infinite alternate; }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--glacier) 60%, transparent); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
@@ -360,6 +362,9 @@ main {
 .gauge .needle line { stroke-width: 2.2; stroke-linecap: round; }
 .gauge .needle circle { stroke: var(--hull); stroke-width: 2; }
 
+.stall { display: grid; gap: 4px; border-color: color-mix(in srgb, var(--amber) 55%, var(--seam)); background: linear-gradient(var(--amber-wash), var(--amber-wash)), var(--hull); }
+.stall b { color: var(--amber); font-size: 15px; }
+.stall span { font-size: 13px; color: var(--frost-2); line-height: 1.6; }
 .install { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px 14px; }
 .install p { margin: 0; font-size: 13px; color: var(--frost-2); }
 
@@ -777,7 +782,7 @@ details.rules[open] summary::after { content: "－"; }
 details.rules .in { padding: 0 16px 14px; }
 
 .toast {
-  position: fixed; left: 50%; bottom: calc(var(--dock) + 22px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+  position: fixed; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 62px); transform: translateX(-50%);
   z-index: 90; background: var(--frost); color: var(--abyss); padding: 9px 16px; border-radius: 12px; font-size: 13.5px; font-weight: 500;
   box-shadow: var(--shadow); max-width: calc(100vw - 32px); pointer-events: none; text-align: center;
 }

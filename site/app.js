@@ -64,33 +64,54 @@ function greeting() {
   const word = h >= 5 && h < 11 ? '早安' : h >= 11 && h < 18 ? '午安' : '晚安';
   return `${settings.name || 'PZ'}，${word}`;
 }
+/** 資料新鮮度：後台每一輪都會重寫 live.json，所以它的時間就是「後台最後一次活著」的時間 */
+const hhmm = (iso) => (iso ? new Date(iso).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Taipei' }) : '—');
+const minsAgo = (iso) => { const t = iso ? new Date(iso).getTime() : NaN; return isFinite(t) ? Math.max(0, Math.round((Date.now() - t) / 60000)) : null; };
+const agoShort = (m) => (m == null ? '' : m < 1 ? '剛剛' : m < 60 ? `${m} 分前` : m < 1440 ? `${Math.round(m / 60)} 小時前` : `${Math.round(m / 1440)} 天前`);
+const durShort = (m) => (m == null ? '' : m < 60 ? `${m} 分鐘` : m < 1440 ? `${Math.round(m / 60)} 小時` : `${Math.round(m / 1440)} 天`);
+const LAG_MIN = 20;       // 盤中資料超過幾分鐘算「延遲」
+const STALL_MIN = 54 * 60; // 後台超過幾分鐘完全沒動靜算「停擺」（週六 09:20 到週一 09:00 約 48 小時，留一點餘裕）
+function freshness() {
+  const L = S.live;
+  const { wd, h, min } = twParts();
+  const hm = h * 100 + min;
+  const weekday = wd >= 1 && wd <= 5;
+  const session = weekday && hm >= 900 && hm <= 1335;
+  const age = L ? minsAgo(L.at) : null;
+  const gen = S.summary ? S.summary.generated : null;
+  const newest = [L && L.at, gen].filter(Boolean).sort().pop() || null;
+  const stall = newest ? minsAgo(newest) >= STALL_MIN : false;
+  const liveToday = L && L.date === today();
+  if (session && liveToday && L.open) {
+    const lag = age != null && age > LAG_MIN;
+    return { key: lag ? 'lag' : 'live', txt: `盤中　${hhmm(L.at)} 資料・${agoShort(age)}`, stall };
+  }
+  if (session && L && !liveToday && age != null && age <= LAG_MIN && hm >= 915) {
+    return { key: 'idle', txt: `今天休市　資料到 ${fmt.d(S.summary.asof)}`, stall };
+  }
+  if (session) {
+    return { key: hm >= 915 ? 'lag' : 'wait', txt: hm >= 915 ? `開盤了，後台還沒送來盤中資料` : '開盤了，等第一筆盤中資料', stall };
+  }
+  if (S.summary.asof === today()) return { key: 'idle', txt: `${fmt.d(S.summary.asof)} 收盤　${agoShort(minsAgo(gen))}更新`, stall };
+  if (!weekday) return { key: 'idle', txt: `休市　資料到 ${fmt.d(S.summary.asof)}`, stall };
+  if (hm < 900) return { key: 'idle', txt: `開盤前　資料到 ${fmt.d(S.summary.asof)}`, stall };
+  return { key: 'idle', txt: `資料到 ${fmt.d(S.summary.asof)}　${agoShort(minsAgo(gen))}更新`, stall };
+}
 function renderHeader() {
   const hi = $('#hi');
   if (hi) hi.textContent = greeting();
   const el = $('#status');
   if (!el || !S.summary) return;
-  const L = S.live;
-  const { wd, h, min } = twParts();
-  const hm = h * 100 + min;
-  let cls = '', txt = '';
-  if (L && L.open) {
-    cls = 'open';
-    txt = `盤中　${L.at ? new Date(L.at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Taipei' }) : ''} 更新`;
-  } else if (S.summary.asof === today()) {
-    txt = `${fmt.d(S.summary.asof)} 收盤　${fmt.ago(S.summary.generated)}更新`;
-  } else if (wd === 0 || wd === 6) {
-    txt = `休市　資料到 ${fmt.d(S.summary.asof)}`;
-  } else if (hm < 900) {
-    txt = `開盤前　資料到 ${fmt.d(S.summary.asof)}`;
-  } else {
-    txt = `資料到 ${fmt.d(S.summary.asof)}　${fmt.ago(S.summary.generated)}更新`;
-  }
-  el.className = 'status ' + cls;
-  el.innerHTML = `<i></i><span>${txt}</span>`;
+  const f = freshness();
+  el.className = `status ${f.key === 'live' ? 'open' : f.key === 'lag' ? 'stale' : ''}${el.classList.contains('busy') ? ' busy' : ''}`;
+  el.innerHTML = `<i></i><span>${f.txt}</span>`;
+  el.setAttribute('aria-label', `${f.txt}。點一下重新整理`);
 }
 async function manualRefresh() {
   const el = $('#status');
+  if (el.classList.contains('busy')) return;
   el.classList.add('busy');
+  const before = [S.live && S.live.at, S.summary && S.summary.generated].join('|');
   try {
     await loadCore();
     S.news = null;
@@ -99,9 +120,14 @@ async function manualRefresh() {
     await Promise.all([ensureTrack(), ensureDivs(true)]);
     diffSeen();
     computePF();
+    el.classList.remove('busy');
     render();
     if (S.openCode && S.openCode !== '__prefs') renderDetail(S.openCode);
-    toast('已更新到最新資料');
+    const after = [S.live && S.live.at, S.summary && S.summary.generated].join('|');
+    const f = freshness();
+    if (after !== before) toast(f.key === 'live' || f.key === 'lag' ? `已更新到 ${hhmm(S.live.at)} 的資料` : '已更新到最新資料');
+    else if (f.key === 'live' || f.key === 'lag') toast(`後台還沒有新資料（目前是 ${hhmm(S.live.at)} 的），通常每 5 分鐘一輪`);
+    else toast('已經是最新的資料');
   } catch {
     toast('暫時連不上，顯示的是上次的資料');
   } finally {
@@ -161,7 +187,7 @@ function diffSeen() {
 function renderHome() {
   const v = $('#view');
   const P = S.P;
-  let html = heroHTML(P);
+  let html = stallHTML() + heroHTML(P);
   html += installCard();
   const acts = buildActions(P);
   html += `<div class="sec-h"><h2>今日行動</h2><span class="aside">${acts.length ? `${acts.length} 件` : ''}</span></div>`;
@@ -337,6 +363,12 @@ function watchRow(row) {
   </button>`;
 }
 
+function stallHTML() {
+  const f = freshness();
+  if (!f.stall) return '';
+  const newest = [S.live && S.live.at, S.summary.generated].filter(Boolean).sort().pop();
+  return `<section class="panel pad stall" role="alert"><b>後台已經 ${durShort(minsAgo(newest))}沒有更新了</b><span>正常情況下交易日每 5 分鐘、週末至少一次。可能是 GitHub 的排程停了；畫面上是 ${fmt.d(S.summary.asof)} 的資料。請找 Claude 檢查「冷眼的後台」。</span></section>`;
+}
 function installCard() {
   const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   if (standalone || settings.installHidden) return '';
@@ -718,7 +750,7 @@ function drawSettings() {
       <details class="rules"><summary>加碼、減碼建議怎麼算</summary><div class="in prose">${posRulesHTML()}</div></details>
     </section>
     <section class="panel tbl-wrap"><table class="t"><thead><tr><th>官方來源</th><th class="r">最後成功</th></tr></thead><tbody>${src.map(([, s]) => `<tr><td><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name)}</a></td><td class="r muted">${s.ok_at ? fmt.ago(s.ok_at) : '—'}</td></tr>`).join('')}</tbody></table></section>
-    <section class="panel pad prose"><p><b>關於冷眼</b>　規則版本 ${esc(S.summary ? S.summary.engine : '')}，資料更新 ${S.summary ? fmt.ago(S.summary.generated) : '—'}。盤中約每 15 分鐘更新價格與預估淨值，收盤後陸續補上法人、融資、淨值。</p>
+    <section class="panel pad prose"><p><b>關於冷眼</b>　規則版本 ${esc(S.summary ? S.summary.engine : '')}，資料更新 ${S.summary ? fmt.ago(S.summary.generated) : '—'}。盤中約每 5 分鐘更新價格與預估淨值（GitHub 忙時會晚一點），收盤後陸續補上法人、融資、淨值。</p>
       <p>這是 ${esc(settings.name || 'PZ')} 個人使用的資料整理與規則化分析工具，不是投顧服務。觀點與建議不保證報酬，任何買賣決定請自行判斷並承擔風險。</p></section>
   </div>`;
   bindSettings();
@@ -855,7 +887,10 @@ async function boot() {
   const h = location.hash.replace('#', '');
   if (h === 'settings') openSettings(false);
   else if (h && S.rows.has(h)) openDetail(h, false);
-  setInterval(() => { if (document.visibilityState === 'visible' && S.live && S.live.open) refreshLive(); }, 60000);
+  // 盤中（以手機時間判斷，不靠舊的 live.json）每分鐘看一次後台有沒有新資料
+  const inSession = () => { const { wd, h, min } = twParts(); const hm = h * 100 + min; return wd >= 1 && wd <= 5 && hm >= 900 && hm <= 1340; };
+  setInterval(() => { if (document.visibilityState === 'visible' && ((S.live && S.live.open) || inSession())) refreshLive(); }, 60000);
+  setInterval(() => { if (document.visibilityState === 'visible') renderHeader(); }, 30000);
   setInterval(() => {
     if (document.visibilityState !== 'visible') return;
     Promise.all([loadCore(), ensureDivs(true)]).then(() => { diffSeen(); computePF(); if (!S.openCode) render(); }).catch(() => {});

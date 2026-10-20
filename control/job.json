@@ -1,1 +1,1 @@
-{"job": "eod", "note": "推到 main 時要執行的工作：probe / backfill / eod / intraday / deploy"}
+{"job": "deploy", "note": "推到 main 時要執行的工作：probe / backfill / eod / intraday / deploy"}

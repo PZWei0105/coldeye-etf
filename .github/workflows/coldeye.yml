@@ -3,7 +3,7 @@ name: coldeye
 on:
   schedule:
     # 時間皆為 UTC；台灣時間 = UTC+8
-    - cron: '*/15 1-5 * * 1-5'   # 09:00–13:45 盤中，每 15 分鐘
+    - cron: '*/5 1-5 * * 1-5'    # 09:00–13:55 盤中，每 5 分鐘（GitHub 忙時會漏跑，排密一點才補得回來）
     - cron: '25 6 * * 1-5'       # 14:25 收盤行情
     - cron: '40 7 * * 1-5'       # 15:40 三大法人
     - cron: '50 9 * * 1-5'       # 17:50 投信公告淨值
@@ -21,6 +21,7 @@ permissions:
   contents: write
   pages: write
   id-token: write
+  actions: write
 
 concurrency:
   group: coldeye-data
@@ -45,6 +46,11 @@ jobs:
           EVENT: ${{ github.event_name }}
           INPUT_MODE: ${{ github.event.inputs.mode }}
           REPO: ${{ github.repository }}
+      # 公開專案太久沒有活動，GitHub 會自動停用排程；每週六順手重新啟用一次（失敗也不影響其他步驟）
+      - if: github.event_name == 'schedule' && github.event.schedule == '20 1 * * 6'
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/coldeye.yml/enable" || true
+        env:
+          GH_TOKEN: ${{ github.token }}
       - if: steps.pipe.outputs.deploy == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
