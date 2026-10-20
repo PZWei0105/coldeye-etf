@@ -3,10 +3,18 @@ import datetime as dt
 import json
 import os
 import pathlib
+import time
 import traceback
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TW = dt.timezone(dt.timedelta(hours=8))
+
+# 盤中接力：GitHub 的排程忙的時候常常延遲半小時以上，所以盤中每一輪結束前自己排好下一輪。
+CYCLE_S = 300        # 兩輪開始抓資料的間隔（秒）
+LEAD_S = 35          # 新一輪從排隊、開機到開始抓資料大約要多久，提早這麼多秒發出
+LAST_TICK = 1336     # 下一輪預計開始時間超過 13:36 就不再接力（13:30 收盤撮合後的價格要抓得到）
+KICK_FROM = 835      # 開盤前這段時間的排程只負責暖身：不抓資料，等到 09:00 發出第一輪
+FIRST_TICK = (9, 0, 30)
 
 
 def decide_mode() -> str:
@@ -21,7 +29,38 @@ def decide_mode() -> str:
     if now.weekday() >= 5:
         return 'weekly'
     hm = now.hour * 100 + now.minute
+    if event == 'schedule' and KICK_FROM <= hm < 900:
+        return 'kick'
     return 'intraday' if 900 <= hm < 1400 else 'eod'
+
+
+def next_tick(mode: str, t0: float, live_date, now: dt.datetime | None = None):
+    """這一輪結束後要不要排下一輪；要的話回傳「發出下一輪」的 Unix 時間，不要就回傳 None。"""
+    now = now or dt.datetime.now(TW)
+    if now.weekday() >= 5:
+        return None
+    if mode == 'kick':
+        h, m, s = FIRST_TICK
+        return int(now.replace(hour=h, minute=m, second=s, microsecond=0).timestamp())
+    if mode not in ('intraday', 'deploy'):
+        return None
+    hm = now.hour * 100 + now.minute
+    if hm < 900:
+        return None
+    start = dt.datetime.fromtimestamp(t0 + CYCLE_S, TW)
+    if start.date() != now.date() or start.hour * 100 + start.minute > LAST_TICK:
+        return None
+    today = int(now.strftime('%Y%m%d'))
+    if live_date and int(live_date) != today and hm >= 915:
+        return None   # 證交所的即時資料還停在之前的日期：今天休市（颱風假也一樣）
+    return int(t0 + CYCLE_S - LEAD_S)
+
+
+def live_date():
+    try:
+        return json.loads((ROOT / 'public' / 'data' / 'live.json').read_text(encoding='utf-8')).get('date')
+    except Exception:  # noqa: BLE001 — 抓不到就當作不知道，照常接力
+        return None
 
 
 def set_output(key: str, value: str):
@@ -33,6 +72,7 @@ def set_output(key: str, value: str):
 
 
 def main():
+    t0 = time.time()
     mode = decide_mode()
     print(f'[coldeye] mode={mode} at {dt.datetime.now(TW).isoformat()}', flush=True)
     deploy = False
@@ -40,6 +80,8 @@ def main():
         if mode == 'probe':
             from . import probe
             probe.run()
+        elif mode == 'kick':
+            print('[coldeye] 開盤前暖身：09:00 準時發出第一輪', flush=True)
         else:
             try:
                 from . import build
@@ -50,6 +92,12 @@ def main():
     except Exception:  # noqa: BLE001 — 任何錯誤都要留下紀錄，不讓排程整個中斷
         traceback.print_exc()
     set_output('deploy', 'true' if deploy else 'false')
+    nxt = None
+    try:
+        nxt = next_tick(mode, t0, live_date())
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+    set_output('next_at', str(nxt) if nxt else '')
 
 
 if __name__ == '__main__':

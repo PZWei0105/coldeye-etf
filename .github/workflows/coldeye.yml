@@ -3,7 +3,8 @@ name: coldeye
 on:
   schedule:
     # 時間皆為 UTC；台灣時間 = UTC+8
-    - cron: '*/5 1-5 * * 1-5'    # 09:00–13:55 盤中，每 5 分鐘（GitHub 忙時會漏跑，排密一點才補得回來）
+    - cron: '37,47,53 0 * * 1-5' # 08:37–08:53 開盤前暖身：等到 09:00 發出第一輪盤中更新
+    - cron: '4-59/10 1-5 * * 1-5' # 盤中備援：接力萬一斷掉，最慢約 10 分鐘（加上 GitHub 的延遲）會重新接上
     - cron: '25 6 * * 1-5'       # 14:25 收盤行情
     - cron: '40 7 * * 1-5'       # 15:40 三大法人
     - cron: '50 9 * * 1-5'       # 17:50 投信公告淨值
@@ -34,6 +35,7 @@ jobs:
     timeout-minutes: 170
     outputs:
       deploy: ${{ steps.pipe.outputs.deploy }}
+      next_at: ${{ steps.pipe.outputs.next_at }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -68,3 +70,24 @@ jobs:
     steps:
       - id: deploy
         uses: actions/deploy-pages@v4
+
+  # 盤中接力：GitHub 的排程忙的時候常常延遲半小時以上，所以盤中每一輪自己排好下一輪（約 5 分鐘一輪，13:36 以後停）
+  next:
+    needs: run
+    if: ${{ !cancelled() && needs.run.outputs.next_at != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - run: |
+          wait=$(( NEXT_AT - $(date +%s) ))
+          if [ "$wait" -gt 0 ]; then echo "等 ${wait} 秒再發出下一輪"; sleep "$wait"; fi
+          # 已經有排隊中的執行（排程或推送）就交給它接力，不要把它擠掉
+          for st in pending queued; do
+            n=$(gh api "repos/${REPO}/actions/workflows/coldeye.yml/runs?status=${st}&per_page=1" --jq '.total_count' 2>/dev/null || echo 0)
+            if [ "${n:-0}" -gt 0 ]; then echo "已有 ${st} 的執行，交給它接力"; exit 0; fi
+          done
+          gh api -X POST "repos/${REPO}/actions/workflows/coldeye.yml/dispatches" -f ref=main -f 'inputs[mode]=intraday'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NEXT_AT: ${{ needs.run.outputs.next_at }}
