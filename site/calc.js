@@ -87,10 +87,10 @@ export function brief(inp) {
 
 // ------------------------------------------------------------------ 存股時光機
 const lowerBound = (arr, x) => { let lo = 0, hi = arr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] < x) lo = m + 1; else hi = m; } return lo; };
-/** 某一天（含）以前最近的一筆部位訊號；還沒有訊號回傳 null */
+/** 某一天「之前」最近的一筆部位訊號（不含當天：當天收盤才算得出的訊號，不能拿來在當天收盤買）；還沒有訊號回傳 null */
 export function signalOn(sig, d) {
   let lo = 0, hi = (sig || []).length - 1, ans = null;
-  while (lo <= hi) { const m = (lo + hi) >> 1; if (sig[m][0] <= d) { ans = sig[m][1]; lo = m + 1; } else hi = m - 1; }
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (sig[m][0] < d) { ans = sig[m][1]; lo = m + 1; } else hi = m - 1; }
   return ans;
 }
 /** 第一個有訊號之後的下一個月（時光機最早只能從這裡開始，三種買法才公平） */
@@ -144,8 +144,8 @@ export function xirr(flows) {
 }
 export const TM_STRATS = {
   dca: { name: '定期定額', desc: '每月扣款日照買，不看訊號（基準）' },
-  add: { name: '只在可加碼時買', desc: '扣款日當週規則是「可加碼」才買；沒買的錢留著，下次一起買' },
-  pause: { name: '遇到警示就暫停', desc: '扣款日當週規則是「先不加碼」或「減碼」就先不買，錢留著下次一起買' },
+  add: { name: '只在可加碼時買', desc: '扣款日前最近一次規則是「可加碼」或「漲多分批」（App 會建議買進的兩種）才買；沒買的錢留著，下次一起買' },
+  pause: { name: '遇到警示就暫停', desc: '扣款日前最近一次規則是「先不加碼」或「減碼」就先不買，錢留著下次一起買' },
 };
 /**
  * 定期定額回推。hist：{d:[日期], p:[實際收盤價], sig:[[日期, 部位訊號]], splits:[[日期, 倍數]], divs:[[除息日, 每單位現金]]}
@@ -157,27 +157,30 @@ export function timeMachine(hist, opt) {
   const days = deductionDays(D, opt.start, opt.day);
   if (!days.length) return null;
   const isDed = new Set(days);
-  const split = new Map((hist.splits || []).map(([d, k]) => [d, k]));
-  const div = new Map();
-  for (const [d, c] of hist.divs || []) if (c > 0) div.set(d, (div.get(d) || 0) + c);
+  // 分割與除息依日期排好；除息日剛好沒有成交（颱風休市、冷門 ETF）時，在下一個有成交的交易日入帳
+  const evs = [];
+  for (const [d, k] of hist.splits || []) if (k > 0) evs.push([d, 0, k]);
+  for (const [d, c] of hist.divs || []) if (c > 0) evs.push([d, 1, c]);
+  evs.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   const keys = Object.keys(TM_STRATS);
   const st = Object.fromEntries(keys.map((k) => [k, { sh: 0, pool: 0, keep: 0, div: 0, fee: 0, buys: 0, waits: 0, worst: 0, worstD: null, flows: [] }]));
   const series = [];
   let invested = 0;
   const k0 = lowerBound(D, days[0]);
+  let e = 0;
+  while (e < evs.length && evs[e][0] <= D[k0]) e++;   // 第一次扣款（含）以前的分割、除息和這筆錢無關
   for (let i = k0; i < D.length; i++) {
     const d = D[i], px = P[i];
-    if (!(px > 0)) continue;
-    const k = split.get(d);
-    if (k && i > k0) for (const s of Object.values(st)) s.sh *= k;
-    const cash = div.get(d);
-    if (cash && i > k0) {
+    while (i > k0 && e < evs.length && evs[e][0] <= d) {
+      const [, kind, v] = evs[e++];
       for (const s of Object.values(st)) {
-        const amt = Math.floor(s.sh * cash + 1e-9);
+        if (kind === 0) { s.sh *= v; continue; }
+        const amt = Math.floor(s.sh * v + 1e-9);
         s.div += amt;
         if (opt.reinvest) s.pool += amt; else s.keep += amt;
       }
     }
+    if (!(px > 0)) continue;
     if (isDed.has(d)) {
       invested += opt.amount;
       const sig = signalOn(hist.sig, d);
@@ -185,7 +188,7 @@ export function timeMachine(hist, opt) {
         const s = st[key];
         s.pool += opt.amount;
         s.flows.push([d, -opt.amount]);
-        const go = key === 'dca' ? true : key === 'add' ? sig === 'add' : !(sig === 'caution' || sig === 'trim');
+        const go = key === 'dca' ? true : key === 'add' ? sig === 'add' || sig === 'wait' : !(sig === 'caution' || sig === 'trim');
         if (!go) { s.waits++; continue; }
         const n = sharesFor(s.pool, px, opt.cat, d, opt.fee);
         if (n > 0) {
@@ -216,7 +219,7 @@ export function timeMachine(hist, opt) {
       sh: round(s.sh, 3), cash: round(s.pool + s.keep), worst: s.worst, worstD: s.worstD,
     };
   }
-  return { strats: res, series, days, start: days[0], end: last.d, months: days.length, px: last.px };
+  return { strats: res, series, days, start: days[0], end: last.d, months: days.length, px: last.px, hasSig: !!(hist.sig && hist.sig.length) };
 }
 
 // ------------------------------------------------------------------ 模擬倉的基準：同一天把起始資金全買 0050
@@ -225,8 +228,10 @@ export function benchValue(start, divs, splits, pxNow, today) {
   if (!start || !(start.px0 > 0) || !(start.cash0 > 0) || !isNum(pxNow)) return null;
   let units = start.cash0 / start.px0;
   const ev = [];
-  for (const [d, k] of splits || []) if (d > start.d && d <= today) ev.push([d, 's', k]);
-  for (const [d, c] of divs || []) if (d > start.d && d <= today && c > 0) ev.push([d, 'd', c]);
+  // 起始價格那天（pxd）之後的分割與除息才算：開倉時拿的是開盤前的昨收，當天的除息也要算進去
+  const from = start.pxd || start.d;
+  for (const [d, k] of splits || []) if (d > from && d <= today) ev.push([d, 's', k]);
+  for (const [d, c] of divs || []) if (d > from && d <= today && c > 0) ev.push([d, 'd', c]);
   ev.sort((a, b) => a[0] - b[0] || (a[1] === 's' ? -1 : 1));
   let cash = 0;
   for (const [, kind, v] of ev) {

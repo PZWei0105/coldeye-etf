@@ -65,6 +65,29 @@ t('時光機：只在可加碼時買，沒買的錢留到下次', () => {
   assert.equal(r.strats.pause.buys, 3);
 });
 
+t('時光機：「漲多分批」也算可以買；訊號只用扣款日之前的（不用當天收盤才算得出來的）', () => {
+  const h = { d: [20240105, 20240205, 20240305], p: [10, 10, 10], sig: [[20240101, 'wait'], [20240205, 'caution'], [20240305, 'caution']], splits: [], divs: [] };
+  const r = C.timeMachine(h, { start: 202401, amount: 1000, day: 5, reinvest: true, fee: { disc: 0, min: 0, minOdd: 0 }, cat: 'broad' });
+  // 1/5 用 1/1 的 wait → 買；2/5 用 1/1 的 wait（2/5 當天的 caution 還不能用）→ 買；3/5 用 2/5 的 caution → 等
+  assert.equal(r.strats.add.buys, 2);
+  assert.equal(r.strats.add.waits, 1);
+  assert.equal(r.strats.pause.buys, 2);
+});
+
+t('時光機：除息日沒有成交時，股息在下一個交易日入帳', () => {
+  const h = { d: [20240105, 20240205, 20240207], p: [10, 10, 10], sig: [[20240101, 'add']], splits: [], divs: [[20240206, 0.5]] };
+  const r = C.timeMachine(h, { start: 202401, amount: 1000, day: 5, reinvest: false, fee: { disc: 0, min: 0, minOdd: 0 }, cat: 'broad' });
+  // 1/5、2/5 各買 100 股，2/6 除息（那天沒成交）→ 2/7 入帳 200 × 0.5
+  assert.equal(r.strats.dca.div, 100);
+});
+
+t('模擬倉基準：開倉用的是開盤前的昨收時，當天的除息也要算', () => {
+  const v = C.benchValue({ d: 20250201, pxd: 20250131, cash0: 100000, px0: 200 }, [[20250201, 2]], [], 198, 20250201);
+  near(v.value, 500 * 198 + 1000);
+  const w = C.benchValue({ d: 20250201, pxd: 20250201, cash0: 100000, px0: 198 }, [[20250201, 2]], [], 198, 20250201);
+  near(w.value, 100000);
+});
+
 t('模擬倉基準：分割與配息都算進去', () => {
   const v = C.benchValue({ d: 20250101, cash0: 100000, px0: 200 }, [[20250201, 2], [20250801, 1]], [[20250618, 4]], 50, 20251001);
   // 500 單位 → 2/1 領 1000；6/18 變 2000 單位 → 8/1 領 2000；現值 2000 × 50 + 3000

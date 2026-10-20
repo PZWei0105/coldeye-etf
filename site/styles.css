@@ -954,6 +954,10 @@ tr.mine td { background: var(--aurora-wash); }
 .f-sum b { font-size: 17px; }
 .f-err { color: var(--amber); font-size: 13.5px; min-height: 1em; }
 .f-err:empty { display: none; }
+.f-fill { padding: 8px 10px; background: var(--amber-wash); color: var(--amber); font-size: 13.5px; line-height: 1.6; box-shadow: inset 3px 0 0 var(--amber); }
+.f-fill:empty, .f-fill[hidden] { display: none; }
+.input.locked { background: transparent; box-shadow: inset 0 -1px 0 var(--seam-2); cursor: default; }
+.btn:disabled { opacity: .4; filter: saturate(.4); cursor: not-allowed; }
 .m-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 .m-actions.left { justify-content: flex-start; }
 .m-actions .danger { margin-right: auto; }

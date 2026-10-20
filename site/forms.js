@@ -1,10 +1,34 @@
 /* 冷眼 — 表單：記一筆交易、可投入現金、到價提醒、備份與匯入。 */
 import {
   $, $$, esc, isNum, S, PF, settings, saveSettings, book, saveBook, alerts, saveAlerts, newId, fmt, money,
-  catName, toast, buzz, bus, ICON, quote, today, store, isPaper, replaceBook, otherBook,
+  catName, toast, buzz, bus, ICON, quote, today, store, isPaper, replaceBook, otherBook, setBooks, twParts,
 } from './core.js';
 
-export const PAPER_BAND = 0.02;   // 模擬倉只能用現價上下 2% 內成交，不能用事後的價格
+// ------------------------------------------------------------------ 模擬倉的成交規則
+export const PAPER_FRESH_MIN = 15;   // 盤中價格超過幾分鐘沒更新，就先不讓模擬倉成交（避免用舊價格占便宜）
+const isoHm = (iso) => (iso ? +iso.slice(11, 13) * 100 + +iso.slice(14, 16) : 0);   // 後台時間一律是台灣時間（+08:00）
+const isoD = (iso) => (iso ? +iso.slice(0, 10).replace(/-/g, '') : 0);
+/**
+ * 模擬倉現在能不能成交、用什麼價格。跟真的下單一樣，只能用「現在」的價格：
+ * 09:00–13:25 用盤中即時價（資料要夠新）；13:25–13:30 收盤集合競價不成交；
+ * 13:30 收盤後到 14:30 用今天的收盤價（比照盤後定價交易）。價格不能自己填，所以不能挑價格。
+ */
+export function paperFill(row) {
+  if (!row) return { ok: false, why: '' };
+  const { wd, h, min } = twParts();
+  const hm = h * 100 + min;
+  if (wd < 1 || wd > 5 || hm < 900 || hm >= 1430) return { ok: false, why: '模擬倉只在交易日 09:00–14:30 成交（13:30 以後用收盤價），跟真的下單一樣。現在可以先看建議、設到價提醒。' };
+  const q = quote(row);
+  if (q.date !== today() || !isNum(q.px) || !(q.px > 0)) return { ok: false, why: `${row.n} 今天還沒有成交價，等它有成交再下單。` };
+  const at = S.live && S.live.at;
+  if (hm < 1325) {
+    const age = at ? (Date.now() - new Date(at).getTime()) / 60000 : Infinity;
+    if (!(age <= PAPER_FRESH_MIN)) return { ok: false, why: `盤中價格已經 ${isFinite(age) ? Math.round(age) + ' 分鐘' : '一陣子'}沒有更新，等後台送來新價格再下單，避免用舊價格成交。` };
+  } else if (!(isoD(at) === today() && isoHm(at) >= 1330) && !(row.d === today())) {
+    return { ok: false, why: hm < 1340 ? '13:25–13:30 是收盤集合競價，等收盤價出來（大約 13:35）再下單。' : '後台還沒送來今天的收盤價，稍後再試。' };
+  }
+  return { ok: true, px: q.px, qat: at || null };
+}
 
 // ------------------------------------------------------------------ 共用的底部彈出視窗
 let lastFocus = null;
@@ -44,6 +68,7 @@ const dOf = (iso) => (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? Number(iso.replac
  */
 export function openTradeForm(o = {}) {
   if (isPaper() && !book.start) { openPaperStart(); return; }
+  if (isPaper() && o.lot) { openPaperLot(o.lot); return; }
   const paper = isPaper();
   const lot = o.lot || null;
   const f = {
@@ -66,7 +91,7 @@ export function openTradeForm(o = {}) {
   }
   const card = openModal(`<form class="form" id="tf" novalidate autocomplete="off">
       <h2 class="m-title">${paper ? (lot ? '編輯模擬交易' : '模擬下單') : lot ? '編輯交易' : '記一筆交易'}</h2>
-      ${paper ? '<p class="m-desc paper-note">模擬倉：用今天的價格成交（現價上下 2% 內），現金自動扣、自動加；手續費和證交稅照你的設定算。</p>' : ''}
+      ${paper ? '<p class="m-desc paper-note">模擬倉：用「現在」的價格成交（盤中即時價，13:30 以後用收盤價），手續費、證交稅照你的設定自動算，現金自動扣、自動加。成交後不能修改，跟真的一樣。</p><div class="f-fill" id="f-fill" role="status"></div>' : ''}
       <div class="field" id="f-etf"></div>
       <div class="seg wide" role="radiogroup" aria-label="買或賣">
         <button type="button" data-side="buy" aria-pressed="${f.side === 'buy'}">買進</button>
@@ -125,12 +150,26 @@ export function openTradeForm(o = {}) {
   const dateEl = $('#f-date', card), undEl = $('#f-undated', card);
   if (f.fee != null) feeEl.value = f.fee;
   if (f.tax != null) taxEl.value = f.tax;
+  const submitBtn = $('#tf button[type=submit]', card);
+  if (paper) for (const el of [pxEl, feeEl, taxEl]) { el.readOnly = true; el.classList.add('locked'); }
+  /** 模擬倉：價格跟著現價走，不能成交時說明原因 */
+  function paperSync() {
+    const row = f.code ? S.rows.get(f.code) : null;
+    const fill = paperFill(row);
+    const box = $('#f-fill', card);
+    pxEl.value = fill.ok ? fill.px : '';
+    box.textContent = fill.ok ? '' : fill.why;
+    box.hidden = fill.ok || !fill.why;
+    submitBtn.disabled = !fill.ok;
+    return fill;
+  }
 
   function shares() {
     const q = toInt(qtyEl.value);
     return f.unit === 'lot' ? q * 1000 : q;
   }
   function recalc() {
+    if (paper) paperSync();
     const sh = shares();
     const px = toInt(pxEl.value);
     const row = f.code ? S.rows.get(f.code) : null;
@@ -200,12 +239,14 @@ export function openTradeForm(o = {}) {
     if (!f.undated && !d) problems.push('請選成交日期，或勾選「不記得日期」');
     if (d && d > today()) problems.push('成交日期不能是未來');
     if (!paper && row && px > 0 && (px > row.p * 3 || px < row.p / 3) && !(!d || d < 20251231)) problems.push(`成交價和目前價格（${fmt.px(row.p)}）差太多，請確認`);
-    if (paper && row && px > 0) {
-      const q = quote(row).px;
-      if (isNum(q) && Math.abs(px / q - 1) > PAPER_BAND + 1e-9) problems.push(`模擬倉只能用現價 ${fmt.px(q)} 上下 2% 內的價格成交`);
+    if (paper && row) {
+      const before = pxEl.value;
+      const fill = paperSync();
+      if (!fill.ok) { err.textContent = fill.why; buzz(30); return; }
+      if (String(fill.px) !== String(before)) { recalc(); err.textContent = `價格剛更新成 ${fmt.px(fill.px)}，確認後再按一次「儲存」`; buzz(30); return; }
       if (d !== today()) problems.push('模擬倉只能記今天的交易');
-      if (f.side === 'buy' && sh > 0 && px > 0) {
-        const need = PF.tradeCost('buy', Math.round(sh), px, row.k, today(), settings.fee).net - (lot && lot.side === 'buy' ? lot.sh * lot.px + (lot.fee || 0) : 0);
+      if (f.side === 'buy' && sh > 0) {
+        const need = PF.tradeCost('buy', Math.round(sh), fill.px, PF.taxCat(row), today(), settings.fee).net;
         if (need > book.cash + 1e-6) problems.push(`模擬倉現金只剩 ${fmt.n(book.cash)} 元，不夠買這筆（需要 ${fmt.n(need)} 元）`);
       }
     }
@@ -214,14 +255,20 @@ export function openTradeForm(o = {}) {
       if (Math.round(sh) > held.sh + 1e-9) problems.push(`目前記錄的持股只有 ${PF.sharesText(held.sh)}，賣出數量超過了`);
     }
     if (problems.length) { err.textContent = problems.join('；'); buzz(30); return; }
-    const fee = toInt(feeEl.value);
-    const tax = f.side === 'sell' ? toInt(taxEl.value) : 0;
+    let fee = toInt(feeEl.value);
+    let tax = f.side === 'sell' ? toInt(taxEl.value) : 0;
+    if (paper) {   // 模擬倉的費用一律照設定自動算，不能手改
+      const c = PF.tradeCost(f.side, Math.round(sh), +px, PF.taxCat(row), today(), settings.fee);
+      fee = c.fee;
+      tax = f.side === 'sell' ? c.tax : 0;
+    }
     const rec = {
       id: lot ? lot.id : newId(), c: f.code, side: f.side, d, sh: Math.round(sh), px: +px,
       fee: isNum(fee) && fee >= 0 ? fee : 0, tax: isNum(tax) && tax >= 0 ? tax : 0,
-      feeManual: f.feeTouched, taxManual: f.taxTouched,
+      feeManual: !paper && f.feeTouched, taxManual: !paper && f.taxTouched,
       note: $('#f-note', card).value.trim().slice(0, 80), at: lot ? lot.at : new Date().toISOString(),
       snap: lot ? lot.snap : null,
+      ...(paper ? { qat: S.live ? S.live.at : null } : {}),
     };
     // 交易日就是最新資料日（或之後）時，記下當時的規則觀點，日後回頭看決策
     if (!lot && row && (!d || d >= row.d)) rec.snap = { st: row.st, ps: row.ps, sc: row.sc, d: row.d };
@@ -235,6 +282,39 @@ export function openTradeForm(o = {}) {
     closeModal();
     buzz();
     toast(lot ? '已更新交易' : `${paper ? '模擬' : '已記下：'}${f.side === 'buy' ? '買進' : '賣出'} ${row.n} ${PF.sharesText(sh)}`);
+    bus.emit('book');
+  });
+}
+
+// ------------------------------------------------------------------ 模擬倉的一筆交易：成交後不能改
+/** 只有「最新一筆、今天下的、價格還沒更新」可以撤銷：價格一更新就知道結果了，再撤銷等於事後反悔。 */
+export function paperUndoable(lot) {
+  const lots = PF.sortLots(book.lots);
+  const last = lots[lots.length - 1];
+  return !!(last && last.id === lot.id && lot.d === today() && lot.qat && S.live && lot.qat === S.live.at);
+}
+function openPaperLot(lot) {
+  const row = S.rows.get(lot.c);
+  const sell = lot.side === 'sell';
+  const can = paperUndoable(lot);
+  const card = openModal(`<div class="form">
+      <h2 class="m-title">模擬${sell ? '賣出' : '買進'}・${esc(row ? row.n : lot.c)}</h2>
+      <p class="m-desc"><span class="num">${fmt.dy(lot.d)}</span>　${PF.sharesText(lot.sh)} × <b class="num">${fmt.px(lot.px)}</b>，手續費 <span class="num">${fmt.n(lot.fee || 0)}</span>${sell ? `、證交稅 <span class="num">${fmt.n(lot.tax || 0)}</span>` : ''}</p>
+      ${lot.note ? `<p class="m-desc">筆記：${esc(lot.note)}</p>` : ''}
+      <p class="m-desc">模擬倉的交易成交後就不能修改，跟真的下單一樣。${can ? '價格還沒更新，可以撤銷這一筆。' : '只有最新一筆、而且價格還沒更新以前可以撤銷（價格一變就知道結果了，再撤銷等於事後反悔）。'}</p>
+      <div class="m-actions">${can ? '<button type="button" class="btn danger ghost" id="pl-undo">撤銷這筆</button>' : ''}<button type="button" class="btn ghost" data-close>關閉</button></div>
+    </div>`, { label: '模擬交易' });
+  const u = $('#pl-undo', card);
+  if (u) u.addEventListener('click', (e) => {
+    const b = e.currentTarget;
+    if (!paperUndoable(lot)) { toast('價格已經更新，這筆不能撤銷了'); closeModal(); return; }
+    if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = '確定撤銷？'; return; }
+    const k = book.lots.findIndex((x) => x.id === lot.id);
+    if (k >= 0) book.lots.splice(k, 1);
+    saveBook();
+    closeModal();
+    buzz();
+    toast('已撤銷這筆模擬交易');
     bus.emit('book');
   });
 }
@@ -267,8 +347,6 @@ export function openCashForm() {
 // ------------------------------------------------------------------ 模擬倉：開倉或重設
 export function openPaperStart() {
   const had = !!book.start;
-  const bench = S.rows.get('0050');
-  const px0 = bench ? quote(bench).px : null;
   const card = openModal(`<form class="form" id="ps" novalidate>
       <h2 class="m-title">${had ? '重設模擬倉' : '開一個模擬倉'}</h2>
       <p class="m-desc">用虛擬資金、真實價格練習照紀律買賣。結果會和「同一天把錢全部買 0050」比較，看看你的判斷（或冷眼的建議）有沒有比較好。${had ? '<b>重設會清掉模擬倉裡的全部交易。</b>' : ''}</p>
@@ -283,8 +361,10 @@ export function openPaperStart() {
     e.preventDefault();
     const v = Math.round(toInt(amt.value));
     if (!(v >= 10000 && v <= 100000000)) { $('#ps-err', card).textContent = '起始資金請填 1 萬到 1 億元'; return; }
-    if (!isNum(px0)) { $('#ps-err', card).textContent = '還拿不到 0050 的價格，稍後再試'; return; }
-    replaceBook({ cash: v, lots: [], colors: {}, start: { d: today(), cash0: v, code: '0050', px0 } });
+    const bench = S.rows.get('0050');
+    const q = bench ? quote(bench) : null;   // 按下去的這一刻才讀價格；pxd 是這個價格的日期（開盤前就是昨收）
+    if (!q || !isNum(q.px)) { $('#ps-err', card).textContent = '還拿不到 0050 的價格，稍後再試'; return; }
+    replaceBook({ cash: v, lots: [], colors: {}, start: { d: today(), cash0: v, code: '0050', px0: q.px, pxd: q.date || today() } });
     closeModal();
     buzz();
     toast(had ? '模擬倉已重設' : `模擬倉開張：${fmt.n(v)} 元`);
@@ -427,11 +507,14 @@ export function openBackup() {
       } catch (e) { err.textContent = e.message && /冷眼|格式/.test(e.message) ? e.message : '看不懂這份備份，請確認是完整的備份碼或備份檔'; return; }
       go.dataset.armed = '1';
       go._obj = obj;
-      go.textContent = `確定用備份的 ${obj.pf.lots.length} 筆交易取代目前的 ${book.lots.length} 筆？`;
+      const other = otherBook();
+      const nReal = isPaper() ? ((other && other.lots) || []).length : book.lots.length;
+      const nPaper = isPaper() ? book.lots.length : ((other && other.lots) || []).length;
+      go.textContent = `確定還原？真實部位：備份 ${obj.pf.lots.length} 筆取代目前 ${nReal} 筆${obj.paper ? `；模擬倉：備份 ${obj.paper.lots.length} 筆取代目前 ${nPaper} 筆` : '（模擬倉不變）'}`;
       return;
     }
     const real = { cash: obj.pf.cash || 0, lots: obj.pf.lots, colors: obj.pf.colors || {} };
-    if (isPaper()) { store.set('pf', real); if (obj.paper) replaceBook(obj.paper); } else { replaceBook(real); if (obj.paper) store.set('paper', obj.paper); }
+    setBooks(obj.paper ? { real, paper: obj.paper } : { real });
     alerts.splice(0, alerts.length, ...(obj.alerts || []));
     saveAlerts();
     if (obj.prefs) {
@@ -440,7 +523,7 @@ export function openBackup() {
     }
     closeModal();
     buzz();
-    toast(`已還原 ${obj.pf.lots.length} 筆交易`);
+    toast(`已還原 ${obj.pf.lots.length} 筆交易${obj.paper ? `、模擬倉 ${obj.paper.lots.length} 筆` : ''}`);
     bus.emit('book');
   };
   go.addEventListener('click', () => restore($('#b-in', card).value));
@@ -456,8 +539,7 @@ export function openBackup() {
 
 /** 清除真實部位的資料（設定頁使用，兩段確認）；模擬倉另外重設 */
 export function wipeBook() {
-  if (isPaper()) store.set('pf', { cash: 0, lots: [], colors: {} });
-  else replaceBook({ cash: 0, lots: [], colors: {} });
+  setBooks({ real: { cash: 0, lots: [], colors: {} } });
   alerts.splice(0, alerts.length);
   saveAlerts();
   store.del('seen');

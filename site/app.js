@@ -8,7 +8,7 @@ import {
   today, PF, premBand, DEFAULT_RULES, isPaper, switchMode,
 } from './core.js';
 import { openDetail, closeDetail, renderDetail, refreshDetailQuote } from './sheet.js';
-import { openTradeForm, openCashForm, openBackup, checkAlerts, closeModal, modalOpen, wipeBook, openPaperStart } from './forms.js';
+import { openTradeForm, openCashForm, openBackup, checkAlerts, closeModal, modalOpen, wipeBook, openPaperStart, PAPER_FRESH_MIN } from './forms.js';
 import { installExplain, setExplain, explainOn, glossaryHTML, bindGlossary } from './learn.js';
 import { irisSVG, heatHTML, heatLegend } from './viz.js';
 import { brief, benchValue } from './calc.js';
@@ -96,27 +96,40 @@ const hhmm = (iso) => (iso ? new Date(iso).toLocaleTimeString('zh-TW', { hour: '
 const minsAgo = (iso) => { const t = iso ? new Date(iso).getTime() : NaN; return isFinite(t) ? Math.max(0, Math.round((Date.now() - t) / 60000)) : null; };
 const agoShort = (m) => (m == null ? '' : m < 1 ? '剛剛' : m < 60 ? `${m} 分前` : m < 1440 ? `${Math.round(m / 60)} 小時前` : `${Math.round(m / 1440)} 天前`);
 const durShort = (m) => (m == null ? '' : m < 60 ? `${m} 分鐘` : m < 1440 ? `${Math.round(m / 60)} 小時` : `${Math.round(m / 1440)} 天`);
-const LAG_MIN = 20;        // 盤中資料超過幾分鐘算「延遲」
+const LAG_MIN = 12;        // 盤中資料超過幾分鐘算「延遲」（後台盤中約 5 分鐘一輪）
 const STALL_MIN = 54 * 60; // 後台超過幾分鐘完全沒動靜算「停擺」（週六 09:20 到週一 09:00 約 48 小時，留一點餘裕）
+// 後台寫的時間一律是台灣時間（+08:00），直接取字串就是台灣的日期與時分
+const isoD = (iso) => (iso ? +String(iso).slice(0, 10).replace(/-/g, '') : 0);
+const isoHm = (iso) => (iso ? +String(iso).slice(11, 13) * 100 + +String(iso).slice(14, 16) : 0);
 function inSession() { const { wd, h, min } = twParts(); const hm = h * 100 + min; return wd >= 1 && wd <= 5 && hm >= 900 && hm <= 1335; }
 function freshness() {
   const L = S.live;
   const { wd, h, min } = twParts();
   const hm = h * 100 + min;
+  const td = today();
   const weekday = wd >= 1 && wd <= 5;
   const session = weekday && hm >= 900 && hm <= 1335;
   const age = L ? minsAgo(L.at) : null;
   const gen = S.summary ? S.summary.generated : null;
   const newest = [L && L.at, gen].filter(Boolean).sort().pop() || null;
+  if (S.offline) return { key: 'lag', txt: `離線　顯示上次存下的資料（${L && L.at ? `${fmt.d(isoD(L.at))} ${hhmm(L.at)}` : fmt.d(S.summary.asof)}）`, stall: false, offline: true };
   const stall = newest ? minsAgo(newest) >= STALL_MIN : false;
-  const liveToday = L && L.date === today();
+  const liveToday = !!(L && L.date === td);
+  // 後台今天開盤後跑過，證交所的即時資料卻停在之前的日期 → 今天休市（颱風假也一樣）
+  const ranToday = !!(L && isoD(L.at) === td && isoHm(L.at) >= 905);
+  const closedToday = ranToday && L.date != null && L.date < td;
   if (session && liveToday && L.open) {
     const lag = age != null && age > LAG_MIN;
     return { key: lag ? 'lag' : 'live', txt: `盤中　${hhmm(L.at)} 資料・${agoShort(age)}`, stall };
   }
-  if (session && L && !liveToday && age != null && age <= LAG_MIN && hm >= 915) return { key: 'idle', txt: `今天休市　資料到 ${fmt.d(S.summary.asof)}`, stall };
-  if (session) return { key: hm >= 915 ? 'lag' : 'wait', txt: hm >= 915 ? '開盤了，後台還沒送來盤中資料' : '開盤了，等第一筆盤中資料', stall };
-  if (S.summary.asof === today()) return { key: 'idle', txt: `${fmt.d(S.summary.asof)} 收盤　${agoShort(minsAgo(gen))}更新`, stall };
+  if (weekday && closedToday && S.summary.asof !== td) return { key: 'idle', txt: `今天休市　資料到 ${fmt.d(S.summary.asof)}`, stall };
+  if (session) {
+    if (ranToday && L.date == null) return { key: 'lag', txt: `後台 ${hhmm(L.at)} 有跑，但沒拿到盤中價格`, stall };
+    return { key: hm >= 915 ? 'lag' : 'wait', txt: hm >= 915 ? '開盤了，後台還沒送來今天的盤中資料' : '開盤了，等今天第一筆盤中資料', stall };
+  }
+  if (S.summary.asof === td) return { key: 'idle', txt: `${fmt.d(S.summary.asof)} 收盤　${agoShort(minsAgo(gen))}更新`, stall };
+  // 收盤後到晚上的完整計算跑完之前：畫面上已經是今天的收盤價，只是分析還是昨天的
+  if (weekday && liveToday && hm > 1335) return { key: 'idle', txt: `今天收盤　${hhmm(L.at)} 的價格・完整分析${hm < 1500 ? '約 14:30 ' : '稍晚'}更新`, stall };
   if (!weekday) return { key: 'idle', txt: `休市　資料到 ${fmt.d(S.summary.asof)}`, stall };
   if (hm < 900) return { key: 'idle', txt: `開盤前　資料到 ${fmt.d(S.summary.asof)}`, stall };
   return { key: 'idle', txt: `資料到 ${fmt.d(S.summary.asof)}　${agoShort(minsAgo(gen))}更新`, stall };
@@ -152,8 +165,10 @@ async function manualRefresh() {
     if (S.openCode && !S.openCode.startsWith('__')) renderDetail(S.openCode);
     const after = [S.live && S.live.at, S.summary && S.summary.generated].join('|');
     const f = freshness();
-    if (after !== before) toast(f.key === 'live' || f.key === 'lag' ? `已更新到 ${hhmm(S.live.at)} 的資料` : '已更新到最新資料');
-    else if (f.key === 'live' || f.key === 'lag') toast(`後台還沒有新資料（目前是 ${hhmm(S.live.at)} 的），通常每 5 分鐘一輪`);
+    const liveNow = (f.key === 'live' || f.key === 'lag') && S.live;
+    if (S.offline) toast('連不上網路，顯示的是上次存下的資料');
+    else if (after !== before) toast(liveNow ? `已更新到 ${hhmm(S.live.at)} 的資料` : '已更新到最新資料');
+    else if (liveNow) toast(`後台還沒有新資料（目前是 ${hhmm(S.live.at)} 的），盤中大約每 5 分鐘一輪`);
     else toast('已經是最新的資料');
   } catch {
     toast('暫時連不上，顯示的是上次的資料');
@@ -522,8 +537,9 @@ function paperHeadHTML(P) {
   const t = P.totals;
   const dv = S.divs && S.divs[st.code || '0050'];
   const br = S.rows.get(st.code || '0050');
-  const bq = br ? quote(br).px : null;
-  const bench = benchValue(st, dv ? dv.d : [], dv ? dv.s : [], bq, today());
+  const bqq = br ? quote(br) : null;
+  // 除息、分割只算到「價格的日期」為止：開盤前價格還是昨收，當天的除息還不能算
+  const bench = benchValue(st, dv ? dv.d : [], dv ? dv.s : [], bqq ? bqq.px : null, (bqq && bqq.date) || today());
   const ret = t.T / st.cash0 - 1;
   const days = PF.daysBetween(st.d, today());
   return `<section class="panel paper-head hazard-soft">
@@ -543,7 +559,7 @@ function renderPF() {
   if (isPaper() && !book.start) {
     v.innerHTML = `${head}<section class="panel pad onboard paper-on hazard-soft">
         <p class="lead">先用模擬倉練習</p>
-        <ul class="ticks"><li>給你一筆虛擬資金，用今天的真實價格「假裝」買賣</li><li>手續費、證交稅、配息、加碼減碼建議全部照真的算</li><li>隨時和「同一天全部買 0050」比較，看你的判斷（或冷眼的建議）有沒有比較好</li><li>和真實部位分開存，一鍵切換</li></ul>
+        <ul class="ticks"><li>給你一筆虛擬資金，在交易時間用當下的真實價格「假裝」買賣，成交後不能改</li><li>手續費、證交稅、配息、加碼減碼建議全部照真的算</li><li>隨時和「同一天全部買 0050」比較，看你的判斷（或冷眼的建議）有沒有比較好</li><li>和真實部位分開存，一鍵切換</li></ul>
         <div class="row-btns"><button class="btn primary" id="paper-start">${ICON.plus}開始模擬倉</button></div>
       </section>`;
     bindModeSwitch(v);
@@ -670,7 +686,7 @@ function divCalHTML(P) {
       <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="各月份預估配息"><line x1="0" x2="${W}" y1="${H - pb}" y2="${H - pb}" class="base"/>${cols}</svg>
       ${hs.length > 1 ? `<ul class="dc-leg">${hs.map((x) => `<li><i style="background:${slotVar(x.slot)}"></i><span class="nm">${esc(x.name)}</span><b class="num">${money(x.annual)}</b></li>`).join('')}</ul>` : ''}
       ${next.length ? `<div class="dc-next">${next.map((x) => `<button data-code="${x.code}">${ICON.cal}<span><b>${fmt.d(x.nextDiv.d)}</b> ${esc(x.name)} 除息${x.nextDiv.cash ? `，預估領 <b class="num">${money(x.nextDiv.amt)}</b> 元` : '，金額待公告'}</span></button>`).join('')}</div>` : ''}
-      <p class="small muted">實際入帳通常在除息後 2～4 週。單次 2 萬元以上，股利所得部分會先扣 2.11% 二代健保補充保費。</p>
+      <p class="small muted">實際入帳通常在除息後約一個月（3～5 週）。單次 2 萬元以上，股利與利息所得的部分會先扣 2.11% 二代健保補充保費。</p>
     </section>`;
 }
 
@@ -1028,8 +1044,8 @@ function posRulesHTML() {
     <p><b>出場線</b>偏多時用作廢線，其他用移動防守線。<b>減碼幅度</b>市值型、高股息、海外、債券先減三分之一；產業主題、主動式、期貨先減一半；槓桿與反向全部出場。</p>
     <p><b>成本不影響方向</b>平均成本只用來算損益、損益兩平與「跌到防守線還剩多少獲利」，不會讓規則變成攤平建議。</p>
     <p><b>交易成本</b>手續費＝成交金額 × 0.1425% × 你的折扣，無條件捨去，整股與零股分開計算並各有最低收費；ETF 賣出證交稅 0.1%，被動式債券 ETF 停徵到 2026 年底，主動式債券 ETF（代號尾碼 D）照課。</p>
-    <p><b>配息</b>除息日前一天（含）以前買進、而且除息日前沒有賣出才領得到；分割前的交易會自動換算股數。單次 2 萬元以上的股利所得部分會扣 2.11% 二代健保補充保費。</p>
-    <p><b>模擬倉</b>只能用今天、現價上下 2% 內的價格成交；現金由起始資金、買賣金額與已領股息自動計算；成績和「開倉那天把錢全買 0050（含配息）」比較。</p>`;
+    <p><b>配息</b>除息日前一天（含）以前買進、而且除息日前沒有賣出才領得到；分割前的交易會自動換算股數。單次 2 萬元以上，股利與利息所得的部分會扣 2.11% 二代健保補充保費。</p>
+    <p><b>模擬倉</b>跟真的下單一樣：只在交易日 09:00–14:30 用「現在」的價格成交（盤中即時價，盤中價格超過 ${PAPER_FRESH_MIN} 分鐘沒更新就先不成交；13:25–13:30 收盤集合競價不成交；13:30 以後用收盤價），價格與手續費不能自己填，成交後不能修改，只有最新一筆在價格更新前可以撤銷。現金由起始資金、買賣金額與已領股息自動計算；成績和「開倉那天把錢全買 0050（含配息）」比較。</p>`;
 }
 function applyTheme() {
   const r = document.documentElement;

@@ -55,7 +55,9 @@ export function openDuel(push = true) {
   openSheet('__duel', 'duel', push);
   drawDuel();
 }
+let duelSeq = 0;   // 連續切換時，只畫最後一次的結果（慢的回應不能蓋掉新的選擇）
 async function drawDuel() {
+  const my = ++duelSeq;
   const sh = $('#sheet');
   const slots = (settings.duel || []).slice(0, 3);
   while (slots.length < 3) slots.push(null);
@@ -64,6 +66,7 @@ async function drawDuel() {
   const all = S.summary.etfs;
   const stats = duelStats(all, picks.map((p) => p.r));
   const nWith = all.filter((r) => isNum(r.r1y)).length;
+  const nAll = all.filter((r) => isNum(r.sc)).length;
   const slotHTML = rows.map((r, i) => (r
     ? `<div class="slot" style="--c:${SLOT_COL[i]}"><i></i><span class="sl-n"><b>${esc(r.n)}</b><span class="num">${r.c}・${esc(catName(r.k))}</span></span><button class="mini-btn" data-rm="${i}" aria-label="移出對決">${ICON.x}</button></div>`
     : `<div class="slot empty" style="--c:${SLOT_COL[i]}"><i></i>${picker('dq' + i, i === 2 ? '第三檔（選填）' : '輸入代號或名稱')}</div>`)).join('');
@@ -89,7 +92,7 @@ async function drawDuel() {
     <section class="panel hex-card">
       <div class="hx-wrap">${hexSVG(stats, picks.map((p) => SLOT_COL[p.i]))}</div>
       <ul class="hx-leg">${picks.map((p) => `<li style="--c:${SLOT_COL[p.i]}"><i></i>${esc(p.r.n)}</li>`).join('')}</ul>
-      <p class="small muted">每一項都是和全部 ${nWith} 檔有一年以上資料的 ETF 比的百分位：越往外圈，代表在那一項贏過越多 ETF。「穩定」「抗跌」是波動與回檔越小越外圈。</p>
+      <p class="small muted">每一項都是和其他 ETF 比的百分位，越往外圈代表在那一項贏過越多 ETF：報酬、穩定、抗跌只和上市滿一年的 ${nWith} 檔比，配息、人氣、規則和全部 ${nAll} 檔比。「穩定」「抗跌」是波動與回檔越小越外圈。</p>
     </section>
     <section class="panel tbl-wrap"><table class="t duel-t"><thead><tr><th></th>${picks.map((p) => `<th class="r"><span class="th-c" style="--c:${SLOT_COL[p.i]}"><i></i>${esc(p.r.c)}</span></th>`).join('')}</tr></thead><tbody>${tRows}${extra}</tbody></table></section>
     <section class="panel chart-card"><div class="chart-head"><h3>近一年含息走勢</h3><span class="small muted">起點都換成 100</span></div><div class="chart" id="dchart"><div class="skeleton" style="height:200px"></div></div></section>
@@ -101,7 +104,7 @@ async function drawDuel() {
   rows.forEach((r, i) => { if (!r) bindPicker(sh, 'dq' + i, (code) => { const d = settings.duel.slice(); while (d.length < 3) d.push(null); d[i] = code; settings.duel = d; saveSettings(); drawDuel(); }, slots.filter(Boolean)); });
   if (picks.length >= 2) {
     const dets = await Promise.all(picks.map((p) => ensureDetail(p.r.c)));
-    if (S.openCode !== '__duel') return;
+    if (S.openCode !== '__duel' || my !== duelSeq) return;
     const box = $('#dchart', sh);
     if (!box) return;
     const base = dets.find((d) => d && d.bars) ;
@@ -145,7 +148,9 @@ export function openTM(push = true, code = null) {
   openSheet('__tm', 'tm', push);
   drawTM();
 }
+let tmSeq = 0;
 async function drawTM() {
+  const my = ++tmSeq;
   const sh = $('#sheet');
   const o = settings.tm;
   const row = S.rows.get(o.code) || S.rows.get('0050');
@@ -153,7 +158,7 @@ async function drawTM() {
   sh.innerHTML = topBar('存股時光機', '如果當初每月固定買') + `<div class="sheet-body tool tm"><div class="skeleton" style="height:220px"></div><div class="skeleton" style="height:260px"></div></div>`;
   $('#back', sh).addEventListener('click', () => closeDetail());
   const hist = await ensureHist(o.code);
-  if (S.openCode !== '__tm') return;
+  if (S.openCode !== '__tm' || my !== tmSeq) return;
   const body = $('.sheet-body', sh);
   if (!hist || !hist.d || hist.d.length < 40) {
     body.innerHTML = `${tmInputs(row, null)}<section class="panel pad calm"><b>這檔的歷史資料還不夠。</b><span class="muted">上市不久，或後台還在補 2020 年以來的歷史資料（約需一兩天）。可以先換一檔試試。</span></section>`;
@@ -174,8 +179,10 @@ async function drawTM() {
     const series = [
       { name: '總投入', col: 'var(--frost-3)', vals: pts.map((p) => p.inv), dash: '3 4', width: 1.5 },
       { name: TM_STRATS.dca.name, col: 'var(--frost)', vals: pts.map((p) => p.v.dca) },
-      { name: TM_STRATS.add.name, col: 'var(--s1)', vals: pts.map((p) => p.v.add) },
-      { name: TM_STRATS.pause.name, col: 'var(--s2)', vals: pts.map((p) => p.v.pause) },
+      ...(res.hasSig ? [
+        { name: TM_STRATS.add.name, col: 'var(--s1)', vals: pts.map((p) => p.v.add) },
+        { name: TM_STRATS.pause.name, col: 'var(--s2)', vals: pts.map((p) => p.v.pause) },
+      ] : []),
     ];
     box.innerHTML = linesSVG({ dates, series, fmtY: (v) => (Math.abs(v) >= 1e4 ? `${(v / 1e4).toFixed(0)}萬` : v.toFixed(0)), h: 230 });
     bindLines(box, { dates, series, fmtV: (v) => money(v) });
@@ -205,9 +212,10 @@ function tmInputs(row, hist) {
   </section>`;
 }
 function tmResult(res, row) {
-  const S3 = res.strats;
+  // 上市太短、規則還沒有訊號的 ETF：只看定期定額，不拿「從來沒買」去和定期定額比
+  const S3 = res.hasSig ? res.strats : { dca: res.strats.dca };
   const base = S3.dca;
-  const yrs = Math.max(1, Math.round(res.months / 12 * 10) / 10);
+  const span = res.months >= 12 ? `（約 ${(Math.round(res.months / 12 * 10) / 10).toString()} 年）` : '';
   const cmp = (k) => {
     const s = S3[k];
     const d = s.value - base.value;
@@ -216,24 +224,25 @@ function tmResult(res, row) {
   };
   const col = { dca: 'var(--frost)', add: 'var(--s1)', pause: 'var(--s2)' };
   return `<section class="panel tm-hero">
-      <div class="tm-k">${fmt.dy(res.start)} 起，每月 ${money(settings.tm.amount)} 元，共 ${res.months} 個月（約 ${yrs} 年）</div>
+      <div class="tm-k">${fmt.dy(res.start)} 起，每月 ${money(settings.tm.amount)} 元，共 ${res.months} 個月${span}</div>
       <div class="tm-big"><span class="num">${money(base.value)}</span><small>元</small></div>
       <div class="tm-sub">投入 <b class="num">${money(base.invested)}</b>　賺 <b class="num ${base.gain >= 0 ? 'up' : 'down'}">${money(base.gain, true)}</b>　報酬 <b class="num ${base.ret >= 0 ? 'up' : 'down'}">${pctS(base.ret)}</b>　<span data-term="irr">年化</span> <b class="num">${pctS(base.irr)}</b></div>
       <div class="tm-sub muted">領到股息 ${money(base.div)} 元・手續費 ${money(base.fee)} 元・現在約 ${fmt.n(base.sh)} 股</div>
     </section>
     <div class="sec-h"><h2>照冷眼的訊號買，會更好嗎？</h2></div>
+    ${res.hasSig ? '' : '<section class="panel pad calm"><b>這檔上市還不到半年，規則還沒有足夠的資料判讀。</b><span class="muted">所以這裡只看定期定額；等它累積更多交易日，就能比較照訊號買的結果。</span></section>'}
     <section class="panel list tm-list">${Object.entries(S3).map(([k, s]) => `<div class="tm-row${k === 'dca' ? ' base' : ''}" style="--c:${col[k]}">
         <div class="tm-r1"><span class="tm-n"><i></i><b>${esc(s.name)}</b>${k === 'dca' ? '<small>基準</small>' : ''}</span><b class="num tm-v">${money(s.value)}</b></div>
         <div class="tm-r2"><span class="muted">${esc(s.desc)}</span></div>
         <div class="tm-r3"><span>報酬 <b class="num ${s.ret >= 0 ? 'up' : 'down'}">${pctS(s.ret)}</b></span><span><span data-term="irr">年化</span> <b class="num">${pctS(s.irr)}</b></span><span>最差帳面 <b class="num">${pctS(s.worst)}</b></span><span>買 ${s.buys} 次${s.waits ? `・等 ${s.waits} 次` : ''}</span></div>
       </div>`).join('')}</section>
     <section class="panel chart-card"><div class="chart-head"><h3>帳戶價值</h3><span class="small muted">含沒買的現金與股息</span></div><div class="chart" id="tmchart"></div>
-      <div class="legend">${[['總投入', 'var(--frost-3)', 'dash'], [TM_STRATS.dca.name, col.dca], [TM_STRATS.add.name, col.add], [TM_STRATS.pause.name, col.pause]].map(([n, c, d]) => `<span><i class="${d || ''}" style="border-color:${c}"></i>${esc(n)}</span>`).join('')}</div></section>
-    <section class="panel pad prose">
+      <div class="legend">${[['總投入', 'var(--frost-3)', 'dash'], [TM_STRATS.dca.name, col.dca], ...(res.hasSig ? [[TM_STRATS.add.name, col.add], [TM_STRATS.pause.name, col.pause]] : [])].map(([n, c, d]) => `<span><i class="${d || ''}" style="border-color:${c}"></i>${esc(n)}</span>`).join('')}</div></section>
+    ${res.hasSig ? `<section class="panel pad prose">
       <p>${cmp('add')}</p><p>${cmp('pause')}</p>
       <p>「最差帳面」是這段期間帳戶價值低於總投入最多的時候。等訊號的買法常常抱著現金，所以帳面比較不會難看，但遇到一路上漲就會少賺。</p>
-    </section>
-    <p class="disclaim">簡化：以扣款日收盤價成交（實際多為開盤附近），股息在除息日入帳（實際約 2～4 週後），不計二代健保補充保費；手續費依你在設定的折扣與最低收費計算。訊號用扣款日當週的部位訊號（每 5 個交易日一次，和回測同一套）。過去的結果不代表未來。</p>`;
+    </section>` : ''}
+    <p class="disclaim">簡化：以扣款日收盤價成交（實際多為開盤附近），股息在除息日入帳（實際約一個月後；除息日剛好沒成交就在下一個交易日），不計二代健保補充保費；手續費依你在設定的折扣與最低收費計算。訊號用扣款日之前最近一次的部位訊號（每 5 個交易日一次，和回測同一套；不用扣款日當天收盤才算得出來的訊號）。過去的結果不代表未來。</p>`;
 }
 function bindTM(sh, row, hist) {
   const o = settings.tm;

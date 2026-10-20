@@ -101,10 +101,14 @@ class Series:
     def _adjust(self):
         n = self.n
         factor = [1.0] * n      # 乘在 i 之前（含 i-1）價格上的累積因子
+        # 除息日當天沒有成交（颱風休市、冷門 ETF）時，價格的落差出現在下一個有成交的交易日，就在那天還原
         div_by_date = {}
         for d, cash in self.divs:
             if cash and cash > 0:
-                div_by_date[d] = div_by_date.get(d, 0.0) + cash
+                j = bisect.bisect_left(self.dates, d)
+                if 0 < j < n:
+                    bar = self.dates[j]
+                    div_by_date[bar] = div_by_date.get(bar, 0.0) + cash
         # 由後往前累積
         cum = 1.0
         adj_f = [1.0] * n

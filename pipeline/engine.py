@@ -420,8 +420,10 @@ def analyze(s, i, ctx, live=None, hist_cache=None, full=True):
         flags.append({'key': 'leverage', 'text': '槓桿／反向型每日重新平衡，長期持有會偏離指數，只適合短線'})
     if s.valavg20[i] is not None and s.valavg20[i] < 10_000_000:
         flags.append({'key': 'illiquid', 'text': f'近 20 日平均成交值僅約 {s.valavg20[i] / 1e6:.1f} 百萬元，買賣價差可能偏大'})
-    for f in (ctx.get('extra_flags') or {}).get(s.code, []):
-        flags.append(f)
+    # 注意股、處置股是「今天」的公告，只能套在最新一天；回測與歷史訊號不能用，否則等於拿今天的消息去改寫過去
+    if i == s.n - 1:
+        for f in (ctx.get('extra_flags') or {}).get(s.code, []):
+            flags.append(f)
 
     edge = ((ctx.get('cat_edge') or {}).get(s.cat) or {}).get(stance) if stance != 0 else None
     if edge and edge['delta'] < WEAK_EDGE:

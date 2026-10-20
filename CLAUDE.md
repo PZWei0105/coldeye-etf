@@ -11,7 +11,10 @@
 - 部位建議的門檻（風險屬性、單檔上限、現金分份、減碼幅度、手續費與稅）全部在 `site/pf.js`；改了要同步更新設定頁「加碼、減碼建議怎麼算」的說明（`site/app.js` 的 posRulesHTML）。
 - 債券 ETF 證交稅：被動式停徵到 2026/12/31，主動式（代號尾碼 D）照課 0.1%。行政院 2026/10 已把「被動式延長到 2036/12/31、主動式 2027/1/1 起納入」送立法院；三讀通過後改 `pf.js` 的 `BOND_TAX_FREE_UNTIL`、`ACTIVE_BOND_FREE_FROM`，並同步 posRulesHTML、設定頁費用說明、`learn.js` 的 tax 條目。
 
-- 模擬倉（紙上交易）存在 localStorage 的 `coldeye.paper`，真實部位在 `coldeye.pf`；兩本帳用 `core.js` 的 `switchMode` 切換，任何寫入都要經過 `saveBook()`，不可直接寫死 key。
+- 模擬倉（紙上交易）存在 localStorage 的 `coldeye.paper`，真實部位在 `coldeye.pf`；兩本帳用 `core.js` 的 `switchMode` 切換，任何寫入都要經過 `saveBook()`／`replaceBook()`／`setBooks()`，不可直接寫死 key。
+- 模擬倉要跟真的下單一樣，不能讓人「挑價格」或「事後反悔」：成交價只能是當下報價（`forms.js` 的 `paperFill`：交易日 09:00–13:25 用夠新的盤中價、13:25–13:30 不成交、13:30–14:30 用收盤價），手續費與稅自動算，成交後不能修改；只有最新一筆、而且價格還沒更新（`qat` 等於目前 live.json 的時間）時可以撤銷。現金用 `pf.js` 的 `lotsCashFlow` 照時間重播算。
+- 注意股、處置股（`extra_flags`）是當天的公告，只能套在最新一天；回測與歷史訊號不能用（`engine.analyze` 只在最後一根套用）。
+- 已知限制：已下市 ETF 的最後 20 個交易日（算不出 20 日後報酬）與清算價值沒有進入回測。
 
 ## 怎麼操作
 - 修改程式後推到 `main` 會觸發 workflow，執行 `control/job.json` 指定的工作；只改介面時把 job 設成 `deploy`。

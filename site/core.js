@@ -62,13 +62,24 @@ export function replaceBook(next) {
 }
 /** 另一本（真實／模擬）目前存的內容，備份時一起帶走 */
 export const otherBook = () => store.get(isPaper() ? 'pf' : 'paper', null);
+/** 還原備份、清除資料用：real／paper 給了才寫；目前顯示的那一本直接換掉，另一本寫進它自己的位置 */
+export function setBooks({ real, paper } = {}) {
+  const put = (key, b) => {
+    const next = { ...EMPTY_BOOK(), ...(b || {}) };
+    if (bookKey() === key) { replaceBook(next); return; }
+    next.updated = new Date().toISOString();
+    store.set(key, next);
+  };
+  if (real !== undefined) put('pf', real);
+  if (paper !== undefined) put('paper', paper);
+}
 export const alerts = store.get('alerts', []);
 export const saveAlerts = () => store.set('alerts', alerts);
 export const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
 // ------------------------------------------------------------------ 全域狀態與事件
 export const S = {
-  summary: null, live: null, news: null, track: null, divs: null, detail: {}, hist: {}, breadth: null, pxSeen: new Map(),
+  summary: null, live: null, offline: false, news: null, track: null, divs: null, detail: {}, hist: {}, breadth: null, pxSeen: new Map(),
   tab: store.get('tab', 'home'), all: { q: '', cat: '*', sig: '*', sort: 'score' }, newsTab: 'official',
   range: 120, rows: new Map(), deferredInstall: null, P: null, adv: new Map(), openCode: null,
   firstPaint: true, changes: [],
@@ -176,12 +187,14 @@ export async function getJSON(path) {
   const t = Math.floor(Date.now() / 60000);
   const r = await fetch(`data/${path}?t=${t}`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`${path} ${r.status}`);
+  // service worker 在連不上網路時會改給上次存下的資料，並加上這個標記
+  if (path === 'summary.json' || path === 'live.json') S.offline = r.headers.get('X-ColdEye-Offline') === '1';
   return r.json();
 }
 export async function loadCore() {
   const [summary, live] = await Promise.all([getJSON('summary.json'), getJSON('live.json').catch(() => null)]);
   S.summary = summary;
-  S.live = live;
+  if (live) S.live = live;   // 盤中資料這次沒抓到，就保留上一份，不要退回昨天的收盤價
   S.rows = new Map(summary.etfs.map((r) => [r.c, r]));
   S.breadth = breadth(summary.etfs);
   store.set('cache.summary', summary);
@@ -243,12 +256,8 @@ export function hasBook() { return book.lots.length > 0 || book.cash > 0; }
 
 export function paperCash(P0) {
   if (!book.start) return 0;
-  let c = book.start.cash0 || 0;
-  for (const l of book.lots) {
-    const amt = l.sh * l.px;
-    c += l.side === 'sell' ? amt - (l.fee || 0) - (l.tax || 0) : -(amt + (l.fee || 0));
-  }
-  return c + (P0 ? P0.totals.divRecv : 0);
+  const sp = (c) => (S.divs && S.divs[c] && S.divs[c].s) || [];
+  return (book.start.cash0 || 0) + PF.lotsCashFlow(book.lots, sp) + (P0 ? P0.totals.divRecv : 0);
 }
 export function computePF() {
   if (!S.summary) { S.P = null; return null; }

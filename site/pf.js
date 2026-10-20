@@ -178,6 +178,29 @@ export function holdingFromLots(lots, splits) {
   return { sh, cost, avg: sh > 0 ? cost / sh : null, realized, undated, firstD, warnings };
 }
 
+/** 交易紀錄的現金流（模擬倉算現金用）：買進付出成交金額＋手續費，賣出拿回成交金額－手續費－證交稅。
+ *  和 holdingFromLots 一樣照時間重播：賣出超過當時持股的部分不算錢（不然刪掉買進後，賣出的錢還留著）。 */
+export function lotsCashFlow(lots, splitsOf = () => []) {
+  const held = new Map();
+  let flow = 0;
+  for (const raw of sortLots(lots)) {
+    const l = normLot(raw, splitsOf(raw.c));
+    const fee = isNum(raw.fee) ? raw.fee : 0;
+    const tax = isNum(raw.tax) ? raw.tax : 0;
+    const h = held.get(raw.c) || 0;
+    if (raw.side === 'sell') {
+      const n = Math.min(l.nsh, h);
+      if (!(n > 1e-9) || !(l.nsh > 0)) continue;
+      flow += (n / l.nsh) * (raw.sh * raw.px - fee - tax);
+      held.set(raw.c, h - n);
+    } else {
+      flow -= raw.sh * raw.px + fee;
+      held.set(raw.c, h + l.nsh);
+    }
+  }
+  return flow;
+}
+
 // ------------------------------------------------------------------ 配息
 /** 已經除息、可以領到的配息（只算有填買進日期的交易）。
  *  台灣規則：除息日前一天（含）以前買進、而且除息日前沒有賣出，才領得到。 */
@@ -263,13 +286,15 @@ export function buildPortfolio(pf, rows, quoteOf, divsData, cfg, today) {
     const dv = (divsData && divsData[code]) || { d: [], s: [] };
     const splits = dv.s || [];
     const h = holdingFromLots(lots, splits);
-    const rec = dividendsReceived(lots, dv.d, splits, today);
-    realizedAll += h.realized;
-    divAll += rec.total;
-    undatedAll += rec.undated;
     const cat = row ? row.k : null;
     const tcat = taxCat(row);
     const q = row ? quoteOf(row) : null;
+    // 除息日開盤前，價格還是除息前的昨收：這時候先不算當天的配息，不然股息會被算兩次（價格裡一次、已領配息一次）
+    const divAsOf = q && q.date && q.date < today ? today - 1 : today;
+    const rec = dividendsReceived(lots, dv.d, splits, divAsOf);
+    realizedAll += h.realized;
+    divAll += rec.total;
+    undatedAll += rec.undated;
     const px = q && isNum(q.px) ? q.px : null;
     if (!(h.sh > 0)) {
       let dayC = null;
@@ -524,7 +549,7 @@ export function advise(H, ctx) {
   const nd = r.dv;
   if (held && nd && nd.d >= ctx.today && daysBetween(ctx.today, nd.d) <= DIV_SOON_DAYS) {
     const amt = nd.cash ? Math.floor(nd.cash * H.sh + 1e-9) : null;
-    add('info', `${Math.floor(nd.d / 100) % 100}/${nd.d % 100} 除息${nd.cash ? `，每單位 ${nd.cash} 元，預估可領 ${ntS(amt)} 元` : '，金額待公告'}。除息當天股價會扣掉配息，總報酬不變${amt >= NHI_THRESHOLD ? '；單次 2 萬元以上，股利所得部分會先扣 2.11% 二代健保補充保費' : ''}。`);
+    add('info', `${Math.floor(nd.d / 100) % 100}/${nd.d % 100} 除息${nd.cash ? `，每單位 ${nd.cash} 元，預估可領 ${ntS(amt)} 元` : '，金額待公告'}。除息當天股價會扣掉配息，總報酬不變${amt >= NHI_THRESHOLD ? '；單次 2 萬元以上，股利與利息所得的部分會先扣 2.11% 二代健保補充保費' : ''}。`);
   }
   if (T <= 0) add('info', '在「部位」輸入可投入的現金或持股，才能依你的資金算出建議股數。');
   return out;

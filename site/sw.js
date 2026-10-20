@@ -27,7 +27,13 @@ self.addEventListener('fetch', (e) => {
           if (res.ok) caches.open(DATA).then((c) => c.put(key, res.clone()));
           return res;
         })
-        .catch(() => caches.open(DATA).then((c) => c.match(key)).then((r) => r || Response.error())),
+        // 連不上網路：給上次存下的資料，並標記「這是離線的舊資料」，App 才不會說成最新
+        .catch(() => caches.open(DATA).then((c) => c.match(key)).then((r) => {
+          if (!r) return Response.error();
+          const h = new Headers(r.headers);
+          h.set('X-ColdEye-Offline', '1');
+          return r.blob().then((b) => new Response(b, { status: 200, statusText: 'OK', headers: h }));
+        })),
     );
     return;
   }
