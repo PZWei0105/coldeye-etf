@@ -112,11 +112,23 @@ export function onLotDel({ id }) {
   if (k >= 0) { journal.items.splice(k, 1); saveJournal(); bus.emit('journal'); }
 }
 export function onLotEdit({ lot }) {
-  const e = journal.items.find((x) => x.src === 'trade' && x.lot === lot.id);
-  if (!e) return;
+  const k = journal.items.findIndex((x) => x.src === 'trade' && x.lot === lot.id);
+  if (k < 0) return;
+  const e = journal.items[k];
+  const row = S.rows.get(lot.c);
+  // 改成別天或冷眼沒有的代號：和「只記今天的交易」同一條規則，日記那筆拿掉（當時看到的狀態已經不是今天的）
+  if (!row || (e.book !== 'paper' && lot.d !== today())) {
+    journal.items.splice(k, 1);
+    saveJournal();
+    bus.emit('journal');
+    return;
+  }
   e.stance = lot.side === 'sell' ? 'bear' : 'bull';
+  // 換了代號：整份「當時看到的狀態」（類別、規則觀點…）跟著換，同類基準才會對
+  if (lot.c !== e.c || !e.snap) e.snap = { ...snapOf(row), live: false, t: null };
   e.c = lot.c;
-  if (e.snap && lot.px > 0) { e.snap.px = lot.px; if (lot.d) e.snap.d = lot.d; }
+  if (lot.px > 0) e.snap.px = lot.px;
+  e.snap.d = lot.d;
   e.text = lot.note || e.text;
   delete e.res;
   saveJournal();
