@@ -3,22 +3,28 @@
    持股、交易、模擬倉、提醒：只存在這支手機（localStorage），不會上傳。 */
 import {
   $, $$, esc, clamp, isNum, reduceMotion, store, settings, saveSettings, book, alerts, saveAlerts, S, bus, fmt, money, sharesOf, cash3,
-  dirCls, arrow, twParts, CAT, catName, POS, ST, ICON, getJSON, loadCore, useCache, ensureTrack, ensureDivs, quote,
+  dirCls, arrow, twParts, CAT, catName, POS, ST, ICON, getJSON, loadCore, useCache, ensureTrack, ensureDivs, ensureHist, quote,
   computePF, hasBook, heldOf, slotVar, stanceChip, posChip, actChip, gaugeSVG, animateNeedles, sparkSVG, toast, countUp,
-  today, PF, premBand, DEFAULT_RULES, isPaper, switchMode, reloadBook, isBookKey,
+  today, PF, premBand, DEFAULT_RULES, isPaper, switchMode, reloadBook, isBookKey, journal, saveJournal, reloadJournal, isJournalKey, taiexNow,
 } from './core.js';
 import { openDetail, closeDetail, renderDetail, refreshDetailQuote } from './sheet.js';
-import { openTradeForm, openCashForm, openBackup, checkAlerts, closeModal, modalOpen, wipeBook, openPaperStart, PAPER_FRESH_MIN } from './forms.js';
+import { openTradeForm, openCashForm, openBackup, checkAlerts, closeModal, modalOpen, wipeBook, openPaperStart, PAPER_FRESH_MIN, openModal } from './forms.js';
 import { installExplain, setExplain, explainOn, glossaryHTML, bindGlossary } from './learn.js';
-import { irisSVG, heatHTML, heatLegend } from './viz.js';
-import { brief, benchValue } from './calc.js';
+import { irisSVG, heatHTML, heatLegend, linesSVG, bindLines } from './viz.js';
+import { brief, benchValue, equityCurve } from './calc.js';
 import { openDuel, openTM } from './tools.js';
+import {
+  renderAide, aideHomeHTML, bindAideHome, aideBadge, aideSpeech, refreshEvals, onTrade, onLotDel, onLotEdit, openIdea, openAsk,
+  projectText, rulesHTML as aideRulesHTML, hooks as aideHooks, coreSVG,
+} from './desk.js';
+import * as FX from './fx.js';
 
 // ------------------------------------------------------------------ 分頁
 const TABS = [
   { id: 'home', t: '指揮台', svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 1.8v3M12 19.2v3M1.8 12h3M19.2 12h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>' },
   { id: 'pf', t: '部位', svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.6a8.4 8.4 0 1 0 8.4 8.4H12z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14.6 2.4a7.6 7.6 0 0 1 7 7H14.6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>' },
   { id: 'radar', t: '雷達', svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="4.4" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".7"/><path d="M12 12 18 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="15.6" cy="15" r="1.4" fill="currentColor"/></svg>' },
+  { id: 'aide', t: '副官', svg: ICON.aide, core: true },
   { id: 'news', t: '情報', svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h11l5 5V19a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M8 11h8M8 14.5h8M8 18h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>' },
   { id: 'track', t: '戰績', svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 19.5h15M7 16v-4.5M12 16V7.5M17 16v-7" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>' },
 ];
@@ -38,7 +44,7 @@ function renderShell() {
       <button class="icon-btn" id="privacy" aria-pressed="${settings.privacy}" aria-label="${settings.privacy ? '顯示金額' : '隱藏金額'}">${settings.privacy ? ICON.eyeOff : ICON.eye}</button>
       <button class="avatar" id="prefs" aria-label="設定">${esc(avatarText())}</button>
     </header>
-    <nav class="dock" aria-label="主要分頁"><div class="in">${TABS.map((t) => `<button data-tab="${t.id}">${t.svg}<span>${t.t}</span></button>`).join('')}</div></nav>
+    <nav class="dock" aria-label="主要分頁"><div class="in">${TABS.map((t) => `<button data-tab="${t.id}"${t.core ? ' class="core-tab"' : ''}>${t.svg}<span>${t.t}</span>${t.core ? '<i class="badge num" hidden></i>' : ''}</button>`).join('')}</div></nav>
     <main id="view" aria-live="polite"></main>
     <section class="sheet" id="sheet" hidden aria-modal="true" role="dialog"></section>
     <div class="modal" id="modal" hidden></div>
@@ -81,6 +87,7 @@ function paintExplain() {
 }
 function paintMode() {
   document.body.classList.toggle('paper', isPaper());
+  document.body.classList.toggle('nofx', settings.fx === false);
   const t = $('#mode-tag');
   if (t) t.hidden = !isPaper();
 }
@@ -182,16 +189,27 @@ async function manualRefresh() {
 
 function go(tab) {
   if (S.openCode) closeDetail(false);
+  const changed = tab !== S.tab;
   S.animUntil = 0;
   S.tab = tab;
   store.set('tab', tab);
   render();
   window.scrollTo({ top: 0 });
+  if (changed) { FX.cue('nav'); FX.pulse($('#view'), 'fx-swap', 520); }
+}
+function paintBadge() {
+  const n = aideBadge();
+  const b = $('.dock .core-tab .badge');
+  if (!b) return;
+  b.hidden = !n;
+  b.textContent = n > 9 ? '9+' : String(n);
+  $('.dock .core-tab').setAttribute('aria-label', n ? `副官（${n} 件待辦）` : '副官');
 }
 function render() {
   $$('.dock button').forEach((b) => b.setAttribute('aria-current', b.dataset.tab === S.tab ? 'page' : 'false'));
   renderHeader();
   paintMode();
+  paintBadge();
   // 開場動畫進行中就先不要重畫指揮台，等動畫結束再更新數字
   if (S.tab === 'home' && S.animUntil && performance.now() < S.animUntil) {
     clearTimeout(S.animTimer);
@@ -201,7 +219,7 @@ function render() {
   const v = $('#view');
   v.dataset.tab = S.tab;
   if (!S.summary) { v.innerHTML = '<div class="skeleton tall"></div><div class="skeleton"></div><div class="skeleton"></div>'; return; }
-  ({ home: renderHome, pf: renderPF, radar: renderRadar, news: renderNews, track: renderTrack }[S.tab] || renderHome)();
+  ({ home: renderHome, pf: renderPF, radar: renderRadar, aide: () => renderAide(v), news: renderNews, track: renderTrack }[S.tab] || renderHome)();
   flashPrices(v);
 }
 
@@ -216,7 +234,11 @@ function flashPrices(root) {
     if (isNum(was) && isNum(v) && Math.abs(was - v) > 1e-9) changed.set(c, v > was ? 'fl-up' : 'fl-down');
     if (isNum(v)) S.pxSeen.set(c, v);
   }
-  if (!changed.size || reduceMotion()) return;
+  if (!changed.size) return;
+  // 跳動的聲音：漲的多就是上揚的嗶、跌的多就是下沉的嗶（一次更新只響一聲）
+  const ups = [...changed.values()].filter((k) => k === 'fl-up').length;
+  FX.sfx(ups >= changed.size - ups ? 'pxUp' : 'pxDown');
+  if (reduceMotion()) return;
   for (const el of els) { const k = changed.get(el.dataset.pxc); if (k) el.classList.add(k); }
 }
 const pxAttr = (code, px) => (isNum(px) ? ` data-pxc="${code}" data-px="${px}"` : '');
@@ -248,15 +270,7 @@ function diffSeen() {
 }
 
 // ================================================================== 指揮台
-function liveTaiex() {
-  const m = S.summary.market;
-  if (!m) return null;
-  const tx = S.live && S.live.taiex && S.live.open && S.live.date === today() && isNum(S.live.taiex.z) ? S.live.taiex : null;
-  return {
-    px: tx ? tx.z : m.close, ch: tx ? tx.z - tx.y : m.chg, pc: tx ? (tx.z / tx.y - 1) * 100 : m.pct,
-    when: tx ? `盤中 ${String(tx.t || '').slice(0, 5)}` : `${fmt.d(m.d)} 收盤`, ma60: m.ma60, insti: m.insti, spark: m.spark, live: !!tx,
-  };
-}
+const liveTaiex = () => taiexNow();
 function renderHome() {
   const v = $('#view');
   const P = S.P;
@@ -264,7 +278,7 @@ function renderHome() {
   // 手機上依序排成一欄；寬螢幕（筆電、電視）變成三欄戰情室：左「大盤之瞳＋晨報」、中「行動＋關注」、右「熱力圖」
   v.innerHTML = `<div class="home">
     ${stallHTML()}
-    <div class="col c1"><div class="h-eye">${eyeHTML(P, has)}</div><div class="h-brief">${briefHTML()}</div></div>
+    <div class="col c1"><div class="h-eye">${eyeHTML(P, has)}</div><div class="h-brief">${briefHTML()}</div><div class="h-aide">${aideHomeHTML()}</div></div>
     <div class="col c2"><div class="h-acts">${actionsHTML(P)}</div><div class="h-watch">${watchHTML()}</div></div>
     <div class="col c3"><div class="h-heat">${heatCardHTML(true)}</div><div class="h-news">${newsMiniHTML()}</div></div>
     <div class="h-foot">${installCard()}<p class="disclaim">資料來自證交所、櫃買中心、集保結算所等官方發布；觀點與建議由固定規則計算，不保證報酬，買賣請自行判斷。</p></div>
@@ -273,6 +287,8 @@ function renderHome() {
   bindHero(v, P);
   bindInstall(v);
   bindHeat(v);
+  bindBrief(v);
+  bindAideHome(v, go);
   animateNeedles(v);
   const more = $('#heat-more', v);
   if (more) more.addEventListener('click', () => { settings.radarView = 'heat'; saveSettings(); go('radar'); });
@@ -373,11 +389,9 @@ const BR_ICON = {
   watch: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.5" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="10" cy="10" r="2" fill="currentColor"/></svg>',
   cal: ICON.cal,
 };
-function briefHTML() {
+function briefItems() {
   const tx = liveTaiex();
-  const { h } = twParts();
-  const name = h < 12 ? '冷眼晨報' : h < 18 ? '冷眼午報' : '冷眼晚報';
-  const items = brief({
+  return brief({
     market: tx ? { px: tx.px, pc: tx.pc, ma60: tx.ma60, insti: tx.insti } : null,
     br: S.breadth,
     watch: settings.watch.map((c) => S.rows.get(c)).filter(Boolean),
@@ -386,14 +400,47 @@ function briefHTML() {
     names: { st: { 1: '偏多', 0: '中性', '-1': '偏空' }, ps: Object.fromEntries(Object.entries(POS).map(([k, v]) => [k, v.t])) },
     premWarn: (r) => premBand(r)[0], rowOf: (c) => S.rows.get(c),
   });
-  return `<section class="panel brief"><div class="br-h"><span class="br-t">${name}</span><span class="br-s num">${tx ? esc(tx.when) : ''}</span></div>
-    <ul class="br-list">${items.map((it) => `<li class="br-${it.k}"${it.code ? ` data-code="${it.code}"` : ''}><span class="br-ic">${BR_ICON[it.k] || ''}</span><span class="br-x">${md(it.t)}</span></li>`).join('')}</ul></section>`;
+}
+const briefName = () => { const { h } = twParts(); return h < 12 ? '冷眼晨報' : h < 18 ? '冷眼午報' : '冷眼晚報'; };
+/** 語音播報的稿子：問候＋晨報三句＋今日行動件數＋副官待辦 */
+function briefSpeech(withHello = true) {
+  const { h } = twParts();
+  const word = h >= 5 && h < 11 ? '早安' : h >= 11 && h < 18 ? '午安' : '晚安';
+  const acts = buildActions(S.P).length;
+  const parts = [];
+  if (withHello) parts.push(`${word}，${settings.name || 'PZ'}。冷眼系統上線。`);
+  parts.push(`${briefName()}。`);
+  for (const it of briefItems()) parts.push(it.t);
+  parts.push(acts ? `今天有 ${acts} 件需要你看一下的事，在今日行動。` : '今天沒有需要動作的事。');
+  const a = aideSpeech();
+  if (a) parts.push(a);
+  return parts.join('');
+}
+function briefHTML() {
+  const tx = liveTaiex();
+  const items = briefItems();
+  return `<section class="panel brief"><div class="br-h"><span class="br-t">${briefName()}</span><span class="br-s num">${tx ? esc(tx.when) : ''}</span>
+      ${FX.hasVoice() ? `<button class="icon-btn br-say" id="br-say" aria-label="念給我聽">${ICON.speaker}</button>` : ''}</div>
+    <ul class="br-list">${items.map((it) => `<li class="br-${it.k}"${it.code ? ` data-code="${it.code}"` : ''}><span class="br-ic">${BR_ICON[it.k] || ''}</span><span class="br-x">${md(it.t)}</span></li>`).join('')}</ul>
+    <button class="link small br-ask" id="br-ask">${ICON.comms}帶今天的市場去問 Claude</button></section>`;
+}
+function bindBrief(v) {
+  const say = $('#br-say', v);
+  if (say) say.addEventListener('click', () => {
+    if (FX.isSpeaking()) { FX.stopSpeak(); return; }
+    FX.sfx('comms');
+    if (!FX.speak(briefSpeech(false), { force: true })) toast('這個瀏覽器不支援語音播報');
+  });
+  const ask = $('#br-ask', v);
+  if (ask) ask.addEventListener('click', () => openAsk('market'));
 }
 
 function chip(t, cls) { return `<span class="chip act ${cls}">${t}</span>`; }
 function buildActions(P) {
   const out = [];
-  for (const h of checkAlerts()) {
+  const hits = checkAlerts();
+  if (hits.some((h) => h.fresh)) setTimeout(() => FX.cue('alert'), 400);   // 今天第一次碰到：響一下
+  for (const h of hits) {
     out.push({ pri: 0, code: h.row.c, chip: chip('到價', 'alert'), title: h.row.n, text: `${h.a.op === 'le' ? '跌到' : '漲到'}你設定的 <b class="num">${fmt.px(h.a.px)}</b>，現價 <b class="num">${fmt.px(h.q.px)}</b>` });
   }
   if (P) {
@@ -420,6 +467,12 @@ function buildActions(P) {
     const t = (z) => `${ST[String(z[0])] ? ST[String(z[0])].t : '—'}${z[1] && POS[z[1]] ? '／' + POS[z[1]].t : ''}`;
     out.push({ pri: 1, code: c.c, chip: chip('變化', 'info'), title: r.n, text: `規則訊號：${t(c.from)} → <b>${t(c.to)}</b>` });
   }
+  // 定期定額的扣款日（週末順延到星期一）
+  for (const p of settings.plans || []) {
+    const r = S.rows.get(p.c);
+    if (!r || dcaDue(p.day) !== today()) continue;
+    out.push({ pri: 1, code: p.c, chip: chip('扣款日', 'alert'), title: r.n, text: `今天扣 <b class="num">${money(p.amt)}</b> 元（每月 ${p.day} 號）。定期定額照紀律扣，不看短期訊號${r.ps === 'trim' || r.ps === 'caution' ? `；規則現在是「${POS[r.ps].t}」，另外的單筆加碼先等一等` : ''}。` });
+  }
   const held = new Set(P ? P.holdings.map((x) => x.code) : []);
   for (const code of settings.watch) {
     if (held.has(code)) continue;
@@ -434,6 +487,17 @@ function buildActions(P) {
   }
   const seen = new Set();
   return out.sort((a, b) => a.pri - b.pri).filter((a) => { const k = a.code + a.chip; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 9);
+}
+/** 這個月的扣款日：當月的 day 號，遇到週六、週日順延到星期一（颱風假等臨時休市看不到） */
+function dcaDue(day) {
+  const { y, m } = twParts();
+  let d = y * 10000 + m * 100 + day;
+  for (let k = 0; k < 3; k++) {
+    const wd = new Date(Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100)).getUTCDay();
+    if (wd >= 1 && wd <= 5) break;
+    d = PF.addDays(d, 1);
+  }
+  return d;
 }
 function actionsHTML(P) {
   const acts = buildActions(P);
@@ -600,7 +664,9 @@ function renderPF() {
       </div>
       <p class="small muted">損益已扣掉賣出時的<span data-term="fee">手續費</span>與<span data-term="tax">證交稅</span>估計值。${settings.fee.disc < 1 ? `手續費以 ${(settings.fee.disc * 10).toFixed(1).replace(/\.0$/, '')} 折計算。` : '手續費以原價計算，可在設定改成你的折扣。'}</p>
     </section>`;
+  html += eqHTML();
   html += allocHTML(P);
+  if (P.holdings.length) html += `<section class="panel pad aide-strip slim"><div class="as-h"><span class="ac-core">${coreSVG('mini')}</span><div><b>想討論整體配置？</b><span class="small muted">副官巡檢在「副官」分頁；也可以把配置（預設只寫比例）帶去問 Claude。</span></div></div><div class="row-btns"><button class="btn small ghost" id="pf-aide">${ICON.aide}看副官巡檢</button><button class="btn small ghost" id="pf-ask">${ICON.comms}帶配置去問 Claude</button></div></section>`;
   if (P.holdings.length) {
     html += `<div class="sec-h"><h2>持股</h2><span class="aside">${P.holdings.length} 檔　依市值排序</span></div>
     <section class="panel list holds">${P.holdings.map(holdRow).join('')}</section>`;
@@ -628,6 +694,76 @@ function renderPF() {
   $$('[data-lot]', v).forEach((b) => b.addEventListener('click', () => { const lot = book.lots.find((l) => l.id === b.dataset.lot); if (lot) openTradeForm({ lot }); }));
   const more = $('#tx-more', v);
   if (more) more.addEventListener('click', () => { S.txAll = true; renderPF(); });
+  const pa = $('#pf-ask', v);
+  if (pa) pa.addEventListener('click', () => openAsk('pf'));
+  const pd = $('#pf-aide', v);
+  if (pd) pd.addEventListener('click', () => go('aide'));
+  drawEq(v);
+}
+
+// ------------------------------------------------------------------ 資產走勢：用交易紀錄＋官方收盤價重算每一天
+const EQ_RANGES = [[60, '3 月'], [250, '1 年'], [0, '全部']];
+function eqHTML() {
+  const dated = book.lots.filter((l) => l.d);
+  if (!dated.length) return '';
+  const r = settings.eqRange ?? 250;
+  return `<div class="sec-h"><h2>資產走勢</h2><div class="seg mini" role="tablist" aria-label="期間">${EQ_RANGES.map(([n, t]) => `<button data-eq="${n}" aria-pressed="${r === n}">${t}</button>`).join('')}</div></div>
+    <section class="panel chart-card eq-card"><div class="chart" id="eqchart"><div class="skeleton" style="height:210px"></div></div><div class="legend" id="eqleg"></div><p class="small muted eq-note" id="eqnote"></p></section>`;
+}
+let eqSeq = 0;
+async function drawEq(v) {
+  const box = $('#eqchart', v);
+  if (!box) return;
+  const my = ++eqSeq;
+  $$('[data-eq]', v).forEach((b) => b.addEventListener('click', () => {
+    settings.eqRange = +b.dataset.eq;
+    saveSettings();
+    $$('[data-eq]', v).forEach((z) => z.setAttribute('aria-pressed', z === b));
+    drawEq(v);
+  }));
+  const paper = isPaper();
+  const lots = book.lots.filter((l) => l.d);
+  const codes = [...new Set(lots.map((l) => l.c).concat(paper && book.start ? [book.start.code || '0050'] : []))];
+  const hists = {};
+  await Promise.all(codes.map(async (c) => { hists[c] = await ensureHist(c); }));
+  if (my !== eqSeq || !box.isConnected) return;
+  const r = equityCurve(lots, hists, paper && book.start ? { cash0: book.start.cash0, from: book.start.d } : {});
+  if (r.d.length < 3) { box.innerHTML = '<div class="empty small">交易日還太少，過幾天就畫得出走勢</div>'; return; }
+  let series, fmtV, ref = null, note;
+  if (paper && book.start) {
+    const st = book.start;
+    const bc = st.code || '0050';
+    const bench = equityCurve([{ c: bc, side: 'buy', d: st.pxd || st.d, sh: st.cash0 / st.px0, px: st.px0, fee: 0, at: '0' }], { [bc]: hists[bc] }, { from: st.d });
+    const bm = new Map(bench.d.map((d, i) => [d, bench.mv[i] + bench.div[i]]));
+    series = [
+      { name: '模擬總資產', col: 'var(--aurora)', vals: r.d.map((d, i) => r.cash[i] + r.mv[i]), width: 2.2 },
+      { name: `同期全買 ${bc}`, col: 'var(--frost-2)', vals: r.d.map((d) => bm.get(d) ?? null), dash: '5 4', width: 1.6 },
+    ];
+    ref = st.cash0;
+    fmtV = (x) => money(x);
+    note = `虛線是開倉那天把起始資金全部買 ${bc}（含配息）；水平虛線是起始資金 ${money(st.cash0)} 元。`;
+  } else {
+    series = [
+      { name: '持股市值＋已領配息', col: 'var(--frost)', vals: r.d.map((d, i) => r.mv[i] + r.div[i]), width: 2.2 },
+      { name: '淨投入', col: 'var(--frost-3)', vals: r.inv.slice(), dash: '4 4', width: 1.6 },
+    ];
+    fmtV = (x) => money(x);
+    const undated = book.lots.length - lots.length;
+    note = `淨投入＝買進花的錢減掉賣出拿回的錢；兩條線的差距大約就是含息總報酬。不含可投入現金${undated ? `；${undated} 筆沒填日期的交易沒算進來` : ''}。`;
+  }
+  if (r.missing.length) note += ` ${r.missing.join('、')} 沒有歷史價格，沒算進來。`;
+  const n = settings.eqRange ?? 250;
+  const k0 = n > 0 ? Math.max(0, r.d.length - n) : 0;
+  const step = Math.max(1, Math.floor((r.d.length - k0) / 280));
+  const idx = [];
+  for (let i = k0; i < r.d.length; i += step) idx.push(i);
+  if (idx[idx.length - 1] !== r.d.length - 1) idx.push(r.d.length - 1);
+  const dates = idx.map((i) => r.d[i]);
+  const sv = series.map((s) => ({ ...s, vals: idx.map((i) => s.vals[i]) }));
+  box.innerHTML = linesSVG({ dates, series: sv, fmtY: (x) => (settings.privacy ? '' : Math.abs(x) >= 1e4 ? `${(x / 1e4).toFixed(Math.abs(x) >= 1e6 ? 0 : 1)}萬` : x.toFixed(0)), ref, h: 210 });
+  bindLines(box, { dates, series: sv, fmtV });
+  $('#eqleg', v).innerHTML = sv.map((s) => `<span><i class="${s.dash ? 'dash' : ''}" style="border-color:${s.col}"></i>${esc(s.name)}</span>`).join('') + `<span class="muted num">到 ${fmt.d(r.d[r.d.length - 1])} 收盤</span>`;
+  $('#eqnote', v).textContent = note;
 }
 
 function allocHTML(P) {
@@ -896,6 +1032,7 @@ function calibRows(cal) {
 
 // ================================================================== 設定（全螢幕頁）
 function openSettings(push = true) {
+  if (S.openCode !== '__prefs') FX.cue('open');
   S.openCode = '__prefs';
   if (push && location.hash !== '#settings') history.pushState({ prefs: 1 }, '', '#settings');
   const sh = $('#sheet');
@@ -927,6 +1064,20 @@ function drawSettings() {
       <div class="srow col"><div class="h">外觀</div><div class="seg">${[['system', '跟隨系統'], ['dark', '夜戰（深色）'], ['light', '日間（淺色）']].map(([k, t]) => `<button data-theme="${k}" aria-pressed="${settings.theme === k}">${t}</button>`).join('')}</div></div>
     </section>
 
+    <div class="sec-h"><h2>副官與聲光</h2></div>
+    <section class="panel set">
+      <div class="srow"><div><div class="h">音效</div><div class="d">點按、切換、檢查、上鎖、到價警報都有聲音（iPhone 側邊靜音開關打開時不出聲）</div></div><button class="switch" role="switch" id="s-sfx" aria-checked="${settings.sfx !== false}" aria-label="音效"></button></div>
+      <div class="srow"><div><div class="h">音量</div></div><div class="seg mini">${[[1, '小'], [2, '中'], [3, '大']].map(([k, t]) => `<button data-vol="${k}" aria-pressed="${settings.vol === k}">${t}</button>`).join('')}</div></div>
+      <div class="srow"><div><div class="h">語音播報</div><div class="d">${FX.hasVoice() ? '每天開機時，副官把晨報念給你聽（用手機內建的中文語音，不連網）' : '這個瀏覽器不支援語音播報'}</div></div><span class="row-btns"><button class="btn small ghost" id="s-say"${FX.hasVoice() ? '' : ' disabled'}>${ICON.speaker}試聽</button><button class="switch" role="switch" id="s-voice" aria-checked="${settings.voice !== false}" aria-label="語音播報"></button></span></div>
+      <div class="srow"><div><div class="h">開機要點一下啟動</div><div class="d">手機規定要先點一下才能出聲。打開：每天第一次開啟時按「啟動」，有完整的點火音效和語音；關掉：自動開機、不出聲</div></div><button class="switch" role="switch" id="s-ignite" aria-checked="${settings.ignite !== false}" aria-label="開機要點一下啟動"></button></div>
+      <div class="srow"><div><div class="h">畫面特效</div><div class="d">切換分頁的掃描、副官檢查的逐條鎖定、蓋章與結果揭曉（手機設定「減少動態效果」時自動關閉）</div></div><button class="switch" role="switch" id="s-fx" aria-checked="${settings.fx !== false}" aria-label="畫面特效"></button></div>
+      <div class="srow"><div><div class="h">震動回饋</div><div class="d">Android 手機有效（iPhone 的網頁不支援震動）</div></div><button class="switch" role="switch" id="s-haptic" aria-checked="${settings.haptic !== false}" aria-label="震動回饋"></button></div>
+      <div class="srow"><div><div class="h">交易自動記進決策日記</div><div class="d">在冷眼記今天的交易（含模擬倉）時，副官自動記下這個決定，20 個交易日後對答案</div></div><button class="switch" role="switch" id="s-autoj" aria-checked="${settings.autoJ !== false}" aria-label="交易自動記進決策日記"></button></div>
+      <div class="srow col"><div><div class="h">Claude 專案指示（貼一次就好）</div><div class="d">在 Claude 建一個專案叫「冷眼參謀」，把這段貼進專案指示。之後「帶去問 Claude」可以打開「已經在 Claude 專案設好指示」，打包會比較短。</div></div>
+        <div class="row-btns"><button class="btn small" id="s-proj">${ICON.copy}複製專案指示</button><a class="btn small ghost" href="https://claude.ai/projects" target="_blank" rel="noopener">${ICON.ext}開啟 Claude 專案</a></div></div>
+      <div class="srow"><div><div class="h">清除決策日記</div><div class="d">刪除這支手機裡的全部想法與交易紀錄（交易本身不受影響），目前 ${journal.items.length} 筆</div></div><button class="btn small danger ghost" id="s-jwipe">清除</button></div>
+    </section>
+
     <div class="sec-h"><h2>投資紀律</h2></div>
     <section class="panel set">
       <div class="srow col"><div><div class="h">風險屬性</div><div class="d">單筆最多虧總資產 ${(prof.loss * 100).toFixed(1)}%；各類型單檔上限如下表</div></div>
@@ -936,6 +1087,10 @@ function drawSettings() {
         <ul class="rules-ed">${(settings.rules || []).map((r, i) => `<li><span>${esc(r)}</span><button class="mini-btn" data-rr="${i}" aria-label="刪除這條">${ICON.x}</button></li>`).join('')}</ul>
         <div class="addrow"><input class="input" id="s-rule" maxlength="40" placeholder="新增一條，例如：除息前不追高"><button class="btn small" id="s-rule-add">新增</button></div>
         ${JSON.stringify(settings.rules) !== JSON.stringify(DEFAULT_RULES) ? '<button class="link small" id="s-rule-reset">恢復預設紀律</button>' : ''}</div>
+      <div class="srow col"><div><div class="h">定期定額計畫</div><div class="d">扣款日當天，指揮台的「今日行動」和語音播報會提醒你（週末順延到星期一）。實際扣款請在「部位」記一筆。</div></div>
+        ${(settings.plans || []).length ? `<ul class="rules-ed">${settings.plans.map((p, i) => { const r = S.rows.get(p.c); return `<li><span><b>${esc(r ? r.n : p.c)}</b> <span class="muted num">${esc(p.c)}</span>　每月 <b class="num">${p.day}</b> 號　<b class="num">${money(p.amt)}</b> 元</span><button class="mini-btn" data-rp="${i}" aria-label="刪除這個計畫">${ICON.x}</button></li>`; }).join('')}</ul>` : ''}
+        <div class="plan-add"><input class="input" id="s-pc" placeholder="ETF 代號，例如 0050" autocomplete="off"><input class="input num" id="s-pd" inputmode="numeric" placeholder="每月幾號（1–28）"><input class="input num" id="s-pa" inputmode="numeric" placeholder="每月金額（元）"><button class="btn small" id="s-padd">新增</button></div>
+        <div class="f-err" id="s-perr" role="alert"></div></div>
     </section>
 
     <div class="sec-h"><h2>交易成本</h2></div>
@@ -971,6 +1126,7 @@ function drawSettings() {
       <details class="rules"><summary>冷眼小辭典</summary><div class="in">${glossaryHTML()}</div></details>
       <details class="rules"><summary>觀點怎麼算</summary><div class="in prose">${rulesHTML()}</div></details>
       <details class="rules"><summary>加碼、減碼建議怎麼算</summary><div class="in prose">${posRulesHTML()}</div></details>
+      <details class="rules"><summary>副官怎麼檢查、怎麼對答案</summary><div class="in prose">${aideRulesHTML()}</div></details>
     </section>
     <section class="panel tbl-wrap"><table class="t"><thead><tr><th>官方來源</th><th class="r">最後成功</th></tr></thead><tbody>${src.map(([, s]) => `<tr><td><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name)}</a></td><td class="r muted">${s.ok_at ? fmt.ago(s.ok_at) : '—'}</td></tr>`).join('')}</tbody></table></section>
     <section class="panel pad prose"><p><b>關於冷眼</b>　規則版本 ${esc(S.summary ? S.summary.engine : '')}，資料更新 ${S.summary ? fmt.ago(S.summary.generated) : '—'}。盤中約每 5 分鐘更新價格與預估淨值（GitHub 忙時會晚一點），收盤後陸續補上法人、融資、淨值。</p>
@@ -991,6 +1147,21 @@ function bindSettings() {
   const addRule = () => { const el = $('#s-rule', sh); const t = el.value.trim(); if (!t) return; settings.rules = (settings.rules || []).concat(t.slice(0, 40)); saveSettings(); drawSettings(); toast('已新增紀律'); };
   $('#s-rule-add', sh).addEventListener('click', addRule);
   $('#s-rule', sh).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addRule(); } });
+  $$('[data-rp]', sh).forEach((b) => b.addEventListener('click', () => { settings.plans.splice(+b.dataset.rp, 1); saveSettings(); drawSettings(); render(); }));
+  $('#s-padd', sh).addEventListener('click', () => {
+    const c = $('#s-pc', sh).value.trim().toUpperCase();
+    const day = Math.round(Number($('#s-pd', sh).value));
+    const amt = Math.round(Number(String($('#s-pa', sh).value).replace(/[,\s]/g, '')));
+    const er = $('#s-perr', sh);
+    if (!S.rows.get(c)) { er.textContent = '找不到這個代號，請輸入 ETF 代號，例如 0050'; return; }
+    if (!(day >= 1 && day <= 28)) { er.textContent = '扣款日請填 1 到 28 號'; return; }
+    if (!(amt >= 100 && amt <= 10000000)) { er.textContent = '金額請填 100 元到 1,000 萬元'; return; }
+    settings.plans = (settings.plans || []).concat({ id: Date.now().toString(36), c, day, amt });
+    saveSettings();
+    toast(`已新增：${S.rows.get(c).n} 每月 ${day} 號`);
+    drawSettings();
+    render();
+  });
   const rr = $('#s-rule-reset', sh);
   if (rr) rr.addEventListener('click', () => { settings.rules = DEFAULT_RULES.slice(); saveSettings(); drawSettings(); });
   const numSet = (id, key, ok) => $(id, sh).addEventListener('change', (e) => {
@@ -1011,6 +1182,46 @@ function bindSettings() {
     if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = '確定清除？'; return; }
     wipeBook();
     toast('已清除這支手機裡的真實部位資料');
+    drawSettings();
+  });
+  // 副官與聲光
+  const flip = (id, key, after) => $(id, sh).addEventListener('click', (e) => {
+    settings[key] = settings[key] === false;
+    saveSettings();
+    e.currentTarget.setAttribute('aria-checked', settings[key] !== false);
+    if (after) after(settings[key] !== false);
+  });
+  flip('#s-sfx', 'sfx', (on) => { if (on) { FX.unlock(); FX.sfx('online'); } });
+  flip('#s-voice', 'voice', (on) => { if (!on) FX.stopSpeak(); });
+  flip('#s-ignite', 'ignite');
+  flip('#s-fx', 'fx', (on) => { paintMode(); if (on) FX.stamp('特效開啟', 'glacier'); });
+  flip('#s-haptic', 'haptic', (on) => { if (on) FX.haptic('lock'); });
+  flip('#s-autoj', 'autoJ');
+  $$('[data-vol]', sh).forEach((b) => b.addEventListener('click', () => {
+    settings.vol = +b.dataset.vol;
+    saveSettings();
+    $$('[data-vol]', sh).forEach((z) => z.setAttribute('aria-pressed', z === b));
+    FX.unlock();
+    FX.sfx('ok');
+  }));
+  $('#s-say', sh).addEventListener('click', () => {
+    if (FX.isSpeaking()) { FX.stopSpeak(); return; }
+    FX.sfx('comms');
+    FX.speak(briefSpeech(true), { force: true });
+  });
+  $('#s-proj', sh).addEventListener('click', async () => {
+    const t = projectText();
+    try { await navigator.clipboard.writeText(t); FX.cue('ok'); toast('已複製專案指示，到 Claude 的專案「指示」貼上', null); } catch {
+      openModal(`<div class="form"><h2 class="m-title">Claude 專案指示</h2><p class="m-desc">沒辦法自動複製，請長按下面的文字全選複製。</p><textarea class="input area" rows="12" readonly>${esc(t)}</textarea><div class="m-actions"><button type="button" class="btn ghost" data-close>關閉</button></div></div>`, { label: 'Claude 專案指示' });
+    }
+  });
+  $('#s-jwipe', sh).addEventListener('click', (e) => {
+    const b = e.currentTarget;
+    if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = '確定清除？'; FX.sfx('warn'); return; }
+    journal.items.splice(0, journal.items.length);
+    saveJournal();
+    bus.emit('journal');
+    toast('已清除決策日記');
     drawSettings();
   });
   $('#s-dca', sh).addEventListener('click', (e) => { settings.dca = !settings.dca; saveSettings(); e.currentTarget.setAttribute('aria-checked', settings.dca); });
@@ -1084,6 +1295,11 @@ function bootLines() {
   rows.push({ k: '駕駛員', v: settings.name || 'PZ', ok: true, t: '認證', me: true });
   return rows;
 }
+/**
+ * 每天第一次打開的開機畫面。
+ * 「開機要點一下啟動」打開時（預設）：先停在待命畫面，按「啟動」才點火——手機規定要先點一下才能出聲，
+ * 所以點火音效、每一行的連線聲、最後的語音晨報都從這一下開始；不想要聲音可以按「直接進入」。
+ */
 function maybeBoot() {
   if (settings.boot === false) return;
   const d = today();
@@ -1092,30 +1308,88 @@ function maybeBoot() {
   const el = $('#boot');
   const tx = S.summary ? liveTaiex() : null;
   const lines = bootLines();
+  const gate = settings.ignite !== false && (settings.sfx !== false || settings.voice !== false);
   el.innerHTML = `<div class="bt-in">
       <div class="bt-mark"><span>冷</span><span>眼</span></div>
       <div class="bt-name">冷眼　台股 ETF 指揮系統</div>
+      ${gate ? `<button class="bt-ign" type="button" aria-label="啟動冷眼"><span class="bt-ring" aria-hidden="true"></span><span class="bt-ign-in"><b>啟動</b><small class="num">IGNITION</small></span></button>
+      <div class="bt-hint">駕駛員 ${esc(settings.name || 'PZ')}，系統待命中</div>` : ''}
       <ol class="bt-log">${lines.map((l, i) => `<li style="--i:${i}" class="${l.ok === false ? 'warn' : ''}${l.me ? ' me' : ''}"><span class="bt-k">${esc(l.k)}</span><span class="bt-v">${esc(l.v)}</span><span class="bt-s">${esc(l.t)}</span></li>`).join('')}</ol>
       <div class="bt-hi" style="--i:${lines.length}">歡迎回來，${esc(settings.name || 'PZ')}${tx ? `<small>加權 <b class="num">${fmt.n(tx.px, 0)}</b> <b class="num ${dirCls(tx.ch)}">${fmt.pct(tx.pc)}</b>・${esc(tx.when)}</small>` : ''}</div>
-      <button class="bt-skip" type="button">點一下略過</button>
+      <button class="bt-skip" type="button">${gate ? '不用聲音，直接進入' : '點一下略過'}</button>
     </div>`;
   el.hidden = false;
+  el.classList.toggle('standby', gate);
   document.body.classList.add('booting');
+  let voiced = false;
   const done = () => {
-    if (el.hidden) return;
+    if (el.hidden || el.classList.contains('out')) return;
+    S.bootDone = null;
     el.classList.add('out');
-    setTimeout(() => { el.hidden = true; el.classList.remove('out'); el.innerHTML = ''; document.body.classList.remove('booting'); S.firstPaint = true; S.animUntil = 0; if (S.tab === 'home' && !S.openCode) render(); }, reduceMotion() ? 0 : 380);
+    setTimeout(() => {
+      el.hidden = true; el.classList.remove('out', 'go', 'standby'); el.innerHTML = '';
+      document.body.classList.remove('booting');
+      S.firstPaint = true; S.animUntil = 0;
+      if (S.tab === 'home' && !S.openCode) render();
+      if (voiced && settings.voice !== false) setTimeout(() => { FX.sfx('comms'); FX.speak(briefSpeech(true)); }, 450);
+    }, reduceMotion() ? 0 : 380);
   };
-  el.addEventListener('click', done, { once: true });
-  setTimeout(done, reduceMotion() ? 900 : 650 + lines.length * 150 + 1100);
+  S.bootDone = done;
+  const total = reduceMotion() ? 900 : 650 + lines.length * 150 + 1100;
+  const run = (withSound) => {
+    el.classList.remove('standby');
+    el.classList.add('go');
+    voiced = withSound;
+    const sk = $('.bt-skip', el);
+    if (sk) sk.textContent = '點一下略過';
+    if (withSound) {
+      FX.unlock();
+      if (settings.voice !== false) FX.primeSpeech();
+      FX.cue('ignite');
+      lines.forEach((l, i) => setTimeout(() => FX.sfx(l.ok === false ? 'warn' : 'tick'), 450 + i * 150));
+      setTimeout(() => FX.cue('online'), 600 + lines.length * 150);
+    }
+    setTimeout(done, total + (withSound ? 500 : 0));
+  };
+  if (gate) {
+    $('.bt-ign', el).addEventListener('click', (ev) => { ev.stopPropagation(); run(true); }, { once: true });
+    $('.bt-skip', el).addEventListener('click', (ev) => { ev.stopPropagation(); done(); });
+  } else {
+    el.addEventListener('click', done, { once: true });
+    run(false);
+  }
+}
+function speakPill() {
+  let p = $('#speak-pill');
+  if (!p) {
+    p = document.createElement('button');
+    p.id = 'speak-pill';
+    p.className = 'speak-pill';
+    p.type = 'button';
+    p.hidden = true;
+    p.innerHTML = `<span class="sp-wave" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>副官播報中</span><b>${ICON.stopSq}停止</b>`;
+    p.addEventListener('click', () => FX.stopSpeak());
+    document.body.appendChild(p);
+  }
+  FX.onSpeak((on) => { p.hidden = !on; const s = $('#br-say'); if (s) s.classList.toggle('on', on); });
 }
 
 // ================================================================== 事件
-bus.on((what) => {
+bus.on((what, data) => {
+  if (what === 'trade') { onTrade(data); return; }
+  if (what === 'lotdel') { onLotDel(data); return; }
+  if (what === 'lotedit') { onLotEdit(data); return; }
   if (what === 'book' || what === 'watch' || what === 'alerts') {
     if (what !== 'alerts') diffSeen();
     computePF();
     render();
+    if (S.openCode === '__prefs') drawSettings();
+    else if (S.openCode && !S.openCode.startsWith('__')) renderDetail(S.openCode);
+  }
+  if (what === 'journal') {
+    // 決策日記變了：首頁卡片、副官分頁、徽章、單檔頁的紀錄跟著更新（彈出視窗是另一層，不受影響）
+    paintBadge();
+    if (S.tab === 'aide' || S.tab === 'home') render();
     if (S.openCode === '__prefs') drawSettings();
     else if (S.openCode && !S.openCode.startsWith('__')) renderDetail(S.openCode);
   }
@@ -1130,10 +1404,14 @@ window.addEventListener('popstate', () => {
   if (S.openCode) closeDetail(true);
 });
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.deferredInstall = e; if (S.tab === 'home' && S.summary) render(); });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.summary) refreshLive(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && S.summary) { refreshLive(); refreshEvals(); }
+  if (document.visibilityState === 'hidden') FX.stopSpeak();
+});
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (!$('#boot').hidden) { $('#boot').click(); return; }
+  if (!$('#boot').hidden) { if (S.bootDone) S.bootDone(); return; }
+  if (FX.isSpeaking()) FX.stopSpeak();
   if (modalOpen()) closeModal();
   else if (S.openCode) closeDetail();
 });
@@ -1157,8 +1435,21 @@ async function refreshLive() {
 
 async function boot() {
   applyTheme();
+  FX.bind(() => settings);
   renderShell();
   installExplain();
+  speakPill();
+  // 手機要先點一下才能出聲：任何一次點擊或按鍵都順便喚醒音效引擎
+  for (const ev of ['pointerdown', 'keydown', 'touchend']) document.addEventListener(ev, () => FX.unlock(), { capture: true, passive: true });
+  // 一般按鈕的「喀」一聲＋輕震動（分頁列、對話框有自己的聲音）
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('button, a.btn, a.n-item, [role="switch"]');
+    if (!b || b.disabled || b.closest('.dock') || b.closest('.boot')) return;
+    FX.sfx('tap');
+    FX.haptic('tap');
+  }, true);
+  aideHooks.brief = () => briefItems().map((it) => it.t.replace(/\*\*/g, ''));
+  aideHooks.actions = () => buildActions(S.P).map((a) => `${a.title}：${String(a.text).replace(/<[^>]+>/g, '')}`);
   const cached = useCache();
   if (cached) { computePF(); maybeBoot(); render(); } else render();
   try {
@@ -1172,6 +1463,7 @@ async function boot() {
   computePF();
   if (!cached) maybeBoot();
   render();
+  refreshEvals();
   const h = location.hash.replace('#', '');
   if (h === 'settings') openSettings(false);
   else if (h === 'duel') openDuel(false);
@@ -1182,13 +1474,14 @@ async function boot() {
   setInterval(() => { if (document.visibilityState === 'visible') renderHeader(); }, 30000);
   setInterval(() => {
     if (document.visibilityState !== 'visible') return;
-    Promise.all([loadCore(), ensureDivs(true)]).then(() => { diffSeen(); computePF(); if (!S.openCode) render(); }).catch(() => {});
+    Promise.all([loadCore(), ensureDivs(true)]).then(() => { diffSeen(); computePF(); if (!S.openCode && !modalOpen()) render(); refreshEvals(); }).catch(() => {});
   }, 15 * 60000);
   // 同一支手機開了兩個冷眼分頁：另一邊記了交易或提醒，這邊馬上重讀，免得用舊的內容蓋回去
   window.addEventListener('storage', (e) => {
     if (!e.key) return;
     if (isBookKey(e.key)) { reloadBook(); bus.emit('book'); }
     else if (e.key === 'coldeye.alerts') { alerts.splice(0, alerts.length, ...store.get('alerts', [])); bus.emit('alerts'); }
+    else if (isJournalKey(e.key)) { reloadJournal(); bus.emit('journal'); }
   });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 }

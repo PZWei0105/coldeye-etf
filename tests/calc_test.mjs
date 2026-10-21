@@ -111,6 +111,54 @@ t('熱力圖：面積和數值成正比、不超出範圍', () => {
   }
 });
 
+t('部位走勢：市值、淨投入、除息前一天買才領得到、分割後股數變多', () => {
+  const h = { d: [20260105, 20260106, 20260107, 20260108, 20260109], p: [100, 102, 100, 25.5, 26], splits: [[20260108, 4]], divs: [[20260107, 2]] };
+  const lots = [
+    { c: 'A', side: 'buy', d: 20260105, sh: 1000, px: 100, fee: 142 },
+    { c: 'A', side: 'buy', d: 20260107, sh: 100, px: 100, fee: 14 },      // 除息當天買：領不到這次配息
+  ];
+  const r = C.equityCurve(lots, { A: h });
+  assert.deepEqual(r.d, h.d);
+  assert.deepEqual(r.mv, [100000, 102000, 110000, 112200, 114400]);
+  assert.deepEqual(r.inv, [100142, 100142, 110156, 110156, 110156]);
+  assert.deepEqual(r.div, [0, 0, 2000, 2000, 2000]);
+});
+
+t('部位走勢：賣出拿回的錢、超賣不算、冷門 ETF 沒成交用前一次收盤、沒有歷史資料的列出來', () => {
+  const hA = { d: [20260105, 20260106, 20260107], p: [50, 51, 52], splits: [], divs: [] };
+  const hB = { d: [20260105, 20260107], p: [10, 11], splits: [], divs: [] };
+  const lots = [
+    { c: 'A', side: 'buy', d: 20260105, sh: 1000, px: 50, fee: 0 },
+    { c: 'B', side: 'buy', d: 20260105, sh: 1000, px: 10, fee: 0 },
+    { c: 'A', side: 'sell', d: 20260106, sh: 2000, px: 51, fee: 0, tax: 0 },   // 只有 1000 股可賣
+    { c: 'Z', side: 'buy', d: 20260105, sh: 1000, px: 9, fee: 0 },
+  ];
+  const r = C.equityCurve(lots, { A: hA, B: hB }, { cash0: 100000 });
+  assert.deepEqual(r.missing, ['Z']);
+  assert.deepEqual(r.mv, [60000, 10000, 11000]);
+  assert.deepEqual(r.inv, [60000, 9000, 9000]);
+  assert.deepEqual(r.cash, [40000, 91000, 91000]);
+});
+
+t('部位走勢：模擬倉最後一天的總資產＝部位計算的總資產', () => {
+  const h = { d: [20260105, 20260106, 20260107, 20260108], p: [100, 101, 99, 103], splits: [], divs: [[20260107, 1.5]] };
+  const fee = { disc: 1, min: 20, minOdd: 1 };
+  const b = pf.tradeCost('buy', 2000, 100, 'broad', 20260105, fee);
+  const s = pf.tradeCost('sell', 500, 99, 'broad', 20260107, fee);
+  const lots = [
+    { id: '1', c: 'A', side: 'buy', d: 20260105, sh: 2000, px: 100, fee: b.fee, tax: 0, at: '1' },
+    { id: '2', c: 'A', side: 'sell', d: 20260107, sh: 500, px: 99, fee: s.fee, tax: s.tax, at: '2' },
+  ];
+  const r = C.equityCurve(lots, { A: h }, { cash0: 1e6 });
+  const k = r.d.length - 1;
+  const rows = new Map([['A', { c: 'A', k: 'broad', p: 103, d: 20260108 }]]);
+  const P0 = pf.buildPortfolio({ cash: 0, lots }, rows, () => ({ px: 103, date: 20260108 }), { A: { d: h.divs, s: [] } }, fee, 20260108);
+  const cash = 1e6 + pf.lotsCashFlow(lots) + P0.totals.divRecv;
+  near(r.cash[k], cash, 1e-6);
+  near(r.cash[k] + r.mv[k], cash + P0.totals.mv, 1e-6);
+  assert.equal(r.div[k], 3000);
+});
+
 const file = process.argv[2];
 if (file && fs.existsSync(file)) {
   const h = JSON.parse(fs.readFileSync(file, 'utf8'));

@@ -1,8 +1,10 @@
 /* 冷眼 — 表單：記一筆交易、可投入現金、到價提醒、備份與匯入。 */
 import {
   $, $$, esc, isNum, S, PF, settings, saveSettings, book, saveBook, alerts, saveAlerts, newId, fmt, money,
-  catName, toast, buzz, bus, ICON, quote, today, store, isPaper, replaceBook, otherBook, setBooks, twParts,
+  catName, toast, buzz, bus, ICON, quote, today, store, isPaper, replaceBook, otherBook, setBooks, twParts, journal, saveJournal,
 } from './core.js';
+import { TAGS as WHY_TAGS, EMO_TAGS, sanitizeJournal } from './aide.js';
+import * as FX from './fx.js';
 
 // ------------------------------------------------------------------ 模擬倉的成交規則
 export const PAPER_FRESH_MIN = 15;   // 盤中價格超過幾分鐘沒更新，就先不讓模擬倉成交（避免用舊價格占便宜）
@@ -46,6 +48,7 @@ export function openModal(html, { label = '', onClose = null } = {}) {
   m.hidden = false;
   m._onClose = onClose;
   document.body.classList.add('locked');
+  FX.sfx('open');
   $$('[data-close]', m).forEach((b) => b.addEventListener('click', () => closeModal()));
   const first = $('input, textarea, select, button:not([data-close])', $('.modal-card', m));
   if (first && !first.matches('[data-noautofocus]')) setTimeout(() => { try { first.focus({ preventScroll: true }); } catch { /* 舊瀏覽器 */ } }, 60);
@@ -57,8 +60,12 @@ export function closeModal() {
   m.hidden = true;
   m.innerHTML = '';
   if (!$('#sheet') || $('#sheet').hidden) document.body.classList.remove('locked');
-  if (typeof m._onClose === 'function') m._onClose();
+  FX.sfx('close');
+  const fn = m._onClose;
+  m._onClose = null;
+  if (typeof fn === 'function') fn();
   if (lastFocus && lastFocus.focus) try { lastFocus.focus({ preventScroll: true }); } catch { /* 元素已移除 */ }
+  bus.emit('modalclosed');
 }
 export const modalOpen = () => { const m = $('#modal'); return m && !m.hidden; };
 
@@ -117,6 +124,7 @@ export function openTradeForm(o = {}) {
         <label class="field" id="f-taxw"><span>證交稅<small id="f-taxh"></small></span><input class="input num" id="f-tax" inputmode="numeric"></label>
       </div>
       <label class="field"><span>筆記（選填）</span><input class="input" id="f-note" maxlength="80" value="${esc(f.note)}" placeholder="例如：拉回月線分批、除息前不追"></label>
+      ${!lot && settings.autoJ !== false ? `<div class="field" id="f-whyw"><span class="lab">理由（選填）<small>副官會把今天的交易記進決策日記，20 個交易日後對答案</small></span><div class="tag-pick small">${Object.entries(WHY_TAGS).map(([k, t]) => `<button type="button" class="tg${EMO_TAGS.includes(k) ? ' emo' : ''}" data-why="${k}" aria-pressed="false">${esc(t)}</button>`).join('')}</div></div>` : ''}
       <div class="f-sum" id="f-sum" aria-live="polite"></div>
       <div class="f-err" id="f-err" role="alert"></div>
       <div class="m-actions">
@@ -175,8 +183,18 @@ export function openTradeForm(o = {}) {
     const q = toInt(qtyEl.value);
     return f.unit === 'lot' ? q * 1000 : q;
   }
+  const whyW = $('#f-whyw', card);
+  const why = [];
+  if (whyW) $$('[data-why]', whyW).forEach((b) => b.addEventListener('click', () => {
+    const k = b.dataset.why;
+    const i = why.indexOf(k);
+    if (i >= 0) why.splice(i, 1); else why.push(k);
+    b.setAttribute('aria-pressed', why.includes(k));
+  }));
   function recalc() {
     if (paper) paperSync();
+    // 只有今天的交易會記進決策日記（補記以前的交易，當時的規則觀點已經不知道了）
+    if (whyW) whyW.hidden = !(paper || (!f.undated && dOf(dateEl.value) === today()));
     const sh = shares();
     const px = toInt(pxEl.value);
     const row = f.code ? S.rows.get(f.code) : null;
@@ -228,6 +246,7 @@ export function openTradeForm(o = {}) {
       closeModal();
       buzz();
       toast('已刪除這筆交易');
+      bus.emit('lotdel', { id: lot.id });
       bus.emit('book');
     });
   }
@@ -287,8 +306,12 @@ export function openTradeForm(o = {}) {
     }
     if (!saveBook()) { err.textContent = '這個瀏覽器不允許儲存資料（可能是私密瀏覽模式）'; return; }
     closeModal();
-    buzz();
-    toast(lot ? '已更新交易' : `${paper ? '模擬' : '已記下：'}${f.side === 'buy' ? '買進' : '賣出'} ${row.n} ${PF.sharesText(sh)}`);
+    buzz('lock');
+    FX.sfx('lock');
+    if (paper && !lot) FX.stamp(f.side === 'buy' ? '模擬買進' : '模擬賣出', 'aurora', `${PF.sharesText(sh)} × ${fmt.px(+px)}`);
+    toast(lot ? '已更新交易' : `${paper ? '模擬' : '已記下：'}${f.side === 'buy' ? '買進' : '賣出'} ${row.n} ${PF.sharesText(sh)}`, null);
+    if (lot) bus.emit('lotedit', { lot: rec });
+    else bus.emit('trade', { lot: rec, tags: why.slice(), paper });
     bus.emit('book');
   });
 }
@@ -324,6 +347,7 @@ function openPaperLot(lot) {
     closeModal();
     buzz();
     toast('已撤銷這筆模擬交易');
+    bus.emit('lotdel', { id: lot.id });
     bus.emit('book');
   });
 }
@@ -439,7 +463,7 @@ export function checkAlerts() {
     if (!isNum(q.px)) continue;
     const hit = a.op === 'le' ? q.px <= a.px : q.px >= a.px;
     if (hit) {
-      out.push({ a, row, q });
+      out.push({ a, row, q, fresh: a.hit !== td });
       if (a.hit !== td) { a.hit = td; dirty = true; }
     }
   }
@@ -460,7 +484,8 @@ function backupObject() {
     pf: { cash: real.cash || 0, lots: real.lots || [], colors: real.colors || {} },
     ...(paper && paper.start ? { paper } : {}),
     alerts,
-    prefs: { watch: settings.watch, risk: settings.risk, fee: settings.fee, name: settings.name, rules: settings.rules },
+    journal: journal.items,
+    prefs: { watch: settings.watch, risk: settings.risk, fee: settings.fee, name: settings.name, rules: settings.rules, plans: settings.plans },
   });
 }
 export function openBackup() {
@@ -469,7 +494,7 @@ export function openBackup() {
       <h2 class="m-title">備份與搬家</h2>
       <p class="m-desc">你的持股、交易、提醒都只存在這支手機的瀏覽器裡，冷眼的伺服器看不到。換手機、清除瀏覽資料之前，先備份一份。</p>
       <div class="bk">
-        <div class="bk-h"><b>備份</b><span class="muted small">${n} 筆交易、${alerts.length} 個提醒</span></div>
+        <div class="bk-h"><b>備份</b><span class="muted small">${n} 筆交易、${alerts.length} 個提醒、${journal.items.length} 筆決策日記</span></div>
         <div class="m-actions left"><button type="button" class="btn" id="b-dl">下載備份檔</button><button type="button" class="btn ghost" id="b-copy">複製備份碼</button></div>
         <p class="small muted">備份碼可以貼到 LINE 的「記事本」或備忘錄保存；在新手機打開冷眼，貼上就能還原。</p>
       </div>
@@ -526,7 +551,8 @@ export function openBackup() {
       const other = otherBook();
       const nReal = isPaper() ? ((other && other.lots) || []).length : book.lots.length;
       const nPaper = isPaper() ? book.lots.length : ((other && other.lots) || []).length;
-      go.textContent = `確定還原？真實部位：備份 ${obj.pf.lots.length} 筆取代目前 ${nReal} 筆${paperOk(obj) ? `；模擬倉：備份 ${obj.paper.lots.length} 筆取代目前 ${nPaper} 筆` : obj.paper ? '；模擬倉有備份之後的新交易，維持現狀' : '（模擬倉不變）'}`;
+      const jn = sanitizeJournal(obj.journal).filter((x) => !journal.items.some((y) => y.id === x.id)).length;
+      go.textContent = `確定還原？真實部位：備份 ${obj.pf.lots.length} 筆取代目前 ${nReal} 筆${paperOk(obj) ? `；模擬倉：備份 ${obj.paper.lots.length} 筆取代目前 ${nPaper} 筆` : obj.paper ? '；模擬倉有備份之後的新交易，維持現狀' : '（模擬倉不變）'}${jn ? `；決策日記補回 ${jn} 筆（不會刪掉現有的）` : ''}`;
       return;
     }
     const real = { cash: obj.pf.cash || 0, lots: obj.pf.lots, colors: obj.pf.colors || {} };
@@ -536,12 +562,17 @@ export function openBackup() {
     saveAlerts();
     if (obj.prefs) {
       for (const k of ['watch', 'risk', 'fee', 'name', 'rules']) if (obj.prefs[k] != null) settings[k] = obj.prefs[k];
+      if (Array.isArray(obj.prefs.plans)) settings.plans = obj.prefs.plans.filter((p) => p && typeof p.c === 'string' && /^[0-9A-Z]{4,8}$/i.test(p.c) && Number.isInteger(p.day) && p.day >= 1 && p.day <= 28 && Number.isFinite(p.amt) && p.amt > 0).slice(0, 20).map((p) => ({ id: String(p.id || p.c).slice(0, 20), c: p.c.toUpperCase(), day: p.day, amt: Math.round(p.amt) }));
       saveSettings();
     }
+    // 決策日記用「合併」：只補回這支手機沒有的紀錄，不會刪掉或蓋掉現有的
+    const add = sanitizeJournal(obj.journal).filter((x) => !journal.items.some((y) => y.id === x.id));
+    if (add.length) { journal.items.push(...add); journal.items.sort((a, b) => String(a.at).localeCompare(String(b.at))); saveJournal(); }
     closeModal();
     buzz();
-    toast(`已還原 ${obj.pf.lots.length} 筆交易${withPaper ? `、模擬倉 ${obj.paper.lots.length} 筆` : ''}`);
+    toast(`已還原 ${obj.pf.lots.length} 筆交易${withPaper ? `、模擬倉 ${obj.paper.lots.length} 筆` : ''}${add.length ? `、決策日記 ${add.length} 筆` : ''}`);
     bus.emit('book');
+    if (add.length) bus.emit('journal');
   };
   go.addEventListener('click', () => restore($('#b-in', card).value));
   $('#b-file', card).addEventListener('change', async (e) => {

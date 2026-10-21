@@ -16,6 +16,14 @@
 - 注意股、處置股（`extra_flags`）是當天的公告，只能套在最新一天；回測與歷史訊號不能用（`engine.analyze` 只在最後一根套用）。
 - 已知限制：已下市 ETF 的最後 20 個交易日（算不出 20 日後報酬）與清算價值沒有進入回測。
 
+## 副官（投資小秘書）與決策日記
+- 副官是 App 內的固定規則檢查，**不連任何 AI、不替使用者決定買賣**。檢查與巡檢的門檻全部在 `site/aide.js` 的 `AIDE` 常數；改了要同步設定頁「副官怎麼檢查、怎麼對答案」（`aide.js` 的 `aideRulesHTML`，照常數產生）。
+- 決策日記存在 localStorage 的 `coldeye.journal`，一律經過 `core.js` 的 `saveJournal()` 寫入；和持股一樣只在手機，不可上傳。還原備份用「合併」（`aide.js` 的 `sanitizeJournal` 逐欄重建、只補回手機沒有的紀錄），不會刪掉或蓋掉現有的。
+- 對答案：決定後第 20 個交易日（`HORIZON`），用「當時看到的價格」算含息報酬（`trIndex`／`evalEntry`）；結果算出來就存進那筆紀錄（`res`），不再變動。命中率一律和「同類 ETF 任何一天照同樣方向做」並列（`res.bu` 是 `track.json` 的 `by_cat[類別].base_up`；換股用兩檔歷史的 `pairBase`）。理由是長期紀律、調整比重、要用錢的（`NONVIEW_TAGS`）不算命中率。
+- 交易自動記日記：只記「今天」的交易（真實部位的今天、模擬倉）；交易被刪除或撤銷時（`forms.js` 發出 `lotdel`），日記那筆一起拿掉；重設模擬倉不會刪日記。
+- 「帶去問 Claude」只是把文字交給使用者分享或複製（`aide.js` 的 `packEtf`／`packPf`／`packMarket`／`packReview`／`packDuel`／`packWeek`），App 本身不送出任何資料；持股預設只寫比例，使用者打開開關才附金額。規則段要求 Claude 只用官方來源、不直接叫人買賣、最後用【冷眼結論】格式總結，`parseConclusion` 依這個格式解析。
+- 定期定額計畫存在設定的 `plans`（扣款日當天在今日行動提醒，週末順延）；資產走勢用 `calc.js` 的 `equityCurve`（交易紀錄＋`hist/` 的官方收盤）重算。
+
 ## 怎麼操作
 - 修改程式後推到 `main` 會觸發 workflow，執行 `control/job.json` 指定的工作；只改介面時把 job 設成 `deploy`。
 - 雲端 Claude 工作環境連不到台灣官方網站，資料一律由 GitHub Actions 抓；要實測新端點就把 job 設成 `probe` 並編輯 `control/probe.json`，結果會推到 `probe-results` 分支。
@@ -23,10 +31,12 @@
 - 盤中更新是「接力」：每一輪結束前由 `next` 工作等到約 5 分鐘後自己發出下一輪（`pipeline/dispatch.py` 的 `next_tick`），13:36 後或偵測到休市就停；08:37–08:53 的排程只負責暖身，09:00 準時發出第一輪；每 10 分鐘的排程是接力斷掉時的備援。已有排隊中的執行時不會再發，避免把推送或備援擠掉。
 - 執行紀錄在 `state` 分支的 `status.json` 的 `_runs`；盤中那幾輪沒有新聞變動時不寫 state（看 Actions 的執行列表）。
 - 歷史資料從 2020-01 起（`build.py` 的 `HISTORY_START`），回測包含 2022 年大跌，也包含已下市的 ETF（避免只看活下來的）。每檔的原始收盤、規則訊號取樣、分割與配息輸出在 `out/hist/{代號}.json`，給存股時光機用。
-- 本機測試：`python3 tests/local_pipeline.py`、`python3 tests/local_build.py <輸出資料夾>`（需要先有 probe 的原始回應）；部位計算：`node tests/pf_test.mjs [summary.json divs.json track.json]`、`node tests/pf_regress.mjs`；時光機、對決、熱力圖等計算：`node tests/calc_test.mjs [hist/0050.json]`。
+- 本機測試：`python3 tests/local_pipeline.py`、`python3 tests/local_build.py <輸出資料夾>`（需要先有 probe 的原始回應）；部位計算：`node tests/pf_test.mjs [summary.json divs.json track.json]`、`node tests/pf_regress.mjs`；時光機、對決、熱力圖、資產走勢：`node tests/calc_test.mjs [hist/0050.json]`；副官：`node tests/aide_test.mjs [hist 資料夾] [track.json]`。
 
 ## 介面設計（機甲 HUD）
 - 極夜深藍底；冰川藍 #4ee0ff＝系統與動作、極光紫 #b59cff＝「你自己」（持有、成本、提醒、模擬倉）、琥珀 #ffb02e＝小心；紅漲 #ff4d6a 綠跌 #17d39a 只用在價格、損益與多空。數字一律用 Oxanium，標題 Noto Serif TC，內文 Noto Sans TC。
 - 面板是切角（clip-path，`--cut`）＋角落刻度；鎖定框（`.hud`）只給「冷眼建議」那張卡，琥珀斜紋（`.hazard`）只給要小心的狀態，不要到處用。
-- 筆電／電視寬度（≥1100px）是左側停靠列＋三欄戰情室；手機維持單欄。動態只用在開機畫面、大盤之瞳的掃描與價格閃動，並且尊重「減少動態效果」。
-- 檔案分工：`calc.js` 純計算（時光機、對決百分位、熱力圖排版、晨報）、`viz.js` 畫圖（瞳孔環、熱力圖、六角雷達、折線）、`learn.js` 名詞解釋（看懂模式）、`tools.js` 對決與時光機畫面。新增名詞時同時補 `learn.js` 的 TERMS，畫面上的元素加 `data-term`。
+- 筆電／電視寬度（≥1100px）是左側停靠列＋三欄戰情室；手機維持單欄。分頁有六個（指揮台、部位、雷達、副官、情報、戰績）。
+- 聲光（PZ 要求「聲光效果拉滿」）：動態只放在有意義的時刻——開機點火、大盤之瞳的掃描、價格閃動、切換分頁的掃描、副官檢查逐條鎖定、記錄時蓋章、對答案揭曉；副官核心環會慢慢轉。全部可在設定關（`settings.fx`，body 加 `nofx`），並尊重「減少動態效果」。
+- 音效用 WebAudio 即時合成（`fx.js` 的 `SOUNDS`，不放音檔）；手機要先點一下才能出聲，所以開機預設停在「啟動」按鈕（`settings.ignite`）。語音播報用瀏覽器內建的 speechSynthesis（繁中語音優先），iPhone 要在點擊當下先 `primeSpeech()`。震動只有 Android 有效。iPhone 側邊靜音時不出聲（`audioSession.type = 'ambient'`）。
+- 檔案分工：`calc.js` 純計算（時光機、對決百分位、熱力圖排版、晨報、資產走勢）、`aide.js` 副官純計算、`viz.js` 畫圖（瞳孔環、熱力圖、六角雷達、折線）、`learn.js` 名詞解釋（看懂模式）、`tools.js` 對決與時光機畫面、`desk.js` 副官畫面、`fx.js` 聲光。新增名詞時同時補 `learn.js` 的 TERMS，畫面上的元素加 `data-term`。新增介面檔案要同時加進 `sw.js` 的 `SHELL_FILES`。

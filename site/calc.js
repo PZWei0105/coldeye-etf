@@ -241,6 +241,93 @@ export function benchValue(start, divs, splits, pxNow, today) {
   return { value, ret: value / start.cash0 - 1, div: cash };
 }
 
+// ------------------------------------------------------------------ 部位走勢：用交易紀錄＋官方收盤價，重算每一天的部位
+/**
+ * lots：交易紀錄（沒有日期的不算）；hists：{代號: {d, p, splits, divs}}；opt：{ cash0：模擬倉起始資金, from：從哪天開始畫 }
+ * 每一天依序：先處理當天生效的分割與除息（前一天收盤時持有的股數才領得到配息），再處理當天的買賣，最後用當天收盤價算市值。
+ * 某檔當天沒有成交（冷門 ETF、還沒上市），用它之前最後一次的收盤價。
+ * 回傳 { d:[日期], mv:[持股市值], inv:[淨投入＝買進花的錢－賣出拿回的錢], div:[累積已領配息], cash:[模擬倉現金] , missing:[沒有歷史資料的代號] }
+ */
+export function equityCurve(lots, hists, opt = {}) {
+  const dated = (lots || []).filter((l) => l && l.d && l.sh > 0 && l.px > 0)
+    .slice().sort((a, b) => a.d - b.d || String(a.at || '').localeCompare(String(b.at || '')));
+  const codes = [...new Set(dated.map((l) => l.c))];
+  const missing = codes.filter((c) => !hists[c] || !hists[c].d || !hists[c].d.length);
+  const ok = codes.filter((c) => !missing.includes(c));
+  const use = dated.filter((l) => ok.includes(l.c));
+  const out = { d: [], mv: [], inv: [], div: [], cash: [], missing };
+  if (!use.length) return out;
+  const start = Math.max(use[0].d, opt.from || 0);
+  const days = new Set();
+  for (const c of ok) for (const d of hists[c].d) if (d >= start) days.add(d);
+  const cal = [...days].sort((a, b) => a - b);
+  if (!cal.length) return out;
+  // 每一檔：日期 → 收盤；分割、除息依日期排好
+  const px = {}, ev = {}, ptr = {}, last = {}, held = {};
+  for (const c of ok) {
+    const h = hists[c];
+    px[c] = new Map(h.d.map((d, i) => [d, h.p[i]]));
+    const e = [];
+    for (const [d, k] of h.splits || []) if (k > 0) e.push([d, 's', k]);
+    for (const [d, v] of h.divs || []) if (v > 0) e.push([d, 'd', v]);
+    ev[c] = e.sort((a, b) => a[0] - b[0] || (a[1] === 's' ? -1 : 1));
+    ptr[c] = 0;
+    held[c] = 0;
+    // 開始那天以前最後一次的收盤（第一天就要有價格）
+    let lp = null;
+    for (let i = 0; i < h.d.length && h.d[i] < start; i++) lp = h.p[i];
+    last[c] = lp;
+  }
+  let inv = 0, div = 0, cash = isFinite(opt.cash0) ? opt.cash0 : 0;
+  let li = 0;
+  // 開始那天以前的交易（opt.from 比第一筆交易晚的時候）先全部套用，不畫出來
+  const applyLot = (l) => {
+    const fee = isFinite(l.fee) ? l.fee : 0;
+    const tax = isFinite(l.tax) ? l.tax : 0;
+    if (l.side === 'sell') {
+      const n = Math.min(l.sh, held[l.c]);
+      if (!(n > 1e-9)) return;
+      const back = (n / l.sh) * (l.sh * l.px - fee - tax);
+      held[l.c] -= n;
+      inv -= back;
+      cash += back;
+    } else {
+      held[l.c] += l.sh;
+      inv += l.sh * l.px + fee;
+      cash -= l.sh * l.px + fee;
+    }
+  };
+  const applyEvents = (c, upto) => {
+    const e = ev[c];
+    while (ptr[c] < e.length && e[ptr[c]][0] <= upto) {
+      const [, kind, v] = e[ptr[c]++];
+      if (kind === 's') held[c] *= v;
+      else if (held[c] > 1e-9) { const amt = Math.floor(held[c] * v + 1e-9); div += amt; cash += amt; }
+    }
+  };
+  while (li < use.length && use[li].d < start) {
+    const l = use[li++];
+    for (const c of ok) applyEvents(c, l.d);   // 交易當天以前（含）生效的分割、除息
+    applyLot(l);
+  }
+  for (const d of cal) {
+    for (const c of ok) applyEvents(c, d);      // 當天生效的分割、除息：用前一天收盤後的持股
+    while (li < use.length && use[li].d <= d) applyLot(use[li++]);
+    let mv = 0;
+    for (const c of ok) {
+      const p = px[c].get(d);
+      if (p > 0) last[c] = p;
+      if (held[c] > 1e-9 && last[c] > 0) mv += held[c] * last[c];
+    }
+    out.d.push(d);
+    out.mv.push(round(mv, 2));
+    out.inv.push(round(inv, 2));
+    out.div.push(div);
+    out.cash.push(round(cash, 2));
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------ ETF 對決
 export const DUEL_AXES = [
   { k: 'ret', t: '報酬', f: 'r1y', hi: true, note: '近一年含息報酬' },

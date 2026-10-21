@@ -1,6 +1,7 @@
 /* 冷眼 — 共用核心：狀態、設定、資料載入、格式、圖示、小元件。 */
 import * as PF from './pf.js';
 import { breadth } from './calc.js';
+import * as FX from './fx.js';
 
 export { PF };
 
@@ -32,8 +33,13 @@ export const settings = Object.assign({
   watch: DEFAULT_WATCH.slice(), risk: 'mid', fee: { ...PF.DEFAULT_FEE }, name: 'PZ', theme: 'system',
   privacy: false, opinion: false, dca: true, installHidden: false, rules: DEFAULT_RULES.slice(),
   mode: 'real', explain: false, boot: true, heatMode: 'chg', radarView: 'list', duel: null, tm: null,
+  // 副官與聲光
+  sfx: true, vol: 2, voice: true, fx: true, haptic: true, ignite: true, autoJ: true, askShort: false, askAmt: false, jf: 'all',
+  plans: [],   // 定期定額計畫：[{ id, c, day: 1–28, amt }]
 }, savedSettings);
+if (!Array.isArray(settings.plans)) settings.plans = [];
 if (!['real', 'paper'].includes(settings.mode)) settings.mode = 'real';
+if (![1, 2, 3].includes(settings.vol)) settings.vol = 2;
 if (!PF.PROFILES[settings.risk]) settings.risk = 'mid';
 settings.fee = Object.assign({ ...PF.DEFAULT_FEE }, settings.fee || {});
 delete settings.capital;   // 舊版的「投資本金」改由「部位」裡的現金與持股計算
@@ -83,6 +89,14 @@ export const alerts = store.get('alerts', []);
 export const saveAlerts = () => store.set('alerts', alerts);
 export const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
+// ------------------------------------------------------------------ 決策日記（副官）：也只存在這支手機（coldeye.journal）
+// 一律經過 saveJournal() 寫入；journal.items 是每一筆想法或交易的決定
+const loadJ = () => { const j = store.get('journal', null); return j && Array.isArray(j.items) ? j.items : []; };
+export const journal = { v: 1, items: loadJ() };
+export const saveJournal = () => { journal.updated = new Date().toISOString(); return store.set('journal', { v: 1, items: journal.items, updated: journal.updated }); };
+export function reloadJournal() { journal.items = loadJ(); }
+export const isJournalKey = (k) => k === 'coldeye.journal';
+
 // ------------------------------------------------------------------ 全域狀態與事件
 export const S = {
   summary: null, live: null, offline: false, news: null, track: null, divs: null, detail: {}, hist: {}, breadth: null, pxSeen: new Map(),
@@ -90,12 +104,12 @@ export const S = {
   range: 120, rows: new Map(), deferredInstall: null, P: null, adv: new Map(), openCode: null,
   firstPaint: true, changes: [],
 };
-if (!['home', 'pf', 'radar', 'news', 'track'].includes(S.tab)) S.tab = 'home';
+if (!['home', 'pf', 'radar', 'aide', 'news', 'track'].includes(S.tab)) S.tab = 'home';
 
 const listeners = [];
 export const bus = {
   on(fn) { listeners.push(fn); },
-  emit(what) { for (const fn of listeners) { try { fn(what); } catch (e) { console.error(e); } } },
+  emit(what, data) { for (const fn of listeners) { try { fn(what, data); } catch (e) { console.error(e); } } },
 };
 
 // ------------------------------------------------------------------ 格式
@@ -186,6 +200,16 @@ export const ICON = {
   chart: sv('0 0 16 16', '<path d="M2.5 13.5h11M4.5 11V8M8 11V4.5M11.5 11V6.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>'),
   refresh: sv('0 0 20 20', '<path d="M16.2 7.6A6.6 6.6 0 0 0 4 6.3M3.8 12.4A6.6 6.6 0 0 0 16 13.7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M16.6 3.4v4.4h-4.4M3.4 16.6v-4.4h4.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>'),
   swap: sv('0 0 20 20', '<path d="M5 7h11l-3-3M15 13H4l3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>'),
+  // 帶去問 Claude：對話框＋訊號
+  comms: sv('0 0 20 20', '<path d="M3.2 4.2h13.6v9.2H9.6l-4.2 3v-3H3.2z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M6.6 8.8h6.8M6.6 11h4.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>'),
+  // 副官：六角核心＋瞳孔
+  aide: sv('0 0 24 24', '<path d="M12 2.4 20.3 7.2v9.6L12 21.6l-8.3-4.8V7.2z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="12" r="3.4" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="1.1" fill="currentColor"/><path d="M12 2.4v3.2M12 18.4v3.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>'),
+  speaker: sv('0 0 20 20', '<path d="M3.5 7.6h3l4.2-3.4v11.6l-4.2-3.4h-3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M13.6 7.2a4 4 0 0 1 0 5.6M15.8 5a7 7 0 0 1 0 10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>'),
+  stopSq: sv('0 0 16 16', '<rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"/>'),
+  copy: sv('0 0 20 20', '<rect x="6.5" y="6.5" width="10" height="10.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M13.5 4.2V3.6a1.2 1.2 0 0 0-1.2-1.2H4.6a1.2 1.2 0 0 0-1.2 1.2v8.6a1.2 1.2 0 0 0 1.2 1.2h.7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>'),
+  share: sv('0 0 20 20', '<path d="M10 2.8v10M6.4 6.2 10 2.8l3.6 3.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.6 9.2H4.2v8h11.6v-8h-1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>'),
+  ext: sv('0 0 20 20', '<path d="M8 4H4v12h12v-4M11 3.6h5.4V9M16.2 3.8 9 11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>'),
+  clock: sv('0 0 16 16', '<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.6V8l2.2 1.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'),
 };
 
 // ------------------------------------------------------------------ 資料
@@ -370,15 +394,31 @@ export function sparkSVG(vals, w = 64, h = 28, dir = 0) {
 }
 
 let toastTimer = null;
-export function toast(msg) {
+export function toast(msg, sound = 'ping') {
   let t = $('.toast');
   if (!t) { t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); document.body.appendChild(t); }
   t.textContent = msg;
   t.hidden = false;
+  if (sound) FX.sfx(sound);
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { t.hidden = true; }, Math.min(6000, 1800 + String(msg).length * 70));   // 字多就停久一點
 }
-export function buzz(ms = 12) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch { /* 不支援 */ } }
+/** 震動回饋：數字＝毫秒（舊的寫法），文字＝fx.js 的震動樣式；30 毫秒以上當作錯誤提示 */
+export function buzz(kind = 'ok') {
+  if (typeof kind === 'number') { FX.haptic(kind >= 30 ? 'err' : 'ok'); if (kind >= 30) FX.sfx('err'); return; }
+  FX.haptic(kind);
+}
+
+/** 大盤：盤中用即時指數，收盤後用收盤資料 */
+export function taiexNow() {
+  const m = S.summary && S.summary.market;
+  if (!m) return null;
+  const tx = S.live && S.live.taiex && S.live.open && S.live.date === today() && isNum(S.live.taiex.z) ? S.live.taiex : null;
+  return {
+    px: tx ? tx.z : m.close, ch: tx ? tx.z - tx.y : m.chg, pc: tx ? (tx.z / tx.y - 1) * 100 : m.pct,
+    when: tx ? `盤中 ${String(tx.t || '').slice(0, 5)}` : `${fmt.d(m.d)} 收盤`, ma60: m.ma60, insti: m.insti, spark: m.spark, live: !!tx,
+  };
+}
 
 /** 數字跳動（只用在第一次開啟時的總資產） */
 export function countUp(el, to, render, ms = 900) {

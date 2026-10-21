@@ -6,12 +6,15 @@ import {
 } from './core.js';
 import { openTradeForm, openAlertForm, closeModal, modalOpen } from './forms.js';
 import { addToDuel, openDuel, openTM } from './tools.js';
+import { aideDetailHTML, bindAideDetail, openIdea } from './desk.js';
+import * as FX from './fx.js';
 
 const ICON_DUEL = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l9.5 9.5M4 4h3.5M4 4v3.5M20 4l-9.5 9.5M20 4h-3.5M20 4v3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6.5 15.5l2 2M17.5 15.5l-2 2M5 19l2.5-2.5M19 19l-2.5-2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 const ICON_TM = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.6 12a8.4 8.4 0 1 0 2.5-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M3.2 3.6v4.2h4.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 
 // ------------------------------------------------------------------ 開關
 export async function openDetail(code, push = true) {
+  if (S.openCode !== code) FX.cue('open');
   S.openCode = code;
   if (push && location.hash !== '#' + code) history.pushState({ etf: code }, '', '#' + code);
   const sh = $('#sheet');
@@ -40,6 +43,7 @@ export function renderDetail(code, det = S.detail[code]) {
 }
 export function closeDetail(fromPop = false) {
   if (modalOpen()) closeModal();
+  if (S.openCode) FX.sfx('close');
   S.openCode = null;
   const sh = $('#sheet');
   sh.hidden = true;
@@ -64,6 +68,7 @@ function sheetTop(code, row) {
   const nAl = alerts.filter((a) => a.c === code).length;
   return `<div class="sheet-top"><button class="icon-btn" id="back" aria-label="返回">${ICON.back}</button>
     <span class="ttl"><b class="ttl-b num">${esc(code)}</b>${row ? `<span>${esc(catName(row.k))}</span>` : ''}</span>
+    <button class="icon-btn aide-btn" id="to-aide" aria-label="我有想法：讓副官檢查">${ICON.aide}</button>
     <button class="icon-btn" id="to-duel" aria-label="拿去和別檔對決">${ICON_DUEL}</button>
     <button class="icon-btn" id="to-tm" aria-label="放進存股時光機">${ICON_TM}</button>
     <button class="icon-btn${nAl ? ' on' : ''}" id="bell" aria-label="到價提醒${nAl ? `（${nAl} 個）` : ''}">${ICON.bell}</button>
@@ -71,6 +76,7 @@ function sheetTop(code, row) {
 }
 function bindTop(code) {
   $('#back').addEventListener('click', () => closeDetail());
+  $('#to-aide').addEventListener('click', () => openIdea({ code }));
   $('#to-duel').addEventListener('click', () => { addToDuel(code); history.replaceState(history.state, '', '#duel'); openDuel(false); });
   $('#to-tm').addEventListener('click', () => { history.replaceState(history.state, '', '#tm'); openTM(false, code); });
   $('#bell').addEventListener('click', () => openAlertForm(code));
@@ -107,6 +113,7 @@ function detailHTML(row, det) {
   let h = heroHTML(row);
   if (x) h += myPositionHTML(x);
   if (a) h += adviceHTML(row, x, a);
+  h += aideDetailHTML(row.c);
   if (row.st != null && det) h += scopeHTML(row, x, det.view);
   h += calcHTML(row, x);
   h += journalHTML(row.c);
@@ -466,6 +473,7 @@ function bindDetail(code, row, det) {
     if (lot) openTradeForm({ lot });
   }));
   bindCalc(row, heldOf(code));
+  bindAideDetail($('#sheet'), code);
   if (!det || row.st == null) return;
   const x = heldOf(code);
   drawPriceChart(det, S.range, row, x);
