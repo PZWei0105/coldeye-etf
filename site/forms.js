@@ -2,10 +2,10 @@
 import {
   $, $$, esc, isNum, S, PF, settings, saveSettings, book, saveBook, alerts, saveAlerts, newId, fmt, money,
   catName, toast, buzz, bus, ICON, quote, today, store, isPaper, replaceBook, otherBook, setBooks, twParts, journal, saveJournal,
+  savePlans,
 } from './core.js';
 import { TAGS as WHY_TAGS, EMO_TAGS, sanitizeJournal } from './aide.js';
 import * as FX from './fx.js';
-import { normPlan } from './calc.js';
 
 // ------------------------------------------------------------------ 模擬倉的成交規則
 export const PAPER_FRESH_MIN = 15;   // 盤中價格超過幾分鐘沒更新，就先不讓模擬倉成交（避免用舊價格占便宜）
@@ -96,7 +96,8 @@ export function openTradeForm(o = {}) {
     px: lot ? lot.px : null,
     fee: lot && isNum(lot.fee) ? lot.fee : null,
     tax: lot && isNum(lot.tax) ? lot.tax : null,
-    feeTouched: !!(lot && lot.feeManual),
+    // 定期定額的手續費是國泰的（2026 年底前每筆 1 元），不要用一般的公式重算
+    feeTouched: !!(lot && (lot.feeManual || lot.dca)),
     taxTouched: !!(lot && lot.taxManual),
     note: lot ? lot.note || '' : '',
   };
@@ -296,8 +297,8 @@ export function openTradeForm(o = {}) {
       note: $('#f-note', card).value.trim().slice(0, 80), at: lot ? lot.at : new Date().toISOString(),
       snap: lot ? lot.snap : null,
       ...(paper ? { qat: S.live ? S.live.at : null } : {}),
-      // 定期定額自動記的：保留是哪個計畫的哪一期；在這裡改過、存檔，就算核對過了
-      ...(lot && lot.dca && typeof lot.dca === 'object' ? { dca: { ...lot.dca, est: false } } : {}),
+      // 定期定額記的：保留是哪個計畫的哪一期；在這裡真的改了股數、價格、手續費或日期，才算核對過
+      ...(lot && lot.dca && typeof lot.dca === 'object' ? { dca: { ...lot.dca, est: lot.dca.est === true && Math.round(sh) === lot.sh && +px === lot.px && (isNum(fee) ? fee : 0) === (lot.fee || 0) && d === (lot.d || null) } } : {}),
     };
     // 交易日就是最新資料日（或之後）時，記下當時的規則觀點，日後回頭看決策
     if (!lot && row && (!d || d >= row.d)) rec.snap = { st: row.st, ps: row.ps, sc: row.sc, d: row.d };
@@ -488,7 +489,7 @@ function backupObject() {
     ...(paper && paper.start ? { paper } : {}),
     alerts,
     journal: journal.items,
-    prefs: { watch: settings.watch, risk: settings.risk, fee: settings.fee, name: settings.name, rules: settings.rules, plans: settings.plans },
+    prefs: { watch: settings.watch, risk: settings.risk, fee: settings.fee, name: settings.name, rules: settings.rules, plans: settings.plans, dcaSkip: settings.dcaSkip, dcaNoAsk: settings.dcaNoAsk },
   });
 }
 export function openBackup() {
@@ -555,7 +556,10 @@ export function openBackup() {
       const nReal = isPaper() ? ((other && other.lots) || []).length : book.lots.length;
       const nPaper = isPaper() ? book.lots.length : ((other && other.lots) || []).length;
       const jn = sanitizeJournal(obj.journal).filter((x) => !journal.items.some((y) => y.id === x.id)).length;
-      go.textContent = `確定還原？真實部位：備份 ${obj.pf.lots.length} 筆取代目前 ${nReal} 筆${paperOk(obj) ? `；模擬倉：備份 ${obj.paper.lots.length} 筆取代目前 ${nPaper} 筆` : obj.paper ? '；模擬倉有備份之後的新交易，維持現狀' : '（模擬倉不變）'}${jn ? `；決策日記補回 ${jn} 筆（不會刪掉現有的）` : ''}`;
+      const bp = obj.prefs && Array.isArray(obj.prefs.plans) ? obj.prefs.plans.length : 0;
+      const np = (settings.plans || []).length;
+      const planTxt = bp ? `；定期定額計畫：備份 ${bp} 個取代目前 ${np} 個` : np ? `；定期定額計畫：備份裡沒有，維持手機上的 ${np} 個` : '';
+      go.textContent = `確定還原？真實部位：備份 ${obj.pf.lots.length} 筆取代目前 ${nReal} 筆${paperOk(obj) ? `；模擬倉：備份 ${obj.paper.lots.length} 筆取代目前 ${nPaper} 筆` : obj.paper ? '；模擬倉有備份之後的新交易，維持現狀' : '（模擬倉不變）'}${planTxt}${jn ? `；決策日記補回 ${jn} 筆（不會刪掉現有的）` : ''}`;
       return;
     }
     const real = { cash: obj.pf.cash || 0, lots: obj.pf.lots, colors: obj.pf.colors || {} };
@@ -564,13 +568,17 @@ export function openBackup() {
     alerts.splice(0, alerts.length, ...(obj.alerts || []));
     saveAlerts();
     if (obj.prefs) {
+      // readBackup 已經逐欄檢查過（代號、稱呼、紀律、風險屬性、手續費）
       for (const k of ['watch', 'risk', 'fee', 'name', 'rules']) if (obj.prefs[k] != null) settings[k] = obj.prefs[k];
-      if (Array.isArray(obj.prefs.plans)) {
-        // 定期定額計畫：逐欄檢查（舊版的 { day } 也轉成新版）；同一個 id 只留一個
-        const seen = new Set();
-        settings.plans = obj.prefs.plans.slice(0, 40).map((p) => normPlan(p, today())).filter((p) => p && !seen.has(p.id) && seen.add(p.id)).slice(0, 20);
-      }
       saveSettings();
+      // 定期定額計畫換成備份裡的（逐欄檢查、舊版轉新版，同一個 id 只留一個）；刪掉的那幾期、說過「不是同一筆」的合併（只會更少重複）
+      const pr = obj.prefs;
+      savePlans((st) => {
+        // 備份裡沒有計畫（舊的備份、或那時還沒設定）：保留手機上的，不要整個清掉
+        if (Array.isArray(pr.plans) && pr.plans.length) st.plans = pr.plans;
+        if (Array.isArray(pr.dcaSkip)) st.dcaSkip = st.dcaSkip.concat(pr.dcaSkip);
+        if (Array.isArray(pr.dcaNoAsk)) st.dcaNoAsk = st.dcaNoAsk.concat(pr.dcaNoAsk);
+      });   // 舊版計畫裡的 skip 由 core.js 整理時搬進 dcaSkip
     }
     // 決策日記用「合併」：只補回這支手機沒有的紀錄，不會刪掉或蓋掉現有的
     const add = sanitizeJournal(obj.journal).filter((x) => !journal.items.some((y) => y.id === x.id));

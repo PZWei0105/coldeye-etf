@@ -114,20 +114,30 @@ t('熱力圖：面積和數值成正比、不超出範圍', () => {
 // 星期一到五的交易日（假的行事曆），可以挖掉幾天當作國定假日
 const weekdays = (from, to, holidays = []) => { const out = []; for (let d = from; d <= to; d = pf.addDays(d, 1)) { const w = new Date(Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100)).getUTCDay(); if (w >= 1 && w <= 5 && !holidays.includes(d)) out.push(d); } return out; };
 
-t('定期定額計畫格式：舊版 { day } 轉成新版、怪資料擋掉或修正（也用在還原備份）', () => {
+t('定期定額計畫格式：舊版 { day }、v2 轉成 v3；怪資料擋掉或修正（也用在還原備份）；刪掉的那幾期搬到設定', () => {
   const p = C.normPlan({ id: 'old1', c: '0050', day: 6, amt: 3000 }, 20261021);
-  assert.deepEqual(p, { id: 'old1', c: '0050', days: [6], amt: 3000, fee: 1, start: 20261021, end: null, back: false, skip: [], v: 2 });
+  assert.deepEqual(p, { id: 'old1', c: '0050', days: [6], amt: 3000, fee: 1, start: 20261021, end: null, stop: null, sb: true, v: 3 });   // 舊版照原本的扣款日算開始、停扣
+  assert.equal(C.normPlan({ c: '0050', days: [6], amt: 3000, start: 20250101 }, 20261021).sb, undefined);   // 表單新存的：看成交日
+  assert.deepEqual(C.normPlan({ c: '0050', days: [6], amt: 3000, start: 20250101, end: 20261013, stop: 20261009 }, 20261021).stop, 20261009);
   assert.equal(C.normPlan({ c: '<img>', days: [6], amt: 3000 }, 20261021), null);
   assert.equal(C.normPlan({ c: '0050', days: [0, 32, 'x'], amt: 3000 }, 20261021), null);
   assert.equal(C.normPlan({ c: '0050', days: [6], amt: 50 }, 20261021), null);
-  const q = C.normPlan({ id: 'x"><script>', c: '00878', days: [31, 6, 6], amt: 1000.4, fee: -3, start: 20250101, end: 20240101, back: 'yes', skip: [20250106, 'bad', 20250106] }, 20261021);
+  const q = C.normPlan({ id: 'x"><script>', c: '00878', days: [31, 6, 6], amt: 1000.4, fee: -3, start: 20250101, end: 20240101, back: 'yes', skip: [20250106, 'bad', 20250106], v: 2 }, 20261021);
   assert.equal(q.id, '00878-20250101-6_31');
   assert.deepEqual(q.days, [6, 31]);
-  assert.equal(q.amt, 1000); assert.equal(q.fee, 1); assert.equal(q.end, null); assert.equal(q.back, false);
-  assert.deepEqual(q.skip, [20250106]);
+  assert.equal(q.amt, 1000); assert.equal(q.fee, 1); assert.equal(q.end, null); assert.equal(q.v, 3);
+  assert.ok(!('skip' in q) && !('back' in q));
+  assert.equal(C.normPlan({ c: '00679b', days: [6], amt: 3000 }, 20261021).c, '00679B');
+  assert.deepEqual(C.planSkipKeys({ c: '00878', skip: [20250106, 'bad', 20250106] }), ['00878|20250106', '00878|20250106']);
+  assert.deepEqual(C.planSkipKeys({ c: '<x>', skip: [20250106] }), []);
+  assert.deepEqual(C.normSkips(['0050|20250106', 'bad', '0050|20250106', '<x>|20250101', '0050|20251399', 7]), ['0050|20250106']);
+  assert.ok(C.plansOverlap({ c: '0050', days: [6, 16], start: 20250101, end: null }, { c: '0050', days: [16], start: 20260101, end: null }));
+  assert.ok(!C.plansOverlap({ c: '0050', days: [6], start: 20250101, end: null }, { c: '0050', days: [16], start: 20250101, end: null }));
+  assert.ok(!C.plansOverlap({ c: '0050', days: [6], start: 20250101, end: 20251231 }, { c: '0050', days: [6], start: 20260101, end: null }));
+  assert.ok(!C.plansOverlap({ c: '0050', days: [6], start: 20250101, end: null }, { c: '0056', days: [6], start: 20250101, end: null }));
 });
 
-t('定期定額排程（國泰規則）：可以選好幾天、那個月沒有的日期不買、週末和國定假日順延到下一個交易日', () => {
+t('定期定額排程（國泰規則）：可以選好幾天、那個月沒有的日期不買、週末和國定假日順延；開始和停扣看成交日', () => {
   const cal = weekdays(20260101, 20260430, [20260216, 20260217, 20260218, 20260219, 20260220, 20260227]);   // 春節、228 補假
   const plan = { days: [6, 30, 16, 6], start: 20260101 };
   const s = C.dcaSchedule(plan, cal, 20260420);
@@ -138,31 +148,163 @@ t('定期定額排程（國泰規則）：可以選好幾天、那個月沒有�
   assert.equal(by[20260216], 20260223);      // 春節：順延到 2/23
   assert.equal(by[20260230], undefined);     // 2 月沒有 30 號：那一期不買
   assert.equal(by[20260306], 20260306);
-  assert.equal(by[20260315], undefined);
   assert.equal(by[20260316], 20260316);
   assert.equal(by[20260330], 20260330);
   assert.equal(by[20260406], 20260406);
   assert.equal(by[20260416], 20260416);
   assert.equal(by[20260430], undefined);     // 超過 upto
-  assert.equal(s.length, 10);                 // 1/6 1/16 1/30 2/6 2/16 3/6 3/16 3/30 4/6 4/16
-  // 開始和停扣
+  assert.equal(s.length, 10);
+  // 開始和停扣：看實際成交的交易日（含）
   assert.equal(C.dcaSchedule({ days: [6], start: 20260110, end: 20260310 }, cal, 20260420).map((x) => x.s).join(','), '20260206,20260306');
+  assert.equal(C.dcaSchedule({ days: [6], start: 20260110, end: 20260305 }, cal, 20260420).map((x) => x.s).join(','), '20260206');
+  // 4/4 是週六、順延到 4/6 成交：從 4/6 開始的計畫也算這一期
+  assert.deepEqual(C.dcaSchedule({ days: [4], start: 20260406 }, cal, 20260420), [{ s: 20260404, d: 20260406 }]);
   // 最後一個已知交易日之後才會成交的，先不列（4/4 是週六，下一個交易日還沒進資料）
   const cal2 = weekdays(20260401, 20260403);
   assert.equal(C.dcaSchedule({ days: [4], start: 20260401 }, cal2, 20260405).length, 0);
+  // 舊版轉過來的（sb）：開始、停扣照原本的扣款日算 → 5/31（週六、6/2 成交）不算進 6/1 開始的計畫；新版看成交日就算
+  const cal4 = weekdays(20250501, 20250731);
+  assert.deepEqual(C.dcaSchedule({ days: [31], start: 20250601, sb: true }, cal4, 20250731).map((x) => x.s), [20250731]);
+  assert.deepEqual(C.dcaSchedule({ days: [31], start: 20250601 }, cal4, 20250731).map((x) => x.s), [20250531, 20250731]);
+  assert.deepEqual(C.dcaSchedule({ days: [31], start: 20250101, end: 20250531, sb: true }, cal4, 20250731).map((x) => x.s), [20250531]);
+  // 閏年：2024/2/29 有、2025/2/29 沒有
+  const cal3 = weekdays(20240101, 20250331);
+  const s3 = C.dcaSchedule({ days: [29], start: 20240101 }, cal3, 20250331).map((x) => x.s);
+  assert.ok(s3.includes(20240229) && !s3.some((x) => x === 20250229));
 });
 
-t('定期定額預估：每期金額已含 1 元手續費，用收盤價買零股、無條件捨去；冷門 ETF 沒成交用前一次收盤', () => {
+t('國泰生效規則：送出後 1 個交易日生效、再下一個交易日才扣得到；市場交易日用好幾檔聯集（不會漏掉單一檔停止交易的日子）', () => {
+  const cal = weekdays(20261001, 20261023, [20261009]);
+  assert.equal(C.dcaCutover(20261005, cal), 20261007);      // 國泰的例子：週一送出、週二生效、週三扣得到
+  assert.equal(C.dcaCutover(20261008, cal), 20261013);      // 10/9 放假：10/12 生效、10/13 才扣得到
+  assert.equal(C.dcaCutover(20261022, cal), 20261026);      // 已知資料之後：先當作星期一到五都開市
+  assert.equal(C.addTradingDays(20261023, 1, cal), 20261026);
+  assert.deepEqual(C.marketCal([[20250610, 20250618], [20250610, 20250611, 20250612, 20250618], [20250611]]), [20250610, 20250611, 20250612, 20250618]);
+});
+
+t('成交日的官方收盤：停止交易（分割）那幾天國泰不扣；冷門 ETF 沒成交用前一次收盤；下市不記；還不知道就等', () => {
+  const cal = weekdays(20250602, 20250627);
+  const h0050 = { d: cal.filter((d) => d < 20250611 || d >= 20250618), p: cal.filter((d) => d < 20250611 || d >= 20250618).map((d) => (d < 20250611 ? 190 : 47.5)), splits: [[20250618, 4]] };
+  const row = { d: 20250627, p: 48 };
+  assert.deepEqual(C.dcaPrice({ h: h0050, row, cal }, 20250610), { st: 'ok', px: 190, pd: 20250610 });
+  assert.deepEqual(C.dcaPrice({ h: h0050, row, cal }, 20250611), { st: 'none', why: 'halt' });
+  assert.deepEqual(C.dcaPrice({ h: h0050, row, cal }, 20250617), { st: 'none', why: 'halt' });
+  assert.deepEqual(C.dcaPrice({ h: h0050, row, cal }, 20250618), { st: 'ok', px: 47.5, pd: 20250618 });
+  const thin = { d: [20250602, 20250605], p: [20, 21], splits: [] };
+  assert.deepEqual(C.dcaPrice({ h: thin, row: { d: 20250605, p: 21 }, cal }, 20250604), { st: 'ok', px: 20, pd: 20250602 });
+  const gap = { d: [20250602, 20250627], p: [20, 21], splits: [] };
+  assert.deepEqual(C.dcaPrice({ h: gap, row: { d: 20250627, p: 21 }, cal }, 20250624), { st: 'none', why: 'thin' });   // 超過 10 個交易日沒成交
+  const upTo = { d: [20250602, 20250603], p: [20, 21], splits: [] };
+  assert.deepEqual(C.dcaPrice({ h: upTo, row: { d: 20250604, p: 22 }, cal }, 20250604), { st: 'ok', px: 22, pd: 20250604 });   // 歷史檔還沒有最新一天
+  assert.deepEqual(C.dcaPrice({ h: upTo, row: { d: 20250603, p: 21 }, cal }, 20250604), { st: 'wait' });   // 還在停止交易、還沒恢復
+  assert.deepEqual(C.dcaPrice({ h: upTo, row: null, cal }, 20250604), { st: 'none', why: 'gone' });
+  assert.deepEqual(C.dcaPrice({ hist404: true, row: { d: 20250604, p: 10 }, cal }, 20250604), { st: 'ok', px: 10, pd: 20250604 });
+  assert.deepEqual(C.dcaPrice({ hist404: true, row: { d: 20250605, p: 10 }, cal }, 20250604), { st: 'wait' });
+  assert.deepEqual(C.dcaPrice({ hist404: true, row: null, cal }, 20250604), { st: 'unknown' });   // 下市、合併後連歷史檔都沒了：已經記的先留著
+  assert.deepEqual(C.dcaPrice({ row: { d: 20250604, p: 10 }, cal }, 20250604), { st: 'unknown' });
+});
+
+t('預估一期買到的股數：每期金額已含 1 元手續費，用收盤價買零股、無條件捨去', () => {
   const e = C.dcaEstimate(3000, 1, 108.15);
   assert.equal(e.sh, 27); near(e.spent, 27 * 108.15 + 1, 1e-9);
   assert.equal(C.dcaEstimate(100, 1, 150), null);     // 連 1 股都買不起
-  const h = { d: [20260105, 20260107], p: [20, 21] };
-  assert.deepEqual(C.closeOn(h, 20260106), { d: 20260105, px: 20 });
-  assert.deepEqual(C.closeOn(h, 20260107), { d: 20260107, px: 21 });
-  assert.equal(C.closeOn(h, 20260101), null);
+  assert.equal(C.dcaEstimate(2999 + 1, 1, 29.99).sh, 100);
 });
 
-t('和國泰庫存對齊：只改預估的那幾筆，總股數等於券商的，每筆花的錢不變；分割前的紀錄照倍數換算', () => {
+t('自動入帳的比對：補缺的、刪重複的、計畫改了就照新的、停止交易不記、刪掉的不補、你自己記過的先問', () => {
+  const cal = weekdays(20250601, 20250731);
+  const px = (c, d) => ({ st: 'ok', px: c === 'A' ? 50 : 20, pd: d });
+  const plan = { id: 'p1', c: 'A', days: [6], amt: 3001, fee: 1, start: 20250601, end: null, v: 3 };
+  const base = { cal, upto: 20250731, skip: new Set(), noAsk: new Set(), priceOf: px };
+  const r1 = C.dcaReconcile({ ...base, plans: [plan], lots: [] });
+  assert.deepEqual(r1.add.map((l) => `${l.d}:${l.sh}`), ['20250606:60', '20250707:60']);   // 7/6 是週日 → 7/7
+  assert.equal(r1.del.length, 0);
+  const lots = r1.add.map((l, i) => ({ ...l, id: `e${i}`, at: `2025-08-0${i + 1}` }));
+  const r2 = C.dcaReconcile({ ...base, plans: [plan], lots });   // 再跑一次：什麼都不用做
+  assert.equal(r2.add.length + r2.del.length + r2.ask.length, 0);
+  // 重複的預估（兩個分頁同時記）：留一筆
+  const r3 = C.dcaReconcile({ ...base, plans: [plan], lots: [...lots, { ...lots[0], id: 'dup', at: '2025-09-01' }] });
+  assert.deepEqual(r3.del, ['dup']); assert.equal(r3.add.length, 0);
+  // 改了扣款日（6 → 16）：舊日子的預估刪掉、照新日子補；核對過的那一筆不動，而且算在 6/16 那一期（不重複記）
+  const lots4 = [{ ...lots[0], dca: { ...lots[0].dca, est: false } }, lots[1]];
+  const r4 = C.dcaReconcile({ ...base, plans: [{ ...plan, days: [16] }], lots: lots4 });
+  assert.deepEqual(r4.del, ['e1']);
+  assert.deepEqual(r4.add.map((l) => l.dca.s), [20250716]); assert.equal(r4.moved, 1);
+  // 改了金額：不一樣的預估換掉
+  const r5 = C.dcaReconcile({ ...base, plans: [{ ...plan, amt: 5001 }], lots });
+  assert.deepEqual(r5.del.sort(), ['e0', 'e1']); assert.deepEqual(r5.add.map((l) => l.sh), [100, 100]);
+  // 開始日往後移：之前的預估刪掉
+  const r6 = C.dcaReconcile({ ...base, plans: [{ ...plan, start: 20250701 }], lots });
+  assert.deepEqual(r6.del, ['e0']); assert.equal(r6.add.length, 0);
+  // 同一檔兩個重疊的計畫：同一期只記一次
+  const r7 = C.dcaReconcile({ ...base, plans: [plan, { ...plan, id: 'p2', start: 20250701 }], lots: [] });
+  assert.equal(r7.add.length, 2);
+  // 刪掉的那一期：不補、剩下的預估也刪
+  const r8 = C.dcaReconcile({ ...base, skip: new Set(['A|20250606']), plans: [plan], lots });
+  assert.deepEqual(r8.del, ['e0']); assert.equal(r8.add.length, 0);
+  // 停止交易：不記；以前記成順延那天的刪掉
+  const halt = (c, d) => (c === 'A' && d >= 20250611 && d <= 20250617 ? { st: 'none', why: 'halt' } : px(c, d));
+  const p16 = { ...plan, days: [16] };
+  const old = { id: 'h', c: 'A', side: 'buy', d: 20250618, sh: 60, px: 50, fee: 1, at: '2025-07-01', dca: { plan: 'p1', s: 20250616, est: true } };
+  const r9 = C.dcaReconcile({ ...base, priceOf: halt, plans: [p16], lots: [old] });
+  assert.deepEqual(r9.del, ['h']); assert.deepEqual(r9.add.map((l) => l.dca.s), [20250716]); assert.equal(r9.none.length, 1);
+  // 沒停止交易的另一檔、以前被記錯成 6/18 的：換成 6/16
+  const p16b = { ...p16, id: 'pb', c: 'B' };
+  const r10 = C.dcaReconcile({ ...base, priceOf: halt, plans: [p16b], lots: [{ ...old, c: 'B', px: 20, dca: { plan: 'pb', s: 20250616, est: true } }] });
+  assert.deepEqual(r10.del, ['h']); assert.equal(r10.add[0].d, 20250616);
+  // 那幾天你自己記了一筆同一檔的買進：先問，不記；說過「不是」的就記
+  const man = { id: 'm', c: 'A', side: 'buy', d: 20250609, sh: 61, px: 49 };
+  const r11 = C.dcaReconcile({ ...base, plans: [plan], lots: [man] });
+  assert.deepEqual(r11.ask.map((x) => `${x.key}:${x.cand.id}`), ['A|20250606:m']);
+  assert.deepEqual(r11.add.map((l) => l.dca.s), [20250706]);
+  const r12 = C.dcaReconcile({ ...base, noAsk: new Set(['A|20250606']), plans: [plan], lots: [man] });
+  assert.equal(r12.ask.length, 0); assert.equal(r12.add.length, 2);
+  // 計畫刪掉、選擇留著的預估：不動（重複的照樣刪）
+  const r13 = C.dcaReconcile({ ...base, plans: [], lots: [...lots, { ...lots[0], id: 'dup', at: '2025-09-01' }] });
+  assert.deepEqual(r13.del, ['dup']);
+  // 這次沒拿到價格：不新增也不刪
+  const r14 = C.dcaReconcile({ ...base, priceOf: () => ({ st: 'unknown' }), plans: [{ ...plan, amt: 5001 }], lots });
+  assert.equal(r14.add.length + r14.del.length, 0); assert.equal(r14.wait, 0);
+  const r15 = C.dcaReconcile({ ...base, priceOf: () => ({ st: 'wait' }), plans: [plan], lots: [] });
+  assert.equal(r15.add.length, 0); assert.equal(r15.wait, 2);
+});
+
+t('改了扣款日之後：核對過的那一筆算在最接近的新那一期，不重複記；開始日往後移不會亂配；之後才自己記的同一筆也會問', () => {
+  const cal = weekdays(20250601, 20251031);
+  const px = (c, d) => ({ st: 'ok', px: 50, pd: d });
+  const base = { cal, upto: 20251031, skip: new Set(), noAsk: new Set(), priceOf: px };
+  const plan = { id: 'p1', c: 'A', days: [6], amt: 3001, fee: 1, start: 20250601, end: null, v: 3 };
+  const r0 = C.dcaReconcile({ ...base, plans: [plan], lots: [] });
+  // 全部對齊過（核對過）之後，把扣款日改成 7 號（當初填錯）：不能每個月多一筆
+  const ok = r0.add.map((l, i) => ({ ...l, id: `c${i}`, at: `2025-11-0${i}`, dca: { ...l.dca, est: false, cal: 20251101 } }));
+  const r1 = C.dcaReconcile({ ...base, plans: [{ ...plan, days: [7] }], lots: ok });
+  assert.equal(r1.add.length, 0); assert.equal(r1.del.length, 0); assert.equal(r1.moved, ok.length);
+  // 只有兩期核對過、其他是預估：核對過的那兩個月不重複，其他月照新日子
+  const mix = r0.add.map((l, i) => ({ ...l, id: `m${i}`, at: `2025-11-0${i}`, dca: { ...l.dca, est: i < 2 ? false : true } }));
+  const r2 = C.dcaReconcile({ ...base, plans: [{ ...plan, days: [7] }], lots: mix });
+  assert.equal(r2.add.length, r0.add.length - 2); assert.equal(r2.del.length, r0.add.length - 2);
+  // 國泰那邊改了：9/1 送出 → 9/3 起新的 8 號；舊的 7 號那一期 9/7 已經核對過（其實是 9/8 那一筆）→ 9/8 不另外記
+  const old7 = { ...plan, days: [7], end: 20250902 }, new8 = { ...plan, id: 'p2', days: [8], start: 20250903 };
+  const sept = [{ id: 's9', c: 'A', side: 'buy', d: 20250908, sh: 60, px: 50, fee: 1, at: '2025-09-09', dca: { plan: 'p1', s: 20250907, est: false } }];
+  const r3 = C.dcaReconcile({ ...base, plans: [old7, new8], lots: sept });
+  assert.ok(!r3.add.some((l) => l.dca.s === 20250908), 'September doubled');
+  // 開始日往後移、一個月扣兩次：核對過、在新開始日之前的那一筆，不能拿去抵 6/16
+  const two = { ...plan, days: [6, 16], start: 20250610 };
+  const r4 = C.dcaReconcile({ ...base, plans: [two], lots: [{ id: 'j6', c: 'A', side: 'buy', d: 20250606, sh: 60, px: 50, fee: 1, dca: { plan: 'p1', s: 20250606, est: false } }] });
+  assert.ok(r4.add.some((l) => l.dca.s === 20250616), '6/16 wrongly covered');
+  // 預估已經記了、之後你又自己記了同一筆：問是不是同一筆（是 → 留你記的、刪預估）
+  const est = r0.add.slice(0, 1).map((l) => ({ ...l, id: 'e0', at: '2025-06-06' }));
+  const r5 = C.dcaReconcile({ ...base, plans: [plan], lots: [...est, { id: 'man', c: 'A', side: 'buy', d: 20250606, sh: 61, px: 49 }] });
+  assert.deepEqual(r5.ask.map((x) => `${x.key}:${x.cand.id}:${x.est}`), ['A|20250606:man:e0']);
+  assert.equal(r5.del.length, 0);
+  // 春節三期都順延到同一天、你只記了一筆：一起問
+  const cny = weekdays(20250101, 20250228, [20250127, 20250128, 20250129, 20250130, 20250131]);
+  const p3 = { id: 'p3', c: 'A', days: [29, 30, 31], amt: 3001, fee: 1, start: 20250101, end: null, v: 3 };
+  const r6 = C.dcaReconcile({ plans: [p3], lots: [{ id: 'one', c: 'A', side: 'buy', d: 20250203, sh: 180, px: 50 }], cal: cny, upto: 20250228, skip: new Set(), noAsk: new Set(), priceOf: px });
+  assert.equal(r6.ask.length, 1); assert.equal(r6.ask[0].more.length, 2); assert.equal(r6.add.length, 0);
+});
+
+t('和國泰庫存對齊：只改預估、每筆花的錢不變；差太多不給對齊；分割前的紀錄照倍數換算', () => {
   const holdingOf = (ls) => pf.holdingFromLots(ls, [[20250618, 4]]);
   const lots = [
     { id: 'm', c: 'X', side: 'buy', sh: 1000, px: 100 },                        // 不記得日期的舊股（手動記的）
@@ -173,25 +315,59 @@ t('和國泰庫存對齊：只改預估的那幾筆，總股數等於券商的�
   const r = C.dcaCalibrate(lots, ['a', 'b', 'c'], [[20250618, 4]], 1125, holdingOf);
   assert.ok(r.ok, r.why);
   assert.equal(r.before, 1000 + 40 + 40 + 39);
-  assert.equal(r.after, 1125);
+  assert.equal(r.after, 1125); assert.equal(r.miss, 0);
+  near(r.k, (1125 - 1000) / 119, 1e-12);
   for (const ch of r.changes) { const l = lots.find((x) => x.id === ch.id); near(ch.sh * ch.px, l.sh * l.px, 0.01); }
-  assert.equal(C.dcaCalibrate(lots, ['a'], [], 10, holdingOf).ok, false);      // 比其他紀錄加起來還少
+  assert.equal(C.dcaCalibrate(lots, ['a'], [], 10, holdingOf).kind, 'low');      // 比其他紀錄加起來還少
   assert.equal(C.dcaCalibrate(lots, [], [], 1200, holdingOf).ok, false);
+  assert.ok(C.dcaCalibrate(lots, ['a', 'b', 'c'], [[20250618, 4]], 1100, holdingOf).ok);           // 預估 119 股 → 100 股（0.84）：還在漲跌幅說得通的範圍
+  assert.equal(C.dcaCalibrate(lots, ['a', 'b', 'c'], [[20250618, 4]], 1094, holdingOf).kind, 'low');   // → 94 股（0.79）：說不通
 });
 
-t('定期定額提醒：週末順延、那個月沒有的日期不提醒、開始前和停扣後不提醒，每一期剛好提醒一次', () => {
+t('和國泰庫存對齊：打錯字（少一位數）、差兩成以上都擋下；零頭補得剛好；分割前只能整份調時說清楚差多少', () => {
+  const holdingOf = (ls) => pf.holdingFromLots(ls, []);
+  const est = Array.from({ length: 20 }, (_, i) => ({ id: `e${i}`, c: 'X', side: 'buy', d: 20250106 + i, sh: 100 + (i % 7), px: 30 + i / 10, fee: 1 }));
+  const ids = est.map((l) => l.id);
+  const sum = est.reduce((a, l) => a + l.sh, 0);
+  assert.equal(C.dcaCalibrate(est, ids, [], Math.round(sum / 10), holdingOf).kind, 'low');      // 少打一位數
+  assert.equal(C.dcaCalibrate(est, ids, [], sum * 10, holdingOf).kind, 'high');
+  for (const k of [0.8, 0.93, 0.999, 1.001, 1.07, 1.25]) {
+    const r = C.dcaCalibrate(est, ids, [], Math.round(sum * k), holdingOf);
+    assert.ok(r.ok, `${k} ${r.why}`);
+    assert.equal(r.after, Math.round(sum * k)); assert.equal(r.miss, 0);
+    for (const ch of r.changes) { const l = est.find((x) => x.id === ch.id); near(ch.sh * ch.px, l.sh * l.px, 0.01); }
+  }
+  // 只有分割前的預估：一股＝4 股，只能 4 股 4 股地調
+  const hs = (ls) => pf.holdingFromLots(ls, [[20250618, 4]]);
+  const pre = [{ id: 'p', c: 'X', side: 'buy', d: 20250506, sh: 25, px: 190, fee: 1 }];
+  const r = C.dcaCalibrate(pre, ['p'], [[20250618, 4]], 102, hs);
+  assert.ok(r.ok); assert.equal(Math.abs(r.miss), 2); assert.equal(r.after, 102 - r.miss);
+});
+
+t('定期定額提醒：週末順延、那個月沒有的日期不提醒、開始前和停扣後不提醒，每一期剛好提醒一次；平日放假順延到下一個開市日', () => {
   for (const day of [1, 15, 28, 29, 30, 31]) {
     const plan = { days: [day], start: 20261101 };
     const hits = [];
     for (let d = 20261101; d <= 20281130; d = pf.addDays(d, 1)) if (C.dcaDueToday(plan, d)) hits.push(d);
     const months = new Set(hits.map((d) => { const due = [0, 1, 2].map((k) => pf.addDays(d, -k)).find((x) => x % 100 === day); return Math.floor(due / 100); }));
     assert.equal(months.size, hits.length, `day ${day}`);    // 每一期只提醒一次
+    // 應該提醒的：那個月有這一天、週末順延後的成交日在開始日（含）之後（10/31 週六 → 11/2 成交，也算）
     const expect = [];
-    for (let y = 2026; y <= 2028; y++) for (let m = 1; m <= 12; m++) { const ym = y * 100 + m; if (ym >= 202611 && ym <= 202811 && day <= new Date(Date.UTC(y, m, 0)).getUTCDate()) expect.push(ym); }
-    assert.equal(hits.length, expect.length, `day ${day}`);  // 2 月沒有 29～31 號就不提醒
+    for (let y = 2026; y <= 2028; y++) for (let m = 1; m <= 12; m++) {
+      if (day > new Date(Date.UTC(y, m, 0)).getUTCDate()) continue;
+      let d = y * 10000 + m * 100 + day;
+      while ([0, 6].includes(new Date(Date.UTC(y, m - 1, d % 100)).getUTCDay()) && d % 100 === day) d = pf.addDays(d, 1);
+      for (let g = 0; g < 3 && [0, 6].includes(new Date(Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100)).getUTCDay()); g++) d = pf.addDays(d, 1);
+      if (d >= 20261101 && d <= 20281130) expect.push(d);
+    }
+    assert.deepEqual(hits, expect, `day ${day}`);  // 2 月沒有 29～31 號就不提醒
   }
   assert.equal(C.dcaDueToday({ days: [27], start: 20270101 }, 20270301), true);   // 2027/2/27 週六 → 3/1 週一
   assert.equal(C.dcaDueToday({ days: [6], start: 20261101, end: 20261130 }, 20261207), false);
+  // 2026/10/9（週五）國慶補假：9 號那一期 10/12 才扣；上一個交易日是 10/8
+  assert.equal(C.dcaRolledToday({ days: [9], start: 20260101 }, 20261012, 20261008), true);
+  assert.equal(C.dcaRolledToday({ days: [12], start: 20260101 }, 20261012, 20261008), false);
+  assert.equal(C.dcaRolledToday({ days: [9], start: 20261013 }, 20261012, 20261008), false);
 });
 
 t('部位走勢：市值、淨投入、除息前一天買才領得到、分割後股數變多', () => {
@@ -275,5 +451,22 @@ if (file && fs.existsSync(file)) {
   const r = C.timeMachine(h, { start, amount: 10000, day: 6, reinvest: true, fee: { disc: 1, min: 20, minOdd: 1 }, cat: 'broad' });
   console.log('實際資料', h.c, '從', start, '共', r.months, '個月');
   for (const [k, s] of Object.entries(r.strats)) console.log(' ', s.name.padEnd(8, '　'), '投入', s.invested, '現值', s.value, '報酬', (s.ret * 100).toFixed(1) + '%', '年化', s.irr == null ? '—' : (s.irr * 100).toFixed(1) + '%', '買', s.buys, '等', s.waits, '股息', s.div, '最差', (s.worst * 100).toFixed(1) + '%');
+  // 定期定額：用真的官方資料檢查 0050 分割停止交易（2025/6/11～6/17）那幾天
+  const dir = file.replace(/[^/]+$/, '');
+  const load = (c) => (fs.existsSync(`${dir}${c}.json`) ? JSON.parse(fs.readFileSync(`${dir}${c}.json`, 'utf8')) : null);
+  const hs = { '0050': h, '0056': load('0056'), '006208': load('006208'), '00919': load('00919') };
+  if (hs['0056'] && hs['006208'] && hs['00919']) {
+    const cal = C.marketCal([hs['0050'].d, hs['0056'].d, hs['006208'].d]);
+    for (const d of [20250611, 20250612, 20250613, 20250616, 20250617]) assert.ok(cal.includes(d) && !h.d.includes(d), `市場 ${d} 有開市、0050 停止交易`);
+    const upto = cal[cal.length - 1];
+    const priceOf = (c, d) => C.dcaPrice({ h: hs[c], row: { d: hs[c].d[hs[c].d.length - 1], p: hs[c].p[hs[c].p.length - 1] }, cal }, d);
+    const r1 = C.dcaReconcile({ plans: [{ id: 'a', c: '0050', days: [11, 16], amt: 3000, fee: 1, start: 20250501, end: 20250731, v: 3 }], lots: [], cal, upto, priceOf });
+    assert.deepEqual(r1.add.map((l) => l.dca.s), [20250511, 20250516, 20250711, 20250716]);   // 5/11 是週日、5/12 成交
+    assert.deepEqual(r1.none.map((x) => `${x.s}:${x.why}`), ['20250611:halt', '20250616:halt']);
+    const r2 = C.dcaReconcile({ plans: [{ id: 'b', c: '00919', days: [16], amt: 5000, fee: 1, start: 20250601, end: 20250630, v: 3 }], lots: [], cal, upto, priceOf });
+    const k = hs['00919'].d.indexOf(20250616);
+    assert.deepEqual(r2.add.map((l) => [l.d, l.px]), [[20250616, hs['00919'].p[k]]]);
+    console.log('定期定額實際資料：0050 分割停止交易那幾天不記、00919 照 6/16 收盤', r2.add[0].sh, '股 @', r2.add[0].px);
+  }
 }
 console.log(`\n${n} 組測試通過`);

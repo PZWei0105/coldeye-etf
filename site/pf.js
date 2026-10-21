@@ -728,22 +728,43 @@ export function stressToStops(holdings, ctx) {
 export function makeBackup(data) {
   return { app: 'coldeye', v: 1, at: new Date().toISOString(), ...data };
 }
+/**
+ * 讀備份（還原前檢查）：格式不對就丟出錯誤；能修的逐欄重建（代號、id、定期定額欄位、提醒、偏好設定），
+ * 免得一份動過手腳的備份碼在畫面上變成可以執行的程式。回傳整理過的 obj。
+ */
 export function readBackup(obj) {
   if (!obj || obj.app !== 'coldeye' || !obj.pf || !Array.isArray(obj.pf.lots)) throw new Error('不是冷眼的備份資料');
   const okNum = (x) => typeof x === 'number' && Number.isFinite(x);
+  const okDate = (d) => Number.isInteger(d) && d >= 19000101 && d <= 21001231;
+  const CODE = /^[0-9A-Z]{4,8}$/;
+  const ID = /^[0-9A-Za-z_.:-]{1,64}$/;
+  const cleanDca = (x) => {
+    if (!x || typeof x !== 'object' || typeof x.plan !== 'string' || !/^[0-9a-z_-]{1,40}$/i.test(x.plan) || !okDate(x.s)) return null;
+    const o = { plan: x.plan, s: x.s, est: x.est === true };
+    if (okDate(x.cal)) o.cal = x.cal;
+    if (okDate(x.pd)) o.pd = x.pd;
+    if (x.link === true) o.link = true;
+    return o;
+  };
+  const cleanColors = (c) => Object.fromEntries(Object.entries(c && typeof c === 'object' ? c : {}).filter(([k, v]) => CODE.test(k) && Number.isInteger(v) && v >= 0 && v < 32));
   const checkLots = (lots) => {
     const ids = new Set();
     for (const l of lots) {
-      const okD = l.d == null || l.d === 0 || (Number.isInteger(l.d) && l.d >= 19000101 && l.d <= 21001231);
+      if (l && typeof l.c === 'string') l.c = l.c.toUpperCase();
+      const okD = l && (l.d == null || l.d === 0 || okDate(l.d));
       const okOpt = (x) => x == null || (okNum(x) && x >= 0);
-      if (!l || typeof l.c !== 'string' || !okNum(l.sh) || !(l.sh > 0) || !okNum(l.px) || !(l.px > 0) || !['buy', 'sell'].includes(l.side)
-        || !okD || !okOpt(l.fee) || !okOpt(l.tax) || typeof l.id !== 'string' || !l.id || ids.has(l.id)) {
+      if (!l || typeof l.c !== 'string' || !CODE.test(l.c) || !okNum(l.sh) || !(l.sh > 0) || !okNum(l.px) || !(l.px > 0) || !['buy', 'sell'].includes(l.side)
+        || !okD || !okOpt(l.fee) || !okOpt(l.tax) || typeof l.id !== 'string' || !ID.test(l.id) || ids.has(l.id)) {
         throw new Error('備份裡有格式不正確的交易紀錄');
       }
       ids.add(l.id);
+      if (l.dca != null) { const x = cleanDca(l.dca); if (x) l.dca = x; else delete l.dca; }
+      if (l.snap != null && !(l.snap && typeof l.snap === 'object' && [1, 0, -1].includes(l.snap.st))) delete l.snap;
+      if (l.note != null) { if (typeof l.note === 'string') l.note = l.note.slice(0, 200); else delete l.note; }
     }
   };
   checkLots(obj.pf.lots);
+  obj.pf.colors = cleanColors(obj.pf.colors);
   if (obj.pf.cash != null && !okNum(obj.pf.cash)) throw new Error('備份裡的現金格式不正確');
   if (obj.paper != null) {
     const p = obj.paper;
@@ -752,6 +773,38 @@ export function readBackup(obj) {
       throw new Error('備份裡的模擬倉格式不正確');
     }
     checkLots(p.lots);
+    p.colors = cleanColors(p.colors);
+    if (st.code != null && !(typeof st.code === 'string' && CODE.test(st.code))) st.code = '0050';
+  }
+  // 到價提醒：逐欄重建
+  if (obj.alerts != null) {
+    if (!Array.isArray(obj.alerts)) throw new Error('備份裡的提醒格式不正確');
+    const seen = new Set();
+    obj.alerts = obj.alerts.filter((a) => a && typeof a === 'object' && typeof a.c === 'string' && CODE.test(a.c.toUpperCase()) && okNum(a.px) && a.px > 0).slice(0, 300).map((a, i) => {
+      let id = typeof a.id === 'string' && ID.test(a.id) && !seen.has(a.id) ? a.id : `r${i}${Date.now().toString(36)}`;
+      while (seen.has(id)) id += 'x';
+      seen.add(id);
+      return { id, c: a.c.toUpperCase(), op: a.op === 'le' ? 'le' : 'ge', px: a.px, at: typeof a.at === 'string' ? a.at.slice(0, 40) : null, hit: okDate(a.hit) ? a.hit : null };
+    });
+  }
+  // 偏好設定：只留認得的欄位（定期定額的計畫之後還會經過 calc.js 的 normPlan 逐欄檢查）
+  if (obj.prefs != null) {
+    const p = obj.prefs;
+    if (!p || typeof p !== 'object') throw new Error('備份裡的設定格式不正確');
+    const out = {};
+    if (Array.isArray(p.watch)) out.watch = [...new Set(p.watch.filter((c) => typeof c === 'string').map((c) => c.toUpperCase()).filter((c) => CODE.test(c)))].slice(0, 60);
+    if (typeof p.risk === 'string' && Object.prototype.hasOwnProperty.call(PROFILES, p.risk)) out.risk = p.risk;
+    if (p.fee && typeof p.fee === 'object') {
+      const f = { ...DEFAULT_FEE };
+      if (okNum(p.fee.disc) && p.fee.disc > 0 && p.fee.disc <= 1) f.disc = p.fee.disc;
+      if (okNum(p.fee.min) && p.fee.min >= 0 && p.fee.min <= 100) f.min = p.fee.min;
+      if (okNum(p.fee.minOdd) && p.fee.minOdd >= 0 && p.fee.minOdd <= 100) f.minOdd = p.fee.minOdd;
+      out.fee = f;
+    }
+    if (typeof p.name === 'string') out.name = p.name.replace(/[<>&"'`]/g, '').trim().slice(0, 8) || 'PZ';
+    if (Array.isArray(p.rules)) out.rules = p.rules.filter((r) => typeof r === 'string' && r.trim()).map((r) => r.trim().slice(0, 60)).slice(0, 20);
+    for (const k of ['plans', 'dcaSkip', 'dcaNoAsk']) if (Array.isArray(p[k])) out[k] = p[k].slice(0, 3000);
+    obj.prefs = out;
   }
   return obj;
 }

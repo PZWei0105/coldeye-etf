@@ -1,6 +1,6 @@
 /* 冷眼 — 共用核心：狀態、設定、資料載入、格式、圖示、小元件。 */
 import * as PF from './pf.js';
-import { breadth, normPlan } from './calc.js';
+import { breadth, normPlan, planSkipKeys, normSkips } from './calc.js';
 import * as FX from './fx.js';
 
 export { PF };
@@ -35,22 +35,68 @@ export const settings = Object.assign({
   mode: 'real', explain: false, boot: true, heatMode: 'chg', radarView: 'list', duel: null, tm: null,
   // 副官與聲光
   sfx: true, vol: 2, voice: true, fx: true, haptic: true, ignite: true, autoJ: true, askShort: false, askAmt: false, jf: 'all',
-  plans: [],   // 定期定額計畫（calc.js 的 normPlan）：[{ id, c, days:[1–31], amt, fee, start, end, skip, v: 2 }]
+  // 定期定額（dca.js）：計畫一律經過 calc.js 的 normPlan；dcaSkip＝你刪掉的那幾期、dcaNoAsk＝你說過「不是同一筆」的那幾期（都是 `代號|原本扣款日`）
+  plans: [], dcaSkip: [], dcaNoAsk: [],
 }, savedSettings);
-if (!Array.isArray(settings.plans)) settings.plans = [];
-// 舊版的定期定額計畫（{ day: 1–28 }）轉成新版（可以選好幾天、從哪天開始、停扣）；舊計畫從今天開始自動入帳，不補以前的
+/** 定期定額計畫最多幾個（國泰改設定時，舊的設定會變成一個「已換設定」的計畫留著，所以留多一點空間） */
+export const PLAN_MAX = 60;
+/** 定期定額的計畫與那幾份清單：舊版（{ day }、v2 的 skip）轉成新版，重複的 id 只留一個 */
+function cleanPlans(rawPlans, rawSkip, rawNoAsk) {
+  const raw = Array.isArray(rawPlans) ? rawPlans : [];
+  const seen = new Set();
+  const plans = raw.slice(0, 120).map((p) => normPlan(p, PF.twToday())).filter((p) => p && !seen.has(p.id) && seen.add(p.id)).slice(0, PLAN_MAX);
+  const dcaSkip = normSkips([...(Array.isArray(rawSkip) ? rawSkip : []), ...raw.flatMap(planSkipKeys)]);
+  const dcaNoAsk = normSkips(rawNoAsk);
+  return { plans, dcaSkip, dcaNoAsk, changed: raw.some((p) => !p || p.v !== 3) || plans.length !== raw.length };
+}
 {
-  const raw = settings.plans;
-  settings.plans = raw.map((p) => normPlan(p, PF.twToday())).filter(Boolean);
+  const c = cleanPlans(settings.plans, settings.dcaSkip, settings.dcaNoAsk);
+  settings.plans = c.plans;
+  settings.dcaSkip = c.dcaSkip;
+  settings.dcaNoAsk = c.dcaNoAsk;
   // 轉換過就馬上存起來：舊計畫的「開始日」固定在第一次轉換的那天，不會每天往後跑
-  if (raw.some((p) => !p || p.v !== 2)) store.set('settings', settings);
+  if (c.changed) store.set('settings', settings);
 }
 if (!['real', 'paper'].includes(settings.mode)) settings.mode = 'real';
 if (![1, 2, 3].includes(settings.vol)) settings.vol = 2;
 if (!PF.PROFILES[settings.risk]) settings.risk = 'mid';
 settings.fee = Object.assign({ ...PF.DEFAULT_FEE }, settings.fee || {});
 delete settings.capital;   // 舊版的「投資本金」改由「部位」裡的現金與持股計算
-export const saveSettings = () => store.set('settings', settings);
+const DCA_KEYS = ['plans', 'dcaSkip', 'dcaNoAsk'];
+/**
+ * 存設定。定期定額的計畫與刪掉的那幾期一律經過 savePlans（先讀最新的、再改、再存）：
+ * 這裡沿用儲存空間裡的那一份，不拿這個分頁記憶體裡可能已經舊掉的副本蓋回去（另一個分頁可能剛改過）。
+ */
+export const saveSettings = () => {
+  const cur = store.get('settings', null);
+  const out = { ...settings };
+  if (cur && typeof cur === 'object') for (const k of DCA_KEYS) if (Array.isArray(cur[k])) out[k] = cur[k];
+  return store.set('settings', out);
+};
+/** 重新讀定期定額的計畫（另一個分頁改過時） */
+export function reloadPlans() {
+  const cur = store.get('settings', null);
+  if (!cur || typeof cur !== 'object') return;
+  const c = cleanPlans(cur.plans, cur.dcaSkip, cur.dcaNoAsk);
+  settings.plans = c.plans;
+  settings.dcaSkip = c.dcaSkip;
+  settings.dcaNoAsk = c.dcaNoAsk;
+}
+/**
+ * 改定期定額的計畫或那幾份清單：先讀儲存空間裡最新的、交給 fn 改（fn({ plans, dcaSkip, dcaNoAsk })），再整理、存回去。
+ * 回傳有沒有存成功。
+ */
+export function savePlans(fn) {
+  reloadPlans();
+  const st = { plans: settings.plans.map((p) => ({ ...p, days: p.days.slice() })), dcaSkip: settings.dcaSkip.slice(), dcaNoAsk: settings.dcaNoAsk.slice() };
+  fn(st);
+  const c = cleanPlans(st.plans, st.dcaSkip, st.dcaNoAsk);
+  settings.plans = c.plans;
+  settings.dcaSkip = c.dcaSkip;
+  settings.dcaNoAsk = c.dcaNoAsk;
+  const cur = store.get('settings', null);
+  return store.set('settings', { ...(cur && typeof cur === 'object' ? cur : {}), ...settings, plans: c.plans, dcaSkip: c.dcaSkip, dcaNoAsk: c.dcaNoAsk });
+}
 
 // ------------------------------------------------------------------ 我的部位、提醒（只存在這支手機）
 // 真實部位存在 coldeye.pf，模擬倉存在 coldeye.paper；book 永遠指向目前這一個（同一個物件，切換時換內容）
@@ -92,12 +138,20 @@ export function setBooks({ real, paper } = {}) {
   if (real !== undefined) put('pf', real);
   if (paper !== undefined) put('paper', paper);
 }
-/** 寫進真實部位（不論現在顯示哪一本）：定期定額自動入帳用。一律經過 saveBook／setBooks */
+/**
+ * 寫進真實部位（不論現在顯示哪一本）：定期定額用。一律經過 saveBook／setBooks。
+ * 先讀儲存空間裡最新的那一份再改（另一個分頁、還原備份可能剛寫過），不拿記憶體裡的舊內容蓋回去。fn 回傳 false 就不存。
+ */
 export function updateRealBook(fn) {
-  if (!isPaper()) { fn(book); return saveBook(); }
+  if (!isPaper()) {
+    const fresh = store.get('pf', null);
+    if (fresh && typeof fresh === 'object' && Array.isArray(fresh.lots)) reloadBook();
+    if (fn(book) === false) return false;
+    return saveBook();
+  }
   const b = { ...EMPTY_BOOK(), ...(store.get('pf', {}) || {}) };
   if (!Array.isArray(b.lots)) b.lots = [];
-  fn(b);
+  if (fn(b) === false) return false;
   setBooks({ real: b });
   return true;
 }

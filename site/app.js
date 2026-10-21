@@ -6,13 +6,14 @@ import {
   dirCls, arrow, twParts, CAT, catName, POS, ST, ICON, getJSON, loadCore, useCache, ensureTrack, ensureDivs, ensureHist, quote,
   computePF, hasBook, heldOf, slotVar, stanceChip, posChip, actChip, gaugeSVG, animateNeedles, sparkSVG, toast, countUp,
   today, PF, premBand, DEFAULT_RULES, isPaper, switchMode, reloadBook, isBookKey, journal, saveJournal, reloadJournal, isJournalKey, taiexNow,
+  reloadPlans,
 } from './core.js';
 import { openDetail, closeDetail, renderDetail, refreshDetailQuote } from './sheet.js';
 import { openTradeForm, openCashForm, openBackup, checkAlerts, closeModal, modalOpen, wipeBook, openPaperStart, PAPER_FRESH_MIN, openModal } from './forms.js';
 import { installExplain, setExplain, explainOn, glossaryHTML, bindGlossary } from './learn.js';
 import { irisSVG, heatHTML, heatLegend, linesSVG, bindLines } from './viz.js';
 import { brief, benchValue, equityCurve } from './calc.js';
-import { runPlans, onDcaLotDel, dcaActions, plansHTML, dcaStripHTML, bindPlans, openConfirm, openPending } from './dca.js';
+import { runPlans, onDcaLotDel, dcaActions, plansHTML, dcaStripHTML, bindPlans, openConfirm, openPending, dcaTagsHTML, dcaAfterWipe } from './dca.js';
 import { openDuel, openTM } from './tools.js';
 import {
   renderAide, aideHomeHTML, bindAideHome, aideBadge, aideSpeech, refreshEvals, onTrade, onLotDel, onLotEdit, openIdea, openAsk,
@@ -847,8 +848,8 @@ function txHTML() {
   return `<div class="sec-h"><h2>${isPaper() ? '模擬交易紀錄' : '交易紀錄'}</h2><span class="aside">${lots.length} 筆</span></div>
     <section class="panel list journal">${show.map((l) => {
     const r = S.rows.get(l.c);
-    const dca = !isPaper() && l.dca && typeof l.dca === 'object';
-    const tags = dca ? `<span class="tx-tag">定期定額</span>${l.dca.est === true ? '<span class="tx-tag est">預估・待核對</span>' : l.dca.cal ? '<span class="tx-tag ok">已對齊</span>' : ''}` : '';
+    const tags = isPaper() ? '' : dcaTagsHTML(l);
+    const dca = !!tags;
     return `<button class="j-row${dca && l.dca.est === true ? ' est' : ''}" data-lot="${esc(l.id)}"><span class="j-d num">${l.d ? fmt.dy(l.d) : '未填日期'}</span><span class="j-m"><span class="j-l1"><b class="${l.side === 'sell' ? 'sell' : 'buy'}">${l.side === 'sell' ? '賣出' : '買進'}</b> ${esc(r ? r.n : l.c)}</span><span class="j-l2">${sharesOf(l.sh)} × <span class="num">${fmt.px(l.px)}</span>${tags}</span>${l.note && !dca ? `<span class="j-note">${esc(l.note)}</span>` : ''}</span><span class="chev">${ICON.chev}</span></button>`;
   }).join('')}${lots.length > show.length ? `<button class="more" id="tx-more">顯示全部 ${lots.length} 筆</button>` : ''}</section>`;
 }
@@ -1108,7 +1109,7 @@ function drawSettings() {
     <section class="panel set">
       <div class="srow"><div><div class="h">目前使用</div><div class="d">${isPaper() ? '模擬倉：下單、建議、指揮台都是模擬的部位' : '真實部位'}</div></div><button class="btn small ghost" id="s-mode">切到${isPaper() ? '真實部位' : '模擬倉'}</button></div>
       <div class="srow"><div><div class="h">備份與搬家</div><div class="d">持股、交易、模擬倉、提醒只存在這支手機</div></div><button class="btn small ghost" id="s-bk">開啟</button></div>
-      <div class="srow"><div><div class="h">清除真實部位</div><div class="d">刪除這支手機裡的真實交易、現金與提醒（模擬倉不受影響）</div></div><button class="btn small danger ghost" id="s-wipe">清除</button></div>
+      <div class="srow"><div><div class="h">清除真實部位</div><div class="d">刪除這支手機裡的真實交易、現金與提醒（模擬倉不受影響）。${(settings.plans || []).length ? '定期定額計畫會留著，明天起的扣款照樣自動記，以前的不會補回來；已經停扣的計畫一起刪掉。' : ''}</div></div><button class="btn small danger ghost" id="s-wipe">清除</button></div>
     </section>
 
     <div class="sec-h"><h2>顯示</h2></div>
@@ -1163,6 +1164,7 @@ function bindSettings() {
     const b = e.currentTarget;
     if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = '確定清除？'; return; }
     wipeBook();
+    dcaAfterWipe();
     toast('已清除這支手機裡的真實部位資料');
     drawSettings();
   });
@@ -1358,7 +1360,14 @@ function speakPill() {
 
 // ================================================================== 事件
 bus.on((what, data) => {
-  if (what === 'trade') { onTrade(data); return; }
+  if (what === 'trade') {
+    onTrade(data);
+    // 真實部位剛記了一筆：如果剛好是定期定額扣款那幾天的同一檔，馬上比對、問是不是同一筆（避免記兩次）
+    if (data && !data.paper && (settings.plans || []).some((p) => data.lot && p.c === data.lot.c)) runPlans();
+    return;
+  }
+  // 你說「自己記的那筆就是定期定額」：那筆如果進了決策日記、還沒定案，就拿掉（定期定額不是在猜漲跌）
+  if (what === 'dcalink') { onLotDel(data); return; }
   if (what === 'lotdel') { onLotDel(data); onDcaLotDel(data); return; }
   if (what === 'lotedit') { onLotEdit(data); return; }
   if (what === 'book' || what === 'watch' || what === 'alerts') {
@@ -1465,6 +1474,12 @@ async function boot() {
     if (isBookKey(e.key)) { reloadBook(); bus.emit('book'); }
     else if (e.key === 'coldeye.alerts') { alerts.splice(0, alerts.length, ...store.get('alerts', [])); bus.emit('alerts'); }
     else if (isJournalKey(e.key)) { reloadJournal(); bus.emit('journal'); }
+    else if (e.key === 'coldeye.settings') {
+      // 另一個分頁改了定期定額計畫（或刪了某一期）：重讀，免得這邊用舊的蓋回去（其他設定維持這個分頁自己的）
+      const before = JSON.stringify([settings.plans, settings.dcaSkip, settings.dcaNoAsk]);
+      reloadPlans();
+      if (JSON.stringify([settings.plans, settings.dcaSkip, settings.dcaNoAsk]) !== before) bus.emit('book');
+    }
   });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 }

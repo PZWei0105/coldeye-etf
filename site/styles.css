@@ -1023,6 +1023,21 @@ table.caps td.on { color: var(--glacier); font-weight: 700; background: var(--gl
 .dca-strip.invite { grid-template-columns: minmax(0, 1fr) auto; align-items: center; box-shadow: inset 3px 0 0 var(--aurora); }
 .dca-strip.invite > div { display: grid; gap: 2px; }
 .k-warn { display: block; margin-top: 6px; padding: 6px 8px; color: var(--amber); background: var(--amber-wash); }
+/* 定期定額：從什麼時候開始記、修改的原因（一列一個選項，字比較多） */
+.choices { display: grid; gap: 6px; }
+.choice { display: grid; gap: 2px; width: 100%; text-align: left; border: 0; color: inherit; padding: 10px 12px; background: var(--hull-2); box-shadow: inset 0 0 0 1px var(--seam-2); }
+.choice b { font-size: 14px; }
+.choice small { color: var(--frost-3); font-size: 12.5px; line-height: 1.5; }
+.choice[aria-pressed="true"] { background: var(--aurora-wash); box-shadow: inset 3px 0 0 var(--aurora), inset 0 0 0 1px color-mix(in srgb, var(--aurora) 45%, transparent); }
+.choice[aria-pressed="true"] small { color: var(--frost-2); }
+.p-why { display: grid; gap: 8px; padding: 10px 12px; background: var(--amber-wash); box-shadow: inset 3px 0 0 var(--amber); }
+.p-delw { display: grid; gap: 6px; padding-top: 6px; }
+.p-delw .m-actions { flex-wrap: wrap; }
+.ask-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.ask-row { display: grid; gap: 8px; padding: 10px 12px; font-size: 13.5px; line-height: 1.65; background: var(--amber-wash); box-shadow: inset 3px 0 0 var(--amber); }
+.ask-row .row-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.dca-note { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 10px 12px; font-size: 13px; line-height: 1.6; background: var(--glacier-wash); box-shadow: inset 3px 0 0 var(--glacier); }
+@media (max-width: 420px) { .dca-note { grid-template-columns: 1fr; } }
 @media (max-width: 420px) { .dca-strip.invite { grid-template-columns: 1fr; } }
 @media (max-width: 380px) { .f-row { grid-template-columns: 1fr; } .day-grid button { height: 34px; } }
 .wl { display: grid; }

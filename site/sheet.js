@@ -7,6 +7,7 @@ import {
 import { openTradeForm, openAlertForm, closeModal, modalOpen } from './forms.js';
 import { addToDuel, openDuel, openTM } from './tools.js';
 import { aideDetailHTML, bindAideDetail, openIdea } from './desk.js';
+import { openConfirm, dcaTagsHTML } from './dca.js';
 import * as FX from './fx.js';
 
 const ICON_DUEL = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l9.5 9.5M4 4h3.5M4 4v3.5M20 4l-9.5 9.5M20 4h-3.5M20 4v3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6.5 15.5l2 2M17.5 15.5l-2 2M5 19l2.5-2.5M19 19l-2.5-2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
@@ -315,8 +316,9 @@ function journalHTML(code) {
     <section class="panel list journal">${lots.map((l) => {
     const s = l.snap;
     const snap = s && s.st != null ? `當時規則：${ST[String(s.st)].t}${s.ps && POS[s.ps] ? `／${POS[s.ps].t}` : ''}` : '';
-    return `<button class="j-row" data-lot="${l.id}"><span class="j-d num">${l.d ? fmt.dy(l.d) : '未填日期'}</span>
-      <span class="j-m"><span class="j-l1"><b class="${l.side === 'sell' ? 'sell' : 'buy'}">${l.side === 'sell' ? '賣出' : '買進'}</b> ${sharesOf(l.sh)} × <span class="num">${fmt.px(l.px)}</span></span>
+    const tags = isPaper() ? '' : dcaTagsHTML(l);
+    return `<button class="j-row${tags && l.dca.est === true ? ' est' : ''}" data-lot="${esc(l.id)}"><span class="j-d num">${l.d ? fmt.dy(l.d) : '未填日期'}</span>
+      <span class="j-m"><span class="j-l1"><b class="${l.side === 'sell' ? 'sell' : 'buy'}">${l.side === 'sell' ? '賣出' : '買進'}</b> ${sharesOf(l.sh)} × <span class="num">${fmt.px(l.px)}</span>${tags}</span>
       <span class="j-l2">手續費 <span class="num">${money(l.fee || 0)}</span>${l.tax ? `、證交稅 <span class="num">${money(l.tax)}</span>` : ''}${snap ? `　${snap}` : ''}</span>
       ${l.note ? `<span class="j-note">${esc(l.note)}</span>` : ''}</span>
       <span class="chev">${ICON.chev}</span></button>`;
@@ -468,9 +470,11 @@ function btHTML(det) {
 function bindDetail(code, row, det) {
   const add = () => openTradeForm({ code });
   $$('#m-add, #j-add').forEach((b) => b.addEventListener('click', add));
+  // 定期定額自動記的預估：點開是「核對」（國泰的 1 元手續費、預估的狀態都留著）；其他照一般的編輯
   $$('[data-lot]').forEach((b) => b.addEventListener('click', () => {
     const lot = book.lots.find((l) => l.id === b.dataset.lot);
-    if (lot) openTradeForm({ lot });
+    if (!lot) return;
+    if (!isPaper() && lot.dca && lot.dca.est === true) openConfirm(lot.id); else openTradeForm({ lot });
   }));
   bindCalc(row, heldOf(code));
   bindAideDetail($('#sheet'), code);
