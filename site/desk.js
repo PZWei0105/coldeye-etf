@@ -112,16 +112,17 @@ export function onLotDel({ id }) {
   const k = journal.items.findIndex((e) => e.src === 'trade' && e.lot === id);
   if (k < 0) return;
   const e = journal.items[k];
-  if (e.res && e.res.state === 'done') delete e.lot;
+  // 隔一個交易日以內刪掉交易：當成記錯了，日記一起拿掉；之後才刪：日記留著（不然刪掉再用過去的日期補記，就能把壞掉的決定藏起來）
+  if ((e.res && e.res.state === 'done') || !decOpen(e)) delete e.lot;
   else journal.items.splice(k, 1);
   saveJournal();
   bus.emit('journal');
 }
 /**
  * 交易被修改（只有真實部位可以改；模擬倉成交後不能改）。日記記的是「你在 App 記下這筆交易那一刻」的決定：
- * - 已經對完答案（或無法對答案）的不跟著改：結果一存就不再變。
  * - 改備註：更新文字。改手續費、稅：日記不受影響。
- * - 還沒對答案時改買賣方向、價格、代號：跟著改（改代號就換成那一檔的類別；不是當天改的，當時的規則觀點留空，不拿今天的冒充）。
+ * - 決定後隔一個交易日以內（還沒對答案）改買賣方向、價格、代號：跟著改（改代號就換成那一檔的類別；
+ *   不是當天改的，當時的規則觀點留空，不拿今天的冒充）。之後就定案，不跟著改（不然隔幾週把買改成賣就能把錯的變成對的）。
  * - 改日期：不跟著改到別天（等於事後挑結果）；連代號也一起換掉的話，這筆交易已經不是當時記下的決定，日記留著當「想法」，不再連到這筆交易。
  */
 export function onLotEdit({ lot }) {
@@ -129,8 +130,9 @@ export function onLotEdit({ lot }) {
   if (!e) return;
   let changed = false;
   if (lot.note && lot.note !== e.text) { e.text = lot.note; changed = true; }
+  // 已經對完答案、或已經過了隔一個交易日：定案，只更新文字（不然隔幾週把買改成賣，就能把錯的變成對的）
   const settled = e.res && (e.res.state === 'done' || e.res.state === 'na');
-  if (!settled && e.snap) {
+  if (!settled && e.snap && decOpen(e)) {
     const stance = lot.side === 'sell' ? 'bear' : 'bull';
     if (stance !== e.stance) { e.stance = stance; changed = true; }
     if (lot.d !== e.snap.d) {
@@ -216,7 +218,9 @@ function progressOf(e) {
 const coolOpen = (e) => !!(e.cool && !e.cool.res && today() <= e.cool.due);
 const coolDue = (e) => coolOpen(e) && today() >= e.cool.due;
 const coolLapsed = (e) => !!(e.cool && !e.cool.res && today() > e.cool.due);
-const pasteOpen = (e) => !!(e.snap && e.snap.d && today() <= A.addWeekdays(e.snap.d, A.AIDE.late));
+/** 決定後隔一個交易日以內：還可以修正（刪除、跟著交易修改、貼回結論）；之後就定案，避免看到走勢才改 */
+const decOpen = (e) => !!(e.snap && e.snap.d && today() <= A.addWeekdays(e.snap.d, A.AIDE.late));
+const pasteOpen = decOpen;
 const matured = (e) => e.res && e.res.state === 'done' && !e.seen;
 const awaitingPaste = (e) => e.asked && !e.after && !(e.res && e.res.state === 'done') && pasteOpen(e);
 /** 需要 PZ 處理的：冷靜期到了、對完答案還沒看 */
@@ -740,11 +744,11 @@ export function openEntry(id) {
       </div>
       <label class="field en-sec"><span class="en-st">${ICON.chart}復盤筆記</span><textarea class="input area" id="e-note" rows="2" maxlength="400" placeholder="${done ? '這次學到什麼？下次遇到類似情況要怎麼做？' : '對完答案後，回來寫下學到的事'}">${esc(e.note || '')}</textarea></label>
       <div class="m-actions">
-        ${done ? '' : `<button type="button" class="btn danger ghost" id="e-del">刪除${e.src === 'trade' ? '紀錄' : ''}</button>`}
+        ${done || !decOpen(e) ? '' : `<button type="button" class="btn danger ghost" id="e-del">刪除${e.src === 'trade' ? '紀錄' : ''}</button>`}
         <button type="button" class="btn ghost" id="e-ask">${ICON.comms}${done ? '帶去復盤' : '帶去問 Claude'}</button>
         <button type="button" class="btn primary" data-close>完成</button>
       </div>
-      ${done ? '<p class="small muted">已經對完答案的紀錄不能刪除：戰績要誠實，錯的也要留著。</p>' : e.src === 'trade' ? '<p class="small muted">這筆是交易自動記下的；刪除紀錄不會刪掉交易本身。</p>' : ''}
+      ${done ? '<p class="small muted">已經對完答案的紀錄不能刪除：戰績要誠實，錯的也要留著。</p>' : !decOpen(e) ? '<p class="small muted">決定後隔一個交易日就定案了，不能刪除：戰績要誠實，錯的也要留著。</p>' : `<p class="small muted">${fmt.d(A.addWeekdays(e.snap.d, A.AIDE.late))} 以前可以刪除（記錯了的話）；之後就定案。${e.src === 'trade' ? '刪除紀錄不會刪掉交易本身。' : ''}</p>`}
     </div>`, {
     label: '決策紀錄',
     onClose: () => saveNote(),
