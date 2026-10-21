@@ -93,6 +93,15 @@ const ok = (k, t) => ({ k, lvl: 'ok', t });
 const info = (k, t) => ({ k, lvl: 'info', t });
 const warn = (k, t) => ({ k, lvl: 'warn', t });
 const stop = (k, t) => ({ k, lvl: 'stop', t });
+/** 有金額或股數的檢查，另外附一份「只寫比例」的說法（tp），打包給 Claude 而且沒勾「附上金額」時用 */
+const withTp = (it, tp) => ({ ...it, tp });
+/** 只寫比例：拿掉文字裡的金額與股數（沒有 tp 的舊紀錄用） */
+export function redactAmt(t) {
+  return String(t || '')
+    .replace(/（約\s*[\d,.]+\s*元）/g, '')
+    .replace(/約\s*[\d,.]+\s*元、?/g, '')
+    .replace(/[\d,]+\s*張(\s*[\d,]+\s*股)?|[\d,]+\s*股/g, '若干股');
+}
 
 function ruleWord(row) {
   return `規則觀點「${ST_T[String(row.st)]}」${row.ps ? `、部位訊號「${PS_T[row.ps]}」` : ''}`;
@@ -219,7 +228,8 @@ export function aideCheck(x) {
       else if (a && (a.key === 'full' || a.key === 'rebalance')) push(warn('plan', `比重已經到你設定的上限（${catN(row.k)}單檔 ${pctU(capOf(ctx.profile, row.k))}）：照紀律不再加碼。`));
       else if (a && a.plan && a.plan.n > 0) {
         const amt = a.plan.parts.reduce((s, t) => s + t.sh * t.px, 0);
-        push(ok('plan', `依你的紀律（${x.bookName || '部位'}），這次最多 ${sharesText(a.plan.n)}${x.privacy ? '' : `（約 ${ntS(amt)} 元）`}、分三批；出場線 ${pxS(a.plan.stop)}。`));
+        push(withTp(ok('plan', `依你的紀律（${x.bookName || '部位'}），這次最多 ${sharesText(a.plan.n)}${x.privacy ? '' : `（約 ${ntS(amt)} 元）`}、分三批；出場線 ${pxS(a.plan.stop)}。`),
+          `依你的紀律（${x.bookName || '部位'}），這次最多買到約占總資產 ${pctU(amt / ctx.T, 1)}、分三批；出場線 ${pxS(a.plan.stop)}。`));
       } else if (a && a.plan) push(info('plan', `依你的紀律（${x.bookName || '部位'}），目前建議 0 股（${a.plan.limit === 'cash' ? '分到的現金不夠' : a.plan.limit === 'cap' ? '比重已到上限' : '單筆風險預算太小'}）。`));
       if (hold && isNum(hold.pnlPct) && hold.pnlPct < 0 && row.st < 0) push(warn('avgdown', `帳面虧損 ${pctS(hold.pnlPct)}，而且規則偏空：往下買是攤平，不是加碼。`));
     } else if (hold) {
@@ -227,7 +237,10 @@ export function aideCheck(x) {
         const c = tradeCost('sell', hold.sh, q.px, taxCat(row), today, ctx.fee);
         const free = taxRateOf(taxCat(row), today) === 0;
         const realized = c.net - hold.cost;
-        push(info('cost', `全部賣出：手續費${x.privacy ? '' : `約 ${ntS(c.fee)} 元`}、證交稅${free ? '免' : x.privacy ? '0.1%' : `約 ${ntS(c.tax)} 元`}，已實現損益約 ${pctS(hold.cost > 0 ? realized / hold.cost : null)}。`));
+        const gross = hold.sh * q.px;
+        const rp = pctS(hold.cost > 0 ? realized / hold.cost : null);
+        push(withTp(info('cost', `全部賣出：手續費${x.privacy ? '' : `約 ${ntS(c.fee)} 元`}、證交稅${free ? '免' : x.privacy ? '0.1%' : `約 ${ntS(c.tax)} 元`}，已實現損益約 ${rp}。`),
+          `全部賣出：手續費${free ? '（證交稅免）' : '加證交稅'}約占賣出金額的 ${gross > 0 ? ((c.fee + c.tax) / gross * 100).toFixed(2) : '—'}%，已實現損益約 ${rp}。`));
       }
       if (isNum(hold.pnlPct) && hold.pnlPct < 0) push(info('sunk', `帳面虧損 ${pctS(hold.pnlPct)}：成本高低不會影響之後的漲跌。問自己：「如果現在手上是現金，我會買這檔嗎？」不會，賣出才有道理。`));
       else if (isNum(hold.pnlPct) && hold.pnlPct > 0) push(info('gain', `帳面獲利 ${pctS(hold.pnlPct)}：可以分批賣，不用一次賣光。`));
@@ -272,7 +285,9 @@ export function aideCheck(x) {
       const b = nB > 0 ? tradeCost('buy', nB, q2.px, taxCat(r2), today, ctx.fee) : { fee: 0 };
       const gross = hold.sh * q.px;
       const cost = s.fee + s.tax + b.fee;
-      push(info('cost', `換股成本：賣出的手續費＋證交稅、加上買進的手續費，${x.privacy ? '' : `約 ${ntS(cost)} 元、`}約占這筆錢的 ${gross > 0 ? (cost / gross * 100).toFixed(2) : '—'}%。`));
+      const share = gross > 0 ? (cost / gross * 100).toFixed(2) : '—';
+      push(withTp(info('cost', `換股成本：賣出的手續費＋證交稅、加上買進的手續費，${x.privacy ? '' : `約 ${ntS(cost)} 元、`}約占這筆錢的 ${share}%。`),
+        `換股成本：賣出的手續費＋證交稅、加上買進的手續費，約占這筆錢的 ${share}%。`));
     } else if (!hold) {
       push(info('nohold', `你目前沒有 ${row.n} 的紀錄：這會記成「${r2.n} 接下來會贏過 ${row.n}」的想法。`));
     }
@@ -693,10 +708,10 @@ function holdLine(h, showAmt) {
   }
   return `持有：${parts.join('｜')}`;
 }
-function checkLines(ck) {
+function checkLines(ck, showAmt) {
   if (!ck || !ck.items.length) return [];
   const mark = { ok: '✓', info: '・', warn: '⚠', stop: '⛔' };
-  return [SEP(`副官檢查（固定規則）：${ck.verdict}`), ...ck.items.map((i) => `${mark[i.lvl]} ${i.t}`)];
+  return [SEP(`副官檢查（固定規則）：${ck.verdict}`), ...ck.items.map((i) => `${mark[i.lvl]} ${showAmt ? i.t : i.tp || redactAmt(i.t)}`)];
 }
 function ideaLines(idea) {
   if (!idea) return [];
@@ -722,7 +737,7 @@ export function packEtf(p) {
   L.push(holdLine(p.hold, p.showAmt));
   if (p.row2) L.push(holdLine(p.hold2, p.showAmt).replace('持有：', `持有 ${p.row2.n}：`));
   if (p.adv && p.adv.label) L.push(`冷眼依我的紀律給的建議：${p.adv.label}`);
-  if (p.checks) { L.push(''); L.push(...checkLines(p.checks)); }
+  if (p.checks) { L.push(''); L.push(...checkLines(p.checks, p.showAmt)); }
   if (p.idea) { L.push(''); L.push(...ideaLines(p.idea)); }
   if (p.question) { L.push('', SEP('我想問'), p.question); }
   return L.join('\n');
@@ -860,7 +875,7 @@ export function sanitizeJournal(items) {
     if (e.checks && typeof e.checks === 'object') {
       x.checks = {
         verdict: okStr(e.checks.verdict, 60), ok: okInt(e.checks.ok, 0, 99) || 0, warn: okInt(e.checks.warn, 0, 99) || 0, stop: okInt(e.checks.stop, 0, 99) || 0, cool: !!e.checks.cool,
-        items: Array.isArray(e.checks.items) ? e.checks.items.filter((i) => i && ['ok', 'info', 'warn', 'stop'].includes(i.lvl)).slice(0, 16).map((i) => ({ lvl: i.lvl, t: okStr(i.t, 300) })) : [],
+        items: Array.isArray(e.checks.items) ? e.checks.items.filter((i) => i && ['ok', 'info', 'warn', 'stop'].includes(i.lvl)).slice(0, 16).map((i) => ({ lvl: i.lvl, t: okStr(i.t, 300), ...(typeof i.tp === 'string' && i.tp ? { tp: okStr(i.tp, 300) } : {}) })) : [],
       };
     }
     if (e.cool && okD(e.cool.due)) x.cool = { due: e.cool.due, res: ['kept', 'changed'].includes(e.cool.res) ? e.cool.res : null, ...(okIso(e.cool.at) ? { at: e.cool.at } : {}) };

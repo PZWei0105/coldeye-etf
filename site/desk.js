@@ -577,7 +577,7 @@ export function openIdea(o = {}) {
       id: newId(), at: new Date().toISOString(), src: 'idea', book: isPaper() ? 'paper' : 'real', c: f.code, ...(row2 ? { c2: row2.c } : {}),
       stance: f.stance, conf: f.conf || null, tags: f.tags.slice(), text: $('#i-text', card).value.trim().slice(0, 500),
       snap: snapOf(row), ...(row2 ? { snap2: snapOf(row2) } : {}),
-      checks: { verdict: ck.verdict, ok: ck.ok, warn: ck.warn, stop: ck.stop, cool: ck.cool, items: ck.items.slice(0, 16).map((i) => ({ lvl: i.lvl, t: i.t })) },
+      checks: { verdict: ck.verdict, ok: ck.ok, warn: ck.warn, stop: ck.stop, cool: ck.cool, items: ck.items.slice(0, 16).map((i) => ({ lvl: i.lvl, t: i.t, ...(i.tp ? { tp: i.tp } : {}) })) },
       ...(cool ? { cool: { due: A.coolDue(today()), res: null } } : {}),
     };
     if (!addEntry(e)) { err.textContent = '這個瀏覽器不允許儲存資料（可能是私密瀏覽模式）'; return null; }
@@ -777,7 +777,10 @@ export function openAsk(kind, o = {}) {
   // 單檔的各面向分析在 etf/{代號}.json：有快取就直接用，沒有就先打開視窗、抓到再補上
   let det = (kind === 'etf' || kind === 'idea') && code ? S.detail[code] || null : null;
   let det2 = kind === 'idea' && e && e.c2 ? S.detail[e.c2] || null : null;
-  const hasHold = kind === 'pf' || ((kind === 'etf' || kind === 'idea') && code && !!holdInfo(code));
+  // 打包裡可能出現金額或股數（持股、換過去那檔的持股、副官檢查算的成本或最多買多少）時，才顯示「附上金額」開關
+  const amtIn = (it) => it.tp || /約 [\d,]+ 元|\d+ 張|\d+ 股/.test(it.t || '');
+  const hasHold = kind === 'pf' || ((kind === 'etf' || kind === 'idea') && !!code
+    && (!!holdInfo(code) || !!(e && e.c2 && holdInfo(e.c2)) || !!(e && e.checks && (e.checks.items || []).some(amtIn))));
   const titles = { idea: '帶這個想法去問 Claude', etf: '帶這檔去問 Claude', pf: '帶我的配置去問 Claude', market: '帶今天的市場去問 Claude', review: '帶這筆決定去復盤', week: '帶這週去問 Claude', duel: '帶這場對決去問 Claude' };
   const ph = { idea: '例如：我這樣想合理嗎？有什麼沒想到的？', etf: '例如：現在適合開始定期定額嗎？', pf: '例如：我的配置會不會太集中？', market: '例如：今天大跌，我需要做什麼嗎？', review: '例如：這次是運氣還是判斷？', week: '例如：我這週有沒有太衝動？', duel: '例如：我想存退休金，哪一檔比較適合我？' };
   const st = { q: o.question || '', amt: !!settings.askAmt, short: !!settings.askShort };

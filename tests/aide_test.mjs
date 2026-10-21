@@ -219,6 +219,32 @@ t('打包：預設只寫比例，打開才有股數與成本；一定有規則�
   assert.ok(A.projectInstructions().includes('不要引用社群'));
 });
 
+t('打包「只寫比例」：副官檢查裡的金額與股數也要拿掉（新紀錄用比例說法、舊紀錄直接遮掉）', () => {
+  const hold = { sh: 2000, avg: 98.5, cost: 197000, w: 0.21, cap: 0.6, pnlPct: 0.09, mv: 216300 };
+  const adv = { key: 'add', plan: { n: 3000, parts: [{ sh: 1000, px: 108 }, { sh: 1000, px: 107 }, { sh: 1000, px: 106 }], stop: 101.2 } };
+  const buy = A.aideCheck({ stance: 'bull', row: row0050, q: q0050, ctx, adv, hold, bookName: '真實部位' });
+  const sell = A.aideCheck({ stance: 'bear', row: row0050, q: q0050, ctx, hold });
+  const swap = A.aideCheck({ stance: 'swap', row: row0050, q: q0050, row2: { ...row0050, c: '0056', n: '元大高股息', k: 'div' }, q2: { px: 38, pc: 0, prem: 0 }, ctx, hold });
+  const items = [...buy.items, ...sell.items, ...swap.items];
+  for (const k of ['plan', 'cost']) assert.ok(items.some((i) => i.k === k && i.tp), k);
+  assert.ok(/3 張（約 [\d,]+ 元）/.test(buy.items.find((i) => i.k === 'plan').t));
+  assert.ok(buy.items.find((i) => i.k === 'plan').tp.includes('約占總資產 32.1%'));
+  const money = /約 [\d,]+ 元|\d+ 張|\d+ 股/;
+  const base = { kind: 'idea', when: 'w', row: row0050, q: q0050, today: 20261022, profileName: '穩健', hold };
+  for (const ck of [buy, sell, swap]) {
+    const p = A.packEtf({ ...base, checks: { verdict: ck.verdict, items: ck.items }, showAmt: false });
+    assert.ok(!money.test(p), p);
+    assert.ok(money.test(A.packEtf({ ...base, checks: { verdict: ck.verdict, items: ck.items }, showAmt: true })));
+  }
+  // 舊紀錄（沒有 tp）
+  const legacy = [{ lvl: 'info', t: '全部賣出：手續費約 309 元、證交稅約 648 元，已實現損益約 +9.6%。' }, { lvl: 'ok', t: '依你的紀律（真實部位），這次最多 1 張 500 股（約 162,000 元）、分三批；出場線 101.20。' }];
+  const p = A.packEtf({ ...base, checks: { verdict: 'v', items: legacy }, showAmt: false });
+  assert.ok(!money.test(p) && p.includes('已實現損益約 +9.6%') && p.includes('出場線 101.20'), p);
+  // 備份還原保留 tp
+  const e = A.sanitizeJournal([{ id: 'tp1', at: '2026-10-22T02:00:00.000Z', c: '0050', stance: 'bull', snap: { d: 20261022, px: 108 }, checks: { verdict: 'v', items: [{ lvl: 'ok', t: 'a 3 張', tp: 'b 30%' }] } }])[0];
+  assert.equal(e.checks.items[0].tp, 'b 30%');
+});
+
 t('還原備份的日記：格式不對的整筆不收，多餘或危險的欄位一律丟掉', () => {
   const good = { id: 'abc123', at: '2026-09-01T02:00:00.000Z', src: 'idea', book: 'real', c: '0050', stance: 'bull', conf: 9, tags: ['trend', 'evil'], text: 'x'.repeat(900), snap: { n: '元大台灣50', k: 'broad', d: 20260901, px: 100, st: 1, ps: 'add', evil: '<script>' }, checks: { verdict: 'v', ok: '<b>', warn: 2, stop: 0, items: [{ lvl: 'x" onclick="1', t: 'bad' }, { lvl: 'warn', t: 'ok' }] }, after: { stance: 'wait', conf: '5', why: 'w' }, res: { state: 'done', d: 20260929, ret: 0.05, px: 105, bu: 0.66, evil: 1 }, seen: true, hack: 1 };
   const out = A.sanitizeJournal([good, { ...good, id: 'abc123' }, { ...good, id: 'zz9', stance: 'moon' }, { ...good, id: 'zz8', snap: { d: 20260901, px: -1 } }, null, 'x']);
