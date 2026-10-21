@@ -1,6 +1,6 @@
 /* 冷眼 — 共用核心：狀態、設定、資料載入、格式、圖示、小元件。 */
 import * as PF from './pf.js';
-import { breadth } from './calc.js';
+import { breadth, normPlan } from './calc.js';
 import * as FX from './fx.js';
 
 export { PF };
@@ -35,9 +35,16 @@ export const settings = Object.assign({
   mode: 'real', explain: false, boot: true, heatMode: 'chg', radarView: 'list', duel: null, tm: null,
   // 副官與聲光
   sfx: true, vol: 2, voice: true, fx: true, haptic: true, ignite: true, autoJ: true, askShort: false, askAmt: false, jf: 'all',
-  plans: [],   // 定期定額計畫：[{ id, c, day: 1–28, amt }]
+  plans: [],   // 定期定額計畫（calc.js 的 normPlan）：[{ id, c, days:[1–31], amt, fee, start, end, skip, v: 2 }]
 }, savedSettings);
 if (!Array.isArray(settings.plans)) settings.plans = [];
+// 舊版的定期定額計畫（{ day: 1–28 }）轉成新版（可以選好幾天、從哪天開始、停扣）；舊計畫從今天開始自動入帳，不補以前的
+{
+  const raw = settings.plans;
+  settings.plans = raw.map((p) => normPlan(p, PF.twToday())).filter(Boolean);
+  // 轉換過就馬上存起來：舊計畫的「開始日」固定在第一次轉換的那天，不會每天往後跑
+  if (raw.some((p) => !p || p.v !== 2)) store.set('settings', settings);
+}
 if (!['real', 'paper'].includes(settings.mode)) settings.mode = 'real';
 if (![1, 2, 3].includes(settings.vol)) settings.vol = 2;
 if (!PF.PROFILES[settings.risk]) settings.risk = 'mid';
@@ -85,6 +92,17 @@ export function setBooks({ real, paper } = {}) {
   if (real !== undefined) put('pf', real);
   if (paper !== undefined) put('paper', paper);
 }
+/** 寫進真實部位（不論現在顯示哪一本）：定期定額自動入帳用。一律經過 saveBook／setBooks */
+export function updateRealBook(fn) {
+  if (!isPaper()) { fn(book); return saveBook(); }
+  const b = { ...EMPTY_BOOK(), ...(store.get('pf', {}) || {}) };
+  if (!Array.isArray(b.lots)) b.lots = [];
+  fn(b);
+  setBooks({ real: b });
+  return true;
+}
+/** 真實部位目前的交易（不論現在顯示哪一本） */
+export const realLots = () => (isPaper() ? ((store.get('pf', {}) || {}).lots || []) : book.lots);
 export const alerts = store.get('alerts', []);
 export const saveAlerts = () => store.set('alerts', alerts);
 export const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);

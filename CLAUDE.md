@@ -24,7 +24,14 @@
 - 一筆紀錄算不算命中率只看 `aide.js` 的 `scoreOf`（畫面上的對了／錯了、本週復盤、語音、打包都用它）：沒有同類基準、冷靜後改變主意沒照做（`coolDropped`）、觀望、`NONVIEW_TAGS` 都不算。貼回的【冷眼結論】與冷靜期回覆，要在定案前（`afterCounts`／`coolDropped`，用時間戳比 `lockAt`）才算數，之後只記錄、不改立場；定案後或對完答案的紀錄不能刪（設定頁只能「整本歸零」，不能挑著刪）。`parseConclusion` 的立場會先拿掉否定（不買、先不加碼）與條件句（跌破…再減碼）。
 - 交易自動記日記：只記「今天」的交易（真實部位的今天、模擬倉）。定案前（`desk.js` 的 `decOpen`）還可以修正。交易被刪除或撤銷時（`forms.js` 發出 `lotdel`）：定案前的日記一起拿掉（當成記錯了），定案或對完答案的留著（只是不再連到交易），免得「刪掉再用過去的日期補記」把壞決定藏起來。交易被修改（`lotedit`，`onLotEdit`）：定案前改方向、價格、代號跟著改（換代號就換類別），把日期改成別天就拿掉日記（不是今天的交易）；定案後只更新文字。日記裡的「刪除」也只在定案前出現。重設模擬倉不會刪日記。
 - 「帶去問 Claude」只是把文字交給使用者分享或複製（`aide.js` 的 `packEtf`／`packPf`／`packMarket`／`packReview`／`packDuel`／`packWeek`），App 本身不送出任何資料；持股預設只寫比例，使用者打開開關才附金額（副官檢查裡有金額或股數的句子另外存一份比例說法 `tp`，舊紀錄用 `redactAmt` 遮掉）。規則段要求 Claude 只用官方來源、不直接叫人買賣、最後用【冷眼結論】格式總結，`parseConclusion` 依這個格式解析。
-- 定期定額計畫存在設定的 `plans`（扣款日當天在今日行動提醒，週末順延；`calc.js` 的 `dcaDueToday` 也會補上「上個月順延過來」的那一期，例如 2/27 週六 → 3/1）；資產走勢用 `calc.js` 的 `equityCurve`（交易紀錄＋`hist/` 的官方收盤，交易與分割、除息照時間順序重播；比歷史資料還早的交易也算得到之前的配息；冷門 ETF 除權息當天沒成交時，參考價先照除權息調整）重算。
+- 資產走勢用 `calc.js` 的 `equityCurve`（交易紀錄＋`hist/` 的官方收盤，交易與分割、除息照時間順序重播；比歷史資料還早的交易也算得到之前的配息；冷門 ETF 除權息當天沒成交時，參考價先照除權息調整）重算。
+
+## 定期定額（PZ 用國泰證券）
+- 規則照國泰官方說明（https://istockapp.cathaysec.com.tw/Marketing/DCA/）：每月 1～31 號任選、可多選；遇休市順延到下一個交易日；那個月沒有的日期（例如 2/30）那一期不買；盤中、盤後分批買零股，不設價格；每筆金額已含手續費（2026/12/31 前每筆 1 元，以百元為單位、最低 100 元）。國泰改規則時改 `calc.js` 的 `dcaSchedule`／`dcaEstimate` 與 `dca.js` 的說明文字。
+- 計畫存在設定的 `plans`（只在手機），格式一律經過 `calc.js` 的 `normPlan`（新增、舊版 `{ day }` 轉換、還原備份都是）：`{ id, c, days, amt, fee, start, end, back, skip, v: 2 }`。
+- 自動入帳（`dca.js` 的 `runPlans`，開 App、資料更新、存計畫時執行，排隊不並行）：用 `hist/0050.json` 當官方交易日行事曆（`dcaSchedule`），價格用成交日的官方收盤（`closeOn`），股數＝(金額−手續費)÷收盤價、無條件捨去（`dcaEstimate`），寫進**真實部位**（不論目前顯示哪一本，經過 `core.js` 的 `updateRealBook`）。每筆帶 `dca: { plan, s: 原本扣款日, est: true }`；同一計畫同一期只記一次（計畫刪掉重建時，同一檔同一期也算記過），使用者刪掉的那一期記在 `skip`，不再補。離線或資料還沒到就不記。
+- 核對（`openConfirm`）：照國泰成交回報改股數、均價（或成交金額）後 `est: false`；用一般交易表單改過也算核對（`forms.js` 保留 `dca`）。對齊（`openCalibrate`／`dcaCalibrate`）：只照比例調整「預估」那幾筆的股數、每筆花的錢不變，讓這一檔總股數等於國泰庫存；差一成以上會提醒先檢查計畫。
+- 定期定額的交易不進決策日記（不是在猜漲跌）。今日行動：扣款日提醒（`dcaDueToday`，週末順延）、待核對筆數（`dcaActions`）。
 
 ## 怎麼操作
 - 修改程式後推到 `main` 會觸發 workflow，執行 `control/job.json` 指定的工作；只改介面時把 job 設成 `deploy`。
@@ -41,4 +48,4 @@
 - 筆電／電視寬度（≥1100px）是左側停靠列＋三欄戰情室；手機維持單欄。分頁有六個（指揮台、部位、雷達、副官、情報、戰績）。
 - 聲光（PZ 要求「聲光效果拉滿」）：動態只放在有意義的時刻——開機點火、大盤之瞳的掃描、價格閃動、切換分頁的掃描、副官檢查逐條鎖定、記錄時蓋章、對答案揭曉；副官核心環會慢慢轉。全部可在設定關（`settings.fx`，body 加 `nofx`），並尊重「減少動態效果」。
 - 音效用 WebAudio 即時合成（`fx.js` 的 `SOUNDS`，不放音檔）；手機要先點一下才能出聲，所以開機預設停在「啟動」按鈕（`settings.ignite`）。語音播報用瀏覽器的 speechSynthesis，但只用裝置內建（`localService`）的中文語音——桌機 Chrome 的「Google 國語」、Edge 的 Online 語音會把文字送到網路，而晨報裡有持股，所以這種裝置不念（`voiceStatus`／`voiceWhy` 說明原因）；iPhone 要在點擊當下先 `primeSpeech()`。震動只有 Android 有效。iPhone 側邊靜音時不出聲（`audioSession.type = 'ambient'`）。
-- 檔案分工：`calc.js` 純計算（時光機、對決百分位、熱力圖排版、晨報、資產走勢）、`aide.js` 副官純計算、`viz.js` 畫圖（瞳孔環、熱力圖、六角雷達、折線）、`learn.js` 名詞解釋（看懂模式）、`tools.js` 對決與時光機畫面、`desk.js` 副官畫面、`fx.js` 聲光。新增名詞時同時補 `learn.js` 的 TERMS，畫面上的元素加 `data-term`。新增介面檔案要同時加進 `sw.js` 的 `SHELL_FILES`。
+- 檔案分工：`calc.js` 純計算（時光機、對決百分位、熱力圖排版、晨報、資產走勢、定期定額排程與預估）、`aide.js` 副官純計算、`dca.js` 定期定額畫面與自動入帳、`viz.js` 畫圖（瞳孔環、熱力圖、六角雷達、折線）、`learn.js` 名詞解釋（看懂模式）、`tools.js` 對決與時光機畫面、`desk.js` 副官畫面、`fx.js` 聲光。新增名詞時同時補 `learn.js` 的 TERMS，畫面上的元素加 `data-term`。新增介面檔案要同時加進 `sw.js` 的 `SHELL_FILES`。

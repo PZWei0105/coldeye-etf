@@ -111,27 +111,87 @@ t('熱力圖：面積和數值成正比、不超出範圍', () => {
   }
 });
 
-t('定期定額扣款日：每個計畫每個月剛好提醒一次、都在星期一到五；2027/2/27（週六）順延到 3/1 也不會漏', () => {
-  for (let day = 1; day <= 28; day++) {
-    const perMonth = new Map();
-    let d = 20261101;
-    while (d <= 20281130) {
-      if (C.dcaDueToday(day, d)) {
-        const wd = new Date(Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100)).getUTCDay();
-        assert.ok(wd >= 1 && wd <= 5, `${day}: ${d}`);
-        // 算成「哪一期」：順延跨月的算上個月那一期
-        const due = [0, 1, 2].map((k) => pf.addDays(d, -k)).find((x) => x % 100 === day);
-        const key = Math.floor(due / 100);
-        perMonth.set(key, (perMonth.get(key) || 0) + 1);
-      }
-      d = pf.addDays(d, 1);
-    }
-    assert.equal(perMonth.size, 25, `day ${day}: ${perMonth.size} 期`);
-    for (const [k, v] of perMonth) assert.equal(v, 1, `day ${day} ${k}: ${v} 次`);
+// 星期一到五的交易日（假的行事曆），可以挖掉幾天當作國定假日
+const weekdays = (from, to, holidays = []) => { const out = []; for (let d = from; d <= to; d = pf.addDays(d, 1)) { const w = new Date(Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100)).getUTCDay(); if (w >= 1 && w <= 5 && !holidays.includes(d)) out.push(d); } return out; };
+
+t('定期定額計畫格式：舊版 { day } 轉成新版、怪資料擋掉或修正（也用在還原備份）', () => {
+  const p = C.normPlan({ id: 'old1', c: '0050', day: 6, amt: 3000 }, 20261021);
+  assert.deepEqual(p, { id: 'old1', c: '0050', days: [6], amt: 3000, fee: 1, start: 20261021, end: null, back: false, skip: [], v: 2 });
+  assert.equal(C.normPlan({ c: '<img>', days: [6], amt: 3000 }, 20261021), null);
+  assert.equal(C.normPlan({ c: '0050', days: [0, 32, 'x'], amt: 3000 }, 20261021), null);
+  assert.equal(C.normPlan({ c: '0050', days: [6], amt: 50 }, 20261021), null);
+  const q = C.normPlan({ id: 'x"><script>', c: '00878', days: [31, 6, 6], amt: 1000.4, fee: -3, start: 20250101, end: 20240101, back: 'yes', skip: [20250106, 'bad', 20250106] }, 20261021);
+  assert.equal(q.id, '00878-20250101-6_31');
+  assert.deepEqual(q.days, [6, 31]);
+  assert.equal(q.amt, 1000); assert.equal(q.fee, 1); assert.equal(q.end, null); assert.equal(q.back, false);
+  assert.deepEqual(q.skip, [20250106]);
+});
+
+t('定期定額排程（國泰規則）：可以選好幾天、那個月沒有的日期不買、週末和國定假日順延到下一個交易日', () => {
+  const cal = weekdays(20260101, 20260430, [20260216, 20260217, 20260218, 20260219, 20260220, 20260227]);   // 春節、228 補假
+  const plan = { days: [6, 30, 16, 6], start: 20260101 };
+  const s = C.dcaSchedule(plan, cal, 20260420);
+  const by = Object.fromEntries(s.map((x) => [x.s, x.d]));
+  assert.equal(by[20260106], 20260106);
+  assert.equal(by[20260116], 20260116);
+  assert.equal(by[20260130], 20260130);
+  assert.equal(by[20260216], 20260223);      // 春節：順延到 2/23
+  assert.equal(by[20260230], undefined);     // 2 月沒有 30 號：那一期不買
+  assert.equal(by[20260306], 20260306);
+  assert.equal(by[20260315], undefined);
+  assert.equal(by[20260316], 20260316);
+  assert.equal(by[20260330], 20260330);
+  assert.equal(by[20260406], 20260406);
+  assert.equal(by[20260416], 20260416);
+  assert.equal(by[20260430], undefined);     // 超過 upto
+  assert.equal(s.length, 10);                 // 1/6 1/16 1/30 2/6 2/16 3/6 3/16 3/30 4/6 4/16
+  // 開始和停扣
+  assert.equal(C.dcaSchedule({ days: [6], start: 20260110, end: 20260310 }, cal, 20260420).map((x) => x.s).join(','), '20260206,20260306');
+  // 最後一個已知交易日之後才會成交的，先不列（4/4 是週六，下一個交易日還沒進資料）
+  const cal2 = weekdays(20260401, 20260403);
+  assert.equal(C.dcaSchedule({ days: [4], start: 20260401 }, cal2, 20260405).length, 0);
+});
+
+t('定期定額預估：每期金額已含 1 元手續費，用收盤價買零股、無條件捨去；冷門 ETF 沒成交用前一次收盤', () => {
+  const e = C.dcaEstimate(3000, 1, 108.15);
+  assert.equal(e.sh, 27); near(e.spent, 27 * 108.15 + 1, 1e-9);
+  assert.equal(C.dcaEstimate(100, 1, 150), null);     // 連 1 股都買不起
+  const h = { d: [20260105, 20260107], p: [20, 21] };
+  assert.deepEqual(C.closeOn(h, 20260106), { d: 20260105, px: 20 });
+  assert.deepEqual(C.closeOn(h, 20260107), { d: 20260107, px: 21 });
+  assert.equal(C.closeOn(h, 20260101), null);
+});
+
+t('和國泰庫存對齊：只改預估的那幾筆，總股數等於券商的，每筆花的錢不變；分割前的紀錄照倍數換算', () => {
+  const holdingOf = (ls) => pf.holdingFromLots(ls, [[20250618, 4]]);
+  const lots = [
+    { id: 'm', c: 'X', side: 'buy', sh: 1000, px: 100 },                        // 不記得日期的舊股（手動記的）
+    { id: 'a', c: 'X', side: 'buy', d: 20250506, sh: 10, px: 190, fee: 1 },     // 分割前（1 股＝4 股）
+    { id: 'b', c: 'X', side: 'buy', d: 20250706, sh: 40, px: 50, fee: 1 },
+    { id: 'c', c: 'X', side: 'buy', d: 20250806, sh: 39, px: 51, fee: 1 },
+  ];
+  const r = C.dcaCalibrate(lots, ['a', 'b', 'c'], [[20250618, 4]], 1125, holdingOf);
+  assert.ok(r.ok, r.why);
+  assert.equal(r.before, 1000 + 40 + 40 + 39);
+  assert.equal(r.after, 1125);
+  for (const ch of r.changes) { const l = lots.find((x) => x.id === ch.id); near(ch.sh * ch.px, l.sh * l.px, 0.01); }
+  assert.equal(C.dcaCalibrate(lots, ['a'], [], 10, holdingOf).ok, false);      // 比其他紀錄加起來還少
+  assert.equal(C.dcaCalibrate(lots, [], [], 1200, holdingOf).ok, false);
+});
+
+t('定期定額提醒：週末順延、那個月沒有的日期不提醒、開始前和停扣後不提醒，每一期剛好提醒一次', () => {
+  for (const day of [1, 15, 28, 29, 30, 31]) {
+    const plan = { days: [day], start: 20261101 };
+    const hits = [];
+    for (let d = 20261101; d <= 20281130; d = pf.addDays(d, 1)) if (C.dcaDueToday(plan, d)) hits.push(d);
+    const months = new Set(hits.map((d) => { const due = [0, 1, 2].map((k) => pf.addDays(d, -k)).find((x) => x % 100 === day); return Math.floor(due / 100); }));
+    assert.equal(months.size, hits.length, `day ${day}`);    // 每一期只提醒一次
+    const expect = [];
+    for (let y = 2026; y <= 2028; y++) for (let m = 1; m <= 12; m++) { const ym = y * 100 + m; if (ym >= 202611 && ym <= 202811 && day <= new Date(Date.UTC(y, m, 0)).getUTCDate()) expect.push(ym); }
+    assert.equal(hits.length, expect.length, `day ${day}`);  // 2 月沒有 29～31 號就不提醒
   }
-  assert.equal(C.dcaDueToday(27, 20270301), true);     // 2027/2/27 週六 → 3/1 週一
-  assert.equal(C.dcaDueToday(28, 20270301), true);     // 2027/2/28 週日 → 3/1 週一
-  assert.equal(C.dcaDueToday(1, 20270301), true);
+  assert.equal(C.dcaDueToday({ days: [27], start: 20270101 }, 20270301), true);   // 2027/2/27 週六 → 3/1 週一
+  assert.equal(C.dcaDueToday({ days: [6], start: 20261101, end: 20261130 }, 20261207), false);
 });
 
 t('部位走勢：市值、淨投入、除息前一天買才領得到、分割後股數變多', () => {

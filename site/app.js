@@ -11,7 +11,8 @@ import { openDetail, closeDetail, renderDetail, refreshDetailQuote } from './she
 import { openTradeForm, openCashForm, openBackup, checkAlerts, closeModal, modalOpen, wipeBook, openPaperStart, PAPER_FRESH_MIN, openModal } from './forms.js';
 import { installExplain, setExplain, explainOn, glossaryHTML, bindGlossary } from './learn.js';
 import { irisSVG, heatHTML, heatLegend, linesSVG, bindLines } from './viz.js';
-import { brief, benchValue, equityCurve, dcaDueToday } from './calc.js';
+import { brief, benchValue, equityCurve } from './calc.js';
+import { runPlans, onDcaLotDel, dcaActions, plansHTML, dcaStripHTML, bindPlans, openConfirm, openPending } from './dca.js';
 import { openDuel, openTM } from './tools.js';
 import {
   renderAide, aideHomeHTML, bindAideHome, aideBadge, aideSpeech, refreshEvals, onTrade, onLotDel, onLotEdit, openIdea, openAsk,
@@ -284,6 +285,7 @@ function renderHome() {
     <div class="h-foot">${installCard()}<p class="disclaim">資料來自證交所、櫃買中心、集保結算所等官方發布；觀點與建議由固定規則計算，不保證報酬，買賣請自行判斷。</p></div>
   </div>`;
   $$('[data-code]', v).forEach((b) => { if (!b.closest('.hm')) b.addEventListener('click', () => openDetail(b.dataset.code)); });
+  $$('[data-act="dca"]', v).forEach((b) => b.addEventListener('click', () => openPending()));
   bindHero(v, P);
   bindInstall(v);
   bindHeat(v);
@@ -467,12 +469,8 @@ function buildActions(P) {
     const t = (z) => `${ST[String(z[0])] ? ST[String(z[0])].t : '—'}${z[1] && POS[z[1]] ? '／' + POS[z[1]].t : ''}`;
     out.push({ pri: 1, code: c.c, chip: chip('變化', 'info'), title: r.n, text: `規則訊號：${t(c.from)} → <b>${t(c.to)}</b>` });
   }
-  // 定期定額的扣款日（週末順延到星期一）
-  for (const p of settings.plans || []) {
-    const r = S.rows.get(p.c);
-    if (!r || !dcaDueToday(p.day, today())) continue;
-    out.push({ pri: 1, code: p.c, chip: chip('扣款日', 'alert'), title: r.n, text: `今天扣 <b class="num">${money(p.amt)}</b> 元（每月 ${p.day} 號）。定期定額照紀律扣，不看短期訊號${r.ps === 'trim' || r.ps === 'caution' ? `；規則現在是「${POS[r.ps].t}」，另外的單筆加碼先等一等` : ''}。` });
-  }
+  // 定期定額：今天扣款、自動記的預估待核對（國泰規則，dca.js）
+  out.push(...dcaActions(chip));
   const held = new Set(P ? P.holdings.map((x) => x.code) : []);
   for (const code of settings.watch) {
     if (held.has(code)) continue;
@@ -493,7 +491,7 @@ function actionsHTML(P) {
   const acts = buildActions(P);
   let html = `<div class="sec-h"><h2>今日行動</h2><span class="aside">${acts.length ? `${acts.length} 件` : ''}</span></div>`;
   if (acts.length) {
-    html += `<section class="panel list acts">${acts.map((a) => `<button class="act-row" data-code="${a.code}"><span class="a-chip">${a.chip}</span><span class="a-body"><b>${esc(a.title)}</b><span>${a.text}</span></span><span class="chev">${ICON.chev}</span></button>`).join('')}</section>`;
+    html += `<section class="panel list acts">${acts.map((a) => `<button class="act-row" ${a.act ? `data-act="${a.act}"` : `data-code="${a.code}"`}><span class="a-chip">${a.chip}</span><span class="a-body"><b>${esc(a.title)}</b><span>${a.text}</span></span><span class="chev">${ICON.chev}</span></button>`).join('')}</section>`;
   } else {
     html += `<section class="panel pad calm"><b>今天沒有需要動作的事。</b><span class="muted">${hasBook() ? '持股都在續抱狀態，照紀律放著就好。' : '輸入持股之後，加碼、減碼、除息、到價提醒都會集中在這裡。'}</span></section>`;
   }
@@ -630,8 +628,9 @@ function renderPF() {
         <ul class="ticks"><li>用移動平均法算成本，扣掉手續費與證交稅算出真實損益</li><li>依除息紀錄算出已經領到的配息、預估一年領多少</li><li>依你的紀律（比重上限、單筆最多虧多少）算出加碼、減碼的股數</li><li>每天提醒除息、到價、訊號變化</li></ul>
         <div class="row-btns"><button class="btn primary" id="pf-add">${ICON.plus}記一筆交易</button><button class="btn ghost" id="pf-cash">設定可投入現金</button><button class="btn ghost" id="pf-bk">從備份還原</button></div>
         <p class="small muted">已經有持股？「記一筆」時勾選「不記得日期」，輸入目前股數與平均成本就可以。資料只存在這支手機，不會上傳。想先練習，切到上面的「模擬倉」。</p>
-      </section>`;
+      </section>${dcaStripHTML()}`;
     bindModeSwitch(v);
+    bindPlans(v, () => renderPF());
     $('#pf-add', v).addEventListener('click', () => openTradeForm({}));
     $('#pf-cash', v).addEventListener('click', () => openCashForm());
     $('#pf-bk', v).addEventListener('click', () => openBackup());
@@ -660,6 +659,7 @@ function renderPF() {
   if (P.holdings.length) {
     html += `<div class="sec-h"><h2>持股</h2><span class="aside">${P.holdings.length} 檔　依市值排序</span></div>
     <section class="panel list holds">${P.holdings.map(holdRow).join('')}</section>`;
+    html += dcaStripHTML();
   } else if (isPaper()) {
     html += '<section class="panel pad calm"><b>模擬倉還是空的。</b><span class="muted">到「雷達」挑一檔，在單檔頁按「記一筆」就能模擬下單；也可以照冷眼的加碼建議買買看。</span></section>';
   }
@@ -672,6 +672,7 @@ function renderPF() {
   if (!isPaper()) html += `<section class="panel pad row-between"><div><b>備份與搬家</b><div class="small muted">持股只存在這支手機，換手機前先備份（模擬倉會一起備份）。</div></div><button class="btn ghost small" id="pf-bk">備份</button></section>`;
   v.innerHTML = `<div class="pf">${html}</div>`;
   bindModeSwitch(v);
+  bindPlans(v, () => renderPF());
   const add = $('#pf-add', v);
   if (add) add.addEventListener('click', () => openTradeForm({}));
   const cash = $('#pf-cash', v);
@@ -681,7 +682,13 @@ function renderPF() {
   const bk = $('#pf-bk', v);
   if (bk) bk.addEventListener('click', () => openBackup());
   $$('[data-code]', v).forEach((b) => b.addEventListener('click', () => openDetail(b.dataset.code)));
-  $$('[data-lot]', v).forEach((b) => b.addEventListener('click', () => { const lot = book.lots.find((l) => l.id === b.dataset.lot); if (lot) openTradeForm({ lot }); }));
+  $$('[data-act="dca"]', v).forEach((b) => b.addEventListener('click', () => openPending()));
+  // 定期定額自動記的預估：點開是「核對」；核對過的和自己記的：一般的編輯
+  $$('[data-lot]', v).forEach((b) => b.addEventListener('click', () => {
+    const lot = book.lots.find((l) => l.id === b.dataset.lot);
+    if (!lot) return;
+    if (!isPaper() && lot.dca && lot.dca.est === true) openConfirm(lot.id); else openTradeForm({ lot });
+  }));
   const more = $('#tx-more', v);
   if (more) more.addEventListener('click', () => { S.txAll = true; renderPF(); });
   const pa = $('#pf-ask', v);
@@ -840,7 +847,9 @@ function txHTML() {
   return `<div class="sec-h"><h2>${isPaper() ? '模擬交易紀錄' : '交易紀錄'}</h2><span class="aside">${lots.length} 筆</span></div>
     <section class="panel list journal">${show.map((l) => {
     const r = S.rows.get(l.c);
-    return `<button class="j-row" data-lot="${l.id}"><span class="j-d num">${l.d ? fmt.dy(l.d) : '未填日期'}</span><span class="j-m"><span class="j-l1"><b class="${l.side === 'sell' ? 'sell' : 'buy'}">${l.side === 'sell' ? '賣出' : '買進'}</b> ${esc(r ? r.n : l.c)}</span><span class="j-l2">${sharesOf(l.sh)} × <span class="num">${fmt.px(l.px)}</span></span>${l.note ? `<span class="j-note">${esc(l.note)}</span>` : ''}</span><span class="chev">${ICON.chev}</span></button>`;
+    const dca = !isPaper() && l.dca && typeof l.dca === 'object';
+    const tags = dca ? `<span class="tx-tag">定期定額</span>${l.dca.est === true ? '<span class="tx-tag est">預估・待核對</span>' : l.dca.cal ? '<span class="tx-tag ok">已對齊</span>' : ''}` : '';
+    return `<button class="j-row${dca && l.dca.est === true ? ' est' : ''}" data-lot="${esc(l.id)}"><span class="j-d num">${l.d ? fmt.dy(l.d) : '未填日期'}</span><span class="j-m"><span class="j-l1"><b class="${l.side === 'sell' ? 'sell' : 'buy'}">${l.side === 'sell' ? '賣出' : '買進'}</b> ${esc(r ? r.n : l.c)}</span><span class="j-l2">${sharesOf(l.sh)} × <span class="num">${fmt.px(l.px)}</span>${tags}</span>${l.note && !dca ? `<span class="j-note">${esc(l.note)}</span>` : ''}</span><span class="chev">${ICON.chev}</span></button>`;
   }).join('')}${lots.length > show.length ? `<button class="more" id="tx-more">顯示全部 ${lots.length} 筆</button>` : ''}</section>`;
 }
 
@@ -1077,10 +1086,7 @@ function drawSettings() {
         <ul class="rules-ed">${(settings.rules || []).map((r, i) => `<li><span>${esc(r)}</span><button class="mini-btn" data-rr="${i}" aria-label="刪除這條">${ICON.x}</button></li>`).join('')}</ul>
         <div class="addrow"><input class="input" id="s-rule" maxlength="40" placeholder="新增一條，例如：除息前不追高"><button class="btn small" id="s-rule-add">新增</button></div>
         ${JSON.stringify(settings.rules) !== JSON.stringify(DEFAULT_RULES) ? '<button class="link small" id="s-rule-reset">恢復預設紀律</button>' : ''}</div>
-      <div class="srow col"><div><div class="h">定期定額計畫</div><div class="d">扣款日當天，指揮台的「今日行動」和語音播報會提醒你（週末順延到星期一）。實際扣款請在「部位」記一筆。</div></div>
-        ${(settings.plans || []).length ? `<ul class="rules-ed">${settings.plans.map((p, i) => { const r = S.rows.get(p.c); return `<li><span><b>${esc(r ? r.n : p.c)}</b> <span class="muted num">${esc(p.c)}</span>　每月 <b class="num">${p.day}</b> 號　<b class="num">${money(p.amt)}</b> 元</span><button class="mini-btn" data-rp="${i}" aria-label="刪除這個計畫">${ICON.x}</button></li>`; }).join('')}</ul>` : ''}
-        <div class="plan-add"><input class="input" id="s-pc" placeholder="ETF 代號，例如 0050" autocomplete="off"><input class="input num" id="s-pd" inputmode="numeric" placeholder="每月幾號（1–28）"><input class="input num" id="s-pa" inputmode="numeric" placeholder="每月金額（元）"><button class="btn small" id="s-padd">新增</button></div>
-        <div class="f-err" id="s-perr" role="alert"></div></div>
+      ${plansHTML()}
     </section>
 
     <div class="sec-h"><h2>交易成本</h2></div>
@@ -1137,21 +1143,7 @@ function bindSettings() {
   const addRule = () => { const el = $('#s-rule', sh); const t = el.value.trim(); if (!t) return; settings.rules = (settings.rules || []).concat(t.slice(0, 40)); saveSettings(); drawSettings(); toast('已新增紀律'); };
   $('#s-rule-add', sh).addEventListener('click', addRule);
   $('#s-rule', sh).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addRule(); } });
-  $$('[data-rp]', sh).forEach((b) => b.addEventListener('click', () => { settings.plans.splice(+b.dataset.rp, 1); saveSettings(); drawSettings(); render(); }));
-  $('#s-padd', sh).addEventListener('click', () => {
-    const c = $('#s-pc', sh).value.trim().toUpperCase();
-    const day = Math.round(Number($('#s-pd', sh).value));
-    const amt = Math.round(Number(String($('#s-pa', sh).value).replace(/[,\s]/g, '')));
-    const er = $('#s-perr', sh);
-    if (!S.rows.get(c)) { er.textContent = '找不到這個代號，請輸入 ETF 代號，例如 0050'; return; }
-    if (!(day >= 1 && day <= 28)) { er.textContent = '扣款日請填 1 到 28 號'; return; }
-    if (!(amt >= 100 && amt <= 10000000)) { er.textContent = '金額請填 100 元到 1,000 萬元'; return; }
-    settings.plans = (settings.plans || []).concat({ id: Date.now().toString(36), c, day, amt });
-    saveSettings();
-    toast(`已新增：${S.rows.get(c).n} 每月 ${day} 號`);
-    drawSettings();
-    render();
-  });
+  bindPlans(sh, () => { drawSettings(); render(); });
   const rr = $('#s-rule-reset', sh);
   if (rr) rr.addEventListener('click', () => { settings.rules = DEFAULT_RULES.slice(); saveSettings(); drawSettings(); });
   const numSet = (id, key, ok) => $(id, sh).addEventListener('change', (e) => {
@@ -1367,7 +1359,7 @@ function speakPill() {
 // ================================================================== 事件
 bus.on((what, data) => {
   if (what === 'trade') { onTrade(data); return; }
-  if (what === 'lotdel') { onLotDel(data); return; }
+  if (what === 'lotdel') { onLotDel(data); onDcaLotDel(data); return; }
   if (what === 'lotedit') { onLotEdit(data); return; }
   if (what === 'book' || what === 'watch' || what === 'alerts') {
     if (what !== 'alerts') diffSeen();
@@ -1395,7 +1387,7 @@ window.addEventListener('popstate', () => {
 });
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.deferredInstall = e; if (S.tab === 'home' && S.summary) render(); });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && S.summary) { refreshLive(); refreshEvals(); }
+  if (document.visibilityState === 'visible' && S.summary) { refreshLive(); refreshEvals(); runPlans(); }
   if (document.visibilityState === 'hidden') FX.stopSpeak();
 });
 document.addEventListener('keydown', (e) => {
@@ -1454,6 +1446,7 @@ async function boot() {
   if (!cached) maybeBoot();
   render();
   refreshEvals();
+  runPlans();   // 定期定額：到期的每一期自動記一筆預估（國泰規則）
   const h = location.hash.replace('#', '');
   if (h === 'settings') openSettings(false);
   else if (h === 'duel') openDuel(false);
@@ -1464,7 +1457,7 @@ async function boot() {
   setInterval(() => { if (document.visibilityState === 'visible') renderHeader(); }, 30000);
   setInterval(() => {
     if (document.visibilityState !== 'visible') return;
-    Promise.all([loadCore(), ensureDivs(true)]).then(() => { diffSeen(); computePF(); if (!S.openCode && !modalOpen()) render(); refreshEvals(); }).catch(() => {});
+    Promise.all([loadCore(), ensureDivs(true)]).then(() => { diffSeen(); computePF(); if (!S.openCode && !modalOpen()) render(); refreshEvals(); runPlans(); }).catch(() => {});
   }, 15 * 60000);
   // 同一支手機開了兩個冷眼分頁：另一邊記了交易或提醒，這邊馬上重讀，免得用舊的內容蓋回去
   window.addEventListener('storage', (e) => {

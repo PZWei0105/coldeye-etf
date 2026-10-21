@@ -5,6 +5,7 @@ import {
 } from './core.js';
 import { TAGS as WHY_TAGS, EMO_TAGS, sanitizeJournal } from './aide.js';
 import * as FX from './fx.js';
+import { normPlan } from './calc.js';
 
 // ------------------------------------------------------------------ 模擬倉的成交規則
 export const PAPER_FRESH_MIN = 15;   // 盤中價格超過幾分鐘沒更新，就先不讓模擬倉成交（避免用舊價格占便宜）
@@ -246,7 +247,7 @@ export function openTradeForm(o = {}) {
       closeModal();
       buzz();
       toast('已刪除這筆交易');
-      bus.emit('lotdel', { id: lot.id });
+      bus.emit('lotdel', { id: lot.id, lot });
       bus.emit('book');
     });
   }
@@ -295,6 +296,8 @@ export function openTradeForm(o = {}) {
       note: $('#f-note', card).value.trim().slice(0, 80), at: lot ? lot.at : new Date().toISOString(),
       snap: lot ? lot.snap : null,
       ...(paper ? { qat: S.live ? S.live.at : null } : {}),
+      // 定期定額自動記的：保留是哪個計畫的哪一期；在這裡改過、存檔，就算核對過了
+      ...(lot && lot.dca && typeof lot.dca === 'object' ? { dca: { ...lot.dca, est: false } } : {}),
     };
     // 交易日就是最新資料日（或之後）時，記下當時的規則觀點，日後回頭看決策
     if (!lot && row && (!d || d >= row.d)) rec.snap = { st: row.st, ps: row.ps, sc: row.sc, d: row.d };
@@ -347,7 +350,7 @@ function openPaperLot(lot) {
     closeModal();
     buzz();
     toast('已撤銷這筆模擬交易');
-    bus.emit('lotdel', { id: lot.id });
+    bus.emit('lotdel', { id: lot.id, lot });
     bus.emit('book');
   });
 }
@@ -562,7 +565,11 @@ export function openBackup() {
     saveAlerts();
     if (obj.prefs) {
       for (const k of ['watch', 'risk', 'fee', 'name', 'rules']) if (obj.prefs[k] != null) settings[k] = obj.prefs[k];
-      if (Array.isArray(obj.prefs.plans)) settings.plans = obj.prefs.plans.filter((p) => p && typeof p.c === 'string' && /^[0-9A-Z]{4,8}$/i.test(p.c) && Number.isInteger(p.day) && p.day >= 1 && p.day <= 28 && Number.isFinite(p.amt) && p.amt > 0).slice(0, 20).map((p) => ({ id: String(p.id || p.c).slice(0, 20), c: p.c.toUpperCase(), day: p.day, amt: Math.round(p.amt) }));
+      if (Array.isArray(obj.prefs.plans)) {
+        // 定期定額計畫：逐欄檢查（舊版的 { day } 也轉成新版）；同一個 id 只留一個
+        const seen = new Set();
+        settings.plans = obj.prefs.plans.slice(0, 40).map((p) => normPlan(p, today())).filter((p) => p && !seen.has(p.id) && seen.add(p.id)).slice(0, 20);
+      }
       saveSettings();
     }
     // 決策日記用「合併」：只補回這支手機沒有的紀錄，不會刪掉或蓋掉現有的

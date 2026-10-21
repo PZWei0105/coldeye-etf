@@ -408,19 +408,119 @@ export function squarify(items, x, y, w, h) {
   return out;
 }
 
-// ------------------------------------------------------------------ 定期定額的扣款日
-/** y 年 m 月那一期定期定額的扣款日：每月 day 號（1～28），遇到週末順延到星期一 */
-export function dcaDate(y, m, day) {
-  let d = y * 10000 + m * 100 + day;
-  for (let k = 0; k < 3; k++) {
-    const wd = new Date(Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100)).getUTCDay();
-    if (wd >= 1 && wd <= 5) break;
-    d = addDays(d, 1);
-  }
-  return d;
+// ------------------------------------------------------------------ 定期定額（照國泰證券的規則）
+// 國泰：每月 1～31 號任選、可以選好幾天；那個月沒有的日期（例如 2/30）那一期不買；遇到休市順延到下一個交易日；
+// 不用設價格，扣款日當天盤中、盤後分批買零股；每筆金額已含手續費（2026/12/31 前每筆 1 元）。
+const daysIn = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+const isWeekday = (d) => { const t = new Date(Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100)).getUTCDay(); return t >= 1 && t <= 5; };
+const firstAtOrAfter = (D, d) => { let lo = 0, hi = D.length - 1, ans = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (D[m] >= d) { ans = m; hi = m - 1; } else lo = m + 1; } return ans; };
+const lastAtOrBefore = (D, d) => { let lo = 0, hi = D.length - 1, ans = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (D[m] <= d) { ans = m; lo = m + 1; } else hi = m - 1; } return ans; };
+/**
+ * 定期定額計畫的格式（新增、還原備份都經過這裡）：舊版 { day, amt } 自動轉成新版；格式不對回傳 null。
+ * { id, c: 代號, days: [1..31], amt: 每期金額（含手續費）, fee: 每筆手續費, start: 從哪天開始（yyyymmdd）,
+ *   end: 停扣（yyyymmdd，沒有就是還在扣）, back: 有沒有補齊以前的, skip: [刪掉的那幾期的原本扣款日，之後不再自動補], v: 2 }
+ */
+export function normPlan(p, today) {
+  if (!p || typeof p !== 'object' || typeof p.c !== 'string' || !/^[0-9A-Z]{4,8}$/i.test(p.c)) return null;
+  const days = planDays({ days: Array.isArray(p.days) ? p.days : [p.day] });
+  const amt = Math.round(Number(p.amt));
+  if (!days.length || !(amt >= 100 && amt <= 10000000)) return null;
+  const okD = (d) => Number.isInteger(d) && d >= 20000101 && d <= 21001231;
+  const start = okD(p.start) ? p.start : today;
+  const fee = isNum(p.fee) && p.fee >= 0 && p.fee <= 1000 ? round(p.fee, 2) : 1;
+  return {
+    id: typeof p.id === 'string' && /^[0-9a-z_-]{1,40}$/i.test(p.id) ? p.id : `${p.c.toLowerCase()}-${start}-${days.join('_')}`,
+    c: p.c.toUpperCase(), days, amt, fee, start,
+    end: okD(p.end) && p.end >= start ? p.end : null,
+    back: p.back === true,
+    skip: Array.isArray(p.skip) ? [...new Set(p.skip.filter(okD))].slice(-600) : [],
+    v: 2,
+  };
 }
-/** 今天是不是扣款日：這個月那一期，或上個月那一期順延過來的（例如 2/27 是星期六 → 3/1 星期一） */
-export function dcaDueToday(day, td) {
+/** 計畫的扣款日（1～31，去掉重複、排好） */
+export const planDays = (plan) => [...new Set((plan && plan.days) || [])].filter((d) => Number.isInteger(d) && d >= 1 && d <= 31).sort((a, b) => a - b);
+
+/**
+ * 一個計畫從 start 到 upto（含）之間的每一期，以及實際成交的交易日。
+ * plan：{ days:[1..31], start: yyyymmdd, end: yyyymmdd|null }；cal：有開市的日子（官方資料，遞增）。
+ * 最後一個已知交易日之後才會成交的期數還不知道在哪天，不列出（等資料進來再算）。
+ * 回傳 [{ s: 原本的扣款日, d: 實際成交日 }]，依 s 排序。
+ */
+export function dcaSchedule(plan, cal, upto) {
+  const out = [];
+  const days = planDays(plan);
+  if (!days.length || !cal || !cal.length || !plan.start) return out;
+  const to = Math.min(plan.end || 99991231, upto || 99991231);
+  let y = Math.floor(plan.start / 10000), m = Math.floor(plan.start / 100) % 100;
+  for (let guard = 0; guard < 1200; guard++) {
+    if (y * 10000 + m * 100 + 1 > to) break;
+    const dim = daysIn(y, m);
+    for (const day of days) {
+      if (day > dim) continue;                         // 那個月沒有這一天：國泰那一期不買
+      const s = y * 10000 + m * 100 + day;
+      if (s < plan.start || s > to) continue;
+      const k = firstAtOrAfter(cal, s);                // 休市順延到下一個交易日
+      if (k >= 0) out.push({ s, d: cal[k] });
+    }
+    m++;
+    if (m > 12) { m = 1; y++; }
+  }
+  return out;
+}
+/** 成交日那天的官方收盤價（冷門 ETF 那天沒成交，就用之前最後一次成交）；h：hist 檔 { d, p } */
+export function closeOn(h, d) {
+  if (!h || !h.d || !h.d.length) return null;
+  const k = lastAtOrBefore(h.d, d);
+  return k >= 0 && h.p[k] > 0 ? { d: h.d[k], px: h.p[k] } : null;
+}
+/** 預估一期買到的股數：每期金額（含手續費）扣掉手續費，用收盤價買零股、無條件捨去；連 1 股都買不起回傳 null */
+export function dcaEstimate(amt, fee, px) {
+  const f = isNum(fee) && fee >= 0 ? fee : 0;
+  if (!(px > 0) || !(amt > f)) return null;
+  const sh = Math.floor((amt - f) / px + 1e-9);
+  return sh >= 1 ? { sh, px, fee: f, spent: round(sh * px + f, 2) } : null;
+}
+/**
+ * 和券商的庫存對齊：只調整「預估」的那幾筆，照比例改股數，讓這一檔的總股數等於券商 App 顯示的；
+ * 每一筆花的錢不變（股數變多＝那一筆的均價變低），所以總成本不會亂掉。
+ * lots：這一檔的全部交易；est：要調整的那幾筆的 id；splits：這一檔的分割紀錄；target：券商顯示的股數（目前的股數基準）。
+ * 回傳 { ok, why, changes:[{ id, sh, px }], before, after }。
+ */
+export function dcaCalibrate(lots, estIds, splits, target, holdingOf) {
+  const ids = new Set(estIds || []);
+  const est = (lots || []).filter((l) => ids.has(l.id) && l.side !== 'sell' && l.sh > 0 && l.px > 0);
+  if (!est.length) return { ok: false, why: '這一檔沒有「預估」的定期定額紀錄可以調整' };
+  if (!(isNum(target) && target > 0)) return { ok: false, why: '請輸入券商 App 上的庫存股數' };
+  const fac = (l) => { let f = 1; for (const [sd, k] of splits || []) if (l.d && l.d < sd) f *= k; return f; };
+  const before = holdingOf(lots).sh;
+  const estNow = est.reduce((a, l) => a + l.sh * fac(l), 0);
+  const want = estNow + (target - before);
+  if (!(want >= est.length)) return { ok: false, why: '差太多了：券商的股數比冷眼裡其他紀錄加起來還少，請先檢查有沒有記錯的交易', before };
+  const f = want / estNow;
+  const changes = est.map((l) => ({ id: l.id, sh: Math.max(1, Math.round(l.sh * f)), spent: l.sh * l.px, fac: fac(l), d: l.d || 0 }));
+  // 四捨五入剩下的零頭，放在最後一筆、而且之後沒有分割的那一筆
+  const now = changes.reduce((a, c) => a + c.sh * c.fac, 0);
+  const tail = changes.filter((c) => c.fac === 1).sort((a, b) => b.d - a.d)[0];
+  if (tail && Math.round(want - now) !== 0) tail.sh = Math.max(1, tail.sh + Math.round(want - now));
+  const out = changes.map((c) => ({ id: c.id, sh: c.sh, px: round(c.spent / c.sh, 4) }));
+  const next = (lots || []).map((l) => { const c = out.find((x) => x.id === l.id); return c ? { ...l, sh: c.sh, px: c.px } : l; });
+  return { ok: true, changes: out, before, after: holdingOf(next).sh };
+}
+/** 今天是不是某個計畫的扣款日（提醒用：週末順延；平日放假要等官方資料才知道，自動入帳會照實際交易日處理） */
+export function dcaDueToday(plan, td) {
+  const days = planDays(plan);
+  if (!days.length || !isWeekday(td)) return false;
+  if (plan.start && td < plan.start) return false;
   const y = Math.floor(td / 10000), m = Math.floor(td / 100) % 100;
-  return dcaDate(y, m, day) === td || dcaDate(m === 1 ? y - 1 : y, m === 1 ? 12 : m - 1, day) === td;
+  for (const [yy, mm] of [[y, m], [m === 1 ? y - 1 : y, m === 1 ? 12 : m - 1]]) {
+    for (const day of days) {
+      if (day > daysIn(yy, mm)) continue;
+      let d = yy * 10000 + mm * 100 + day;
+      if (plan.end && d > plan.end) continue;
+      if (plan.start && d < plan.start) continue;
+      for (let k = 0; k < 3 && !isWeekday(d); k++) d = addDays(d, 1);
+      if (d === td) return true;
+    }
+  }
+  return false;
 }

@@ -2,7 +2,7 @@
 const BUILD = '__BUILD__';
 const SHELL = `coldeye-shell-${BUILD}`;
 const DATA = 'coldeye-data';
-const SHELL_FILES = ['./', 'index.html', 'styles.css', 'app.js', 'core.js', 'pf.js', 'calc.js', 'viz.js', 'learn.js', 'tools.js', 'sheet.js', 'forms.js', 'aide.js', 'desk.js', 'fx.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
+const SHELL_FILES = ['./', 'index.html', 'styles.css', 'app.js', 'core.js', 'pf.js', 'calc.js', 'viz.js', 'learn.js', 'tools.js', 'sheet.js', 'forms.js', 'aide.js', 'desk.js', 'fx.js', 'dca.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
