@@ -166,7 +166,7 @@ export async function refreshEvals() {
     const due = journal.items.filter((e) => {
       if ((e.res && (e.res.state === 'done' || e.res.state === 'na')) || !e.snap || !A.isLocked(e)) return false;
       const L = A.lockDay(e);
-      return L && L <= asof && (!e.anchor || A.weekdaysBetween(L, td) >= A.HORIZON);
+      return L && L <= asof && (!e.anchor || (e.c2 && !e.anchor.px2) || A.weekdaysBetween(L, td) >= A.HORIZON);
     });
     if (!due.length) return;
     const codes = [...new Set(due.flatMap((e) => [e.c, e.c2].filter(Boolean)))];
@@ -188,6 +188,7 @@ export async function refreshEvals() {
       const r = A.evalEntry(e, h, e.c2 ? hs[e.c2] : null);
       // 起點（定案那天的收盤）出來了就先存著：還沒到期時的「到目前為止」從這裡算
       if (r.d0 && !e.anchor) { e.anchor = { d: r.d0, px: r.px0, ...(r.px02 ? { px2: r.px02 } : {}) }; changed = true; }
+      else if (e.anchor && e.c2 && !e.anchor.px2 && r.px02) { e.anchor.px2 = r.px02; changed = true; }   // 冷門的換入那檔晚幾天才成交
       if (r.state === 'done') {
         // 同類基準（track.json）沒載入就先不定案：結果一存就不再變，沒有基準的話這筆會永遠無法和「任何一天」並列
         if (!(S.track && S.track.by_cat)) continue;
@@ -221,26 +222,27 @@ function progressOf(e) {
   const L = A.lockDay(e) || e.snap.d;
   const locked = A.isLocked(e);
   const n = locked ? clamp(A.weekdaysBetween(L, td), 0, A.HORIZON) : 0;
-  const base = locked && e.anchor ? { d: e.anchor.d, px: e.anchor.px } : e.snap;
-  const base2 = locked && e.anchor && e.anchor.px2 ? { d: e.anchor.d, px: e.anchor.px2 } : e.snap2;
+  const fromAnchor = !!(locked && e.anchor && (!e.c2 || e.anchor.px2));   // 換股兩檔的起點都有了才從定案日算
+  const base = fromAnchor ? { d: e.anchor.d, px: e.anchor.px } : e.snap;
+  const base2 = fromAnchor && e.c2 ? { d: e.anchor.d, px: e.anchor.px2 } : e.snap2;
   const r1 = S.rows.get(e.c);
   const dv = (c) => (S.divs && S.divs[c]) || { d: [], s: [] };
   let ret = null, ret2 = null;
   if (r1) { const q = quote(r1); ret = A.interimRet(base, q.px, q.date || td, dv(e.c).d, dv(e.c).s); }
   if (e.c2 && base2) { const r2 = S.rows.get(e.c2); if (r2) { const q2 = quote(r2); ret2 = A.interimRet(base2, q2.px, q2.date || td, dv(e.c2).d, dv(e.c2).s); } }
-  return { n, ret, ret2, locked, lock: L, fromAnchor: !!(locked && e.anchor), due: A.addWeekdays(L, A.HORIZON) };
+  return { n, ret, ret2, locked, lock: L, fromAnchor, due: A.addWeekdays(L, A.HORIZON) };
 }
-// 定案（記下之後的下一次開盤，A.lockAt）以前：可以刪除、跟著交易修改、冷靜後改變主意、貼回結論；之後就不能改
+// 定案（記下之後的下一個交易日 13:25，A.lockAt）以前：可以刪除、跟著交易修改、冷靜後改變主意、貼回結論；之後就不能改
 const decOpen = (e) => !A.isLocked(e);
 const pasteOpen = decOpen;
 const coolOpen = (e) => !!(e.cool && !e.cool.res && decOpen(e));
-const coolDue = (e) => coolOpen(e) && today() >= e.cool.due;     // 定案那天的早上：提醒你開盤前再確認
+const coolDue = (e) => coolOpen(e) && today() >= e.cool.due;     // 定案那天：提醒你 13:25 定案前再確認
 const coolLapsed = (e) => !!(e.cool && !e.cool.res && !decOpen(e));
-/** 定案的時間，寫給人看：「今天 9:00」「10/23（五）9:00」 */
+/** 定案的時間，寫給人看：「今天 13:25」「10/23 13:25」 */
 function lockText(e) {
   return dayText(A.lockDay(e));
 }
-const dayText = (d) => (d ? `${d === today() ? '今天' : fmt.d(d)} 9:00` : '');
+const dayText = (d) => (d ? `${d === today() ? '今天' : fmt.d(d)} 13:25` : '');
 const matured = (e) => e.res && e.res.state === 'done' && !e.seen;
 const awaitingPaste = (e) => e.asked && !e.after && !(e.res && e.res.state === 'done') && pasteOpen(e);
 /** 需要 PZ 處理的：冷靜期到了、對完答案還沒看 */
@@ -280,6 +282,7 @@ function statusHTML(e) {
   const p = progressOf(e);
   const r = e.c2 && isNum(p.ret2) && isNum(p.ret) ? p.ret2 - p.ret : p.ret;
   if (!p.locked) return `<span class="lab2"><b class="muted">定案前</b></span><small class="num"><span class="muted">${esc(lockText(e))}</span></small>`;
+  if (!p.fromAnchor) return `<span class="lab2"><b class="muted">已定案</b></span><small class="num"><span class="muted">${fmt.d(p.lock)} 收盤起算</span></small>`;
   return `<span class="jr-prog" role="img" aria-label="大約第 ${p.n} 個交易日"><i style="width:${(p.n / A.HORIZON * 100).toFixed(0)}%"></i></span><small class="num"><span class="muted">${p.n}/${A.HORIZON}</span> <span class="${dirCls(r)}">${pctS(r)}</span></small>`;
 }
 function rowHTML(e) {
@@ -341,7 +344,7 @@ function heroHTML() {
 }
 function pendingHTML(p) {
   const rows = [];
-  for (const e of p.cool) rows.push({ e, chip: '<span class="chip act alert">冷靜期到了</span>', t: `你想「${A.STANCE[e.stance].t}」${esc(nameOf(e.c))}${e.c2 ? ` → ${esc(nameOf(e.c2))}` : ''}。冷靜之後，還是這麼想嗎？（${lockText(e)} 開盤前回覆）` });
+  for (const e of p.cool) rows.push({ e, chip: '<span class="chip act alert">冷靜期到了</span>', t: `你想「${A.STANCE[e.stance].t}」${esc(nameOf(e.c))}${e.c2 ? ` → ${esc(nameOf(e.c2))}` : ''}。冷靜之後，還是這麼想嗎？（${lockText(e)} 定案前回覆）` });
   for (const e of p.done) {
     const st = A.finalStance(e);
     const z = A.scoreOf(e);
@@ -524,7 +527,7 @@ function bindPick(root, id, onPick) {
 }
 /**
  * 記下想法。o：{ code, code2, stance }
- * 流程：選 ETF、立場、信心、理由、寫想法 → 副官檢查（逐條鎖定的動畫）→ 記進日記／冷靜一下（開盤前再確認）／帶去問 Claude
+ * 流程：選 ETF、立場、信心、理由、寫想法 → 副官檢查（逐條鎖定的動畫）→ 記進日記／冷靜一下（定案前再確認）／帶去問 Claude
  */
 export function openIdea(o = {}) {
   if (!S.summary) return;
@@ -578,7 +581,7 @@ export function openIdea(o = {}) {
       $('#i-check', act).addEventListener('click', () => runCheck(true));
     } else {
       const cool = checked.cool;
-      act.innerHTML = `<button type="button" class="btn ghost" id="i-ask">${ICON.comms}帶去問 Claude</button>${cool ? `<button type="button" class="btn" id="i-cool">${A.coolDue() === today() ? '冷靜一下' : '冷靜一晚'}再決定</button>` : '<button type="button" class="btn ghost" id="i-cool">開盤前再確認</button>'}<button type="button" class="btn primary" id="i-save">記進決策日記</button>`;
+      act.innerHTML = `<button type="button" class="btn ghost" id="i-ask">${ICON.comms}帶去問 Claude</button>${cool ? `<button type="button" class="btn" id="i-cool">${A.coolDue() === today() ? '冷靜一下' : '冷靜一晚'}再決定</button>` : '<button type="button" class="btn ghost" id="i-cool">定案前再確認</button>'}<button type="button" class="btn primary" id="i-save">記進決策日記</button>`;
       $('#i-save', act).addEventListener('click', () => save(false));
       $('#i-cool', act).addEventListener('click', () => save(true));
       $('#i-ask', act).addEventListener('click', () => { const e = save(false, true); if (e) { FX.cue('lock'); openAsk('idea', { id: e.id, saved: true }); } });
@@ -602,7 +605,7 @@ export function openIdea(o = {}) {
     const tone = ck.stop ? 'stop' : ck.warn >= A.AIDE.warnCool ? 'warn' : ck.warn ? 'mid' : 'ok';
     out.innerHTML = `<div class="ck-head tone-${tone}"><span class="ck-core">${coreSVG(anim ? 'think' : 'idle')}</span><div><span class="ck-k">副官檢查</span><b class="ck-v">${esc(ck.verdict)}</b><span class="ck-n num">✓ ${ck.ok}　⚠ ${ck.warn}${ck.stop ? `　⛔ ${ck.stop}` : ''}</span></div></div>
       ${checksListHTML(ck.items, anim)}
-      ${ck.cool ? `<div class="cool-box">${ICON.clock}<span><b>建議${A.coolDue() === today() ? '冷靜一下' : '冷靜一晚'}</b>（${esc(ck.coolWhy.join('、'))}）。按「${A.coolDue() === today() ? '冷靜一下' : '冷靜一晚'}再決定」，副官會在${dayText(A.coolDue())} 開盤前再問你一次：還是這麼想嗎？</span></div>` : ''}
+      ${ck.cool ? `<div class="cool-box">${ICON.clock}<span><b>建議${A.coolDue() === today() ? '冷靜一下' : '冷靜一晚'}</b>（${esc(ck.coolWhy.join('、'))}）。按「${A.coolDue() === today() ? '冷靜一下' : '冷靜一晚'}再決定」，副官會在${dayText(A.coolDue())} 定案前再問你一次：還是這麼想嗎？</span></div>` : ''}
       <p class="small muted ck-foot">副官只做固定規則的檢查，不替你決定；檢查的規則在設定頁「副官怎麼檢查」。</p>`;
     if (anim && FX.fxOn()) {
       const lis = $$('.ck-list li', out);
@@ -645,8 +648,8 @@ export function openIdea(o = {}) {
     if (!quiet) {
       closeModal();
       FX.cue('lock');
-      FX.stamp(cool ? '冷靜一下' : '已記錄', cool ? 'glacier' : 'aurora', cool ? `${lockText(e)} 開盤前再確認` : `${lockText(e)} 定案`);
-      toast(cool ? `已放進冷靜期，${lockText(e)} 開盤前再問你一次` : `已記進決策日記：${lockText(e)} 開盤時定案，之後第 ${A.HORIZON} 個交易日自動對答案`, null);
+      FX.stamp(cool ? '冷靜一下' : '已記錄', cool ? 'glacier' : 'aurora', cool ? `${lockText(e)} 定案前再確認` : `${lockText(e)} 定案`);
+      toast(cool ? `已放進冷靜期，${lockText(e)} 定案前再問你一次` : `已記進決策日記：${lockText(e)} 定案，從那天收盤起算第 ${A.HORIZON} 個交易日自動對答案`, null);
     }
     return e;
   }
@@ -674,9 +677,9 @@ export function openIdea(o = {}) {
   if (!f.code && f.stance !== 'swap') setTimeout(() => { const i = $('#ip-a', card); if (i && f.stance) i.focus({ preventScroll: true }); }, 80);
 }
 
-// ================================================================== 冷靜期：開盤前（定案前）再確認
+// ================================================================== 冷靜期：定案前再確認
 function coolAnswer(e, res) {
-  if (!coolOpen(e)) { toast('已經開盤定案了，照原本的想法對答案'); return; }
+  if (!coolOpen(e)) { toast('已經定案了，照原本的想法對答案'); return; }
   e.cool.res = res;
   e.cool.at = new Date().toISOString();
   updEntry(e);
@@ -721,19 +724,23 @@ export function openEntry(id) {
     const p = progressOf(e);
     const r = e.c2 && isNum(p.ret2) && isNum(p.ret) ? p.ret2 - p.ret : p.ret;
     const detail = e.c2 ? `（${esc(name2)} ${pctS(p.ret2, 2)} − ${esc(name)} ${pctS(p.ret, 2)}）` : '（含息）';
-    outcome = p.locked
+    outcome = p.locked && !p.fromAnchor
+      ? `<div class="oc wait"><div class="oc-k">已經定案・從 ${fmt.d(p.lock)} 的收盤開始算 ${A.HORIZON} 個交易日</div>
+      <div class="oc-s">那天的收盤資料進來以後，這裡會開始顯示「從定案那天收盤到現在」的報酬。</div>
+      <div class="oc-s">記下後到現在 <b class="num ${dirCls(r)}">${pctS(r, 2)}</b>${e.c2 ? `${detail}，只是參考、不計分` : '（含息，只是參考、不計分）'}</div></div>`
+      : p.locked
       ? `<div class="oc wait"><div class="oc-k">等待對答案・大約第 ${p.n}／${A.HORIZON} 個交易日・預計 ${fmt.d(p.due)} 左右</div>
       <div class="jr-prog big"><i style="width:${(p.n / A.HORIZON * 100).toFixed(0)}%"></i></div>
       <div class="oc-s">${p.fromAnchor ? `從定案那天（${fmt.d(e.anchor.d)}）收盤到現在` : '到目前為止'} <b class="num ${dirCls(r)}">${pctS(r, 2)}</b>${detail}</div></div>`
-      : `<div class="oc wait"><div class="oc-k">還沒定案・${esc(lockText(e))} 開盤時定案</div>
+      : `<div class="oc wait"><div class="oc-k">還沒定案・${esc(lockText(e))} 定案</div>
       <div class="oc-s">定案前可以刪除（記錯了）、冷靜後改變主意、貼回和 Claude 討論後的結論。對答案從定案那天的收盤開始算 ${A.HORIZON} 個交易日，定案前的走勢不算。</div>
       <div class="oc-s">記下後到現在 <b class="num ${dirCls(r)}">${pctS(r, 2)}</b>${e.c2 ? `${detail}，只是參考、不計分` : '（含息，只是參考、不計分）'}</div></div>`;
   }
   const coolBox = !e.cool ? '' : e.cool.res
     ? `<div class="cool-box done">${ICON.clock}<span>冷靜期：${e.cool.res === 'kept' ? '冷靜之後還是這麼想' : `冷靜之後改變主意了${A.coolDropped(e) ? '，沒有照做（不算進命中率）' : ''}`}（${fmt.d(twDay(e.cool.at))}）</span></div>`
     : coolLapsed(e)
-      ? `<div class="cool-box done">${ICON.clock}<span>冷靜期過了（${lockText(e)} 開盤時已經定案），沒有回覆：照原本的想法對答案。</span></div>`
-      : `<div class="cool-box">${ICON.clock}<span><b>${coolDue(e) ? `冷靜期到了（${lockText(e)} 開盤前回覆才算數）` : `冷靜期：${lockText(e)} 開盤前再確認`}</b>　冷靜之後，還是這麼想嗎？</span><span class="row-btns"><button class="btn small" id="e-kept">還是這麼想</button><button class="btn small ghost" id="e-changed">改變主意了</button></span></div>`;
+      ? `<div class="cool-box done">${ICON.clock}<span>冷靜期過了（${lockText(e)} 已經定案），沒有回覆：照原本的想法對答案。</span></div>`
+      : `<div class="cool-box">${ICON.clock}<span><b>${coolDue(e) ? `冷靜期到了（${lockText(e)} 定案前回覆才算數）` : `冷靜期：${lockText(e)} 定案前再確認`}</b>　冷靜之後，還是這麼想嗎？</span><span class="row-btns"><button class="btn small" id="e-kept">還是這麼想</button><button class="btn small ghost" id="e-changed">改變主意了</button></span></div>`;
   const ck = e.checks;
   const after = e.after;
   const exits = after && after.exit ? A.parseExit(after.exit, row ? quote(row).px : e.snap.px) : [];
@@ -759,10 +766,10 @@ export function openEntry(id) {
       ${ck ? `<details class="en-ck"><summary>${ICON.aide}副官當時說：${esc(ck.verdict)}<small class="num">✓ ${ck.ok}　⚠ ${ck.warn}${ck.stop ? `　⛔ ${ck.stop}` : ''}</small></summary>${checksListHTML(ck.items || [])}</details>` : ''}
       <div class="en-sec"><div class="en-st">${ICON.comms}和 Claude 討論後的結論</div>
         ${after ? `<div class="after">${after.stance ? `<div><span>立場</span><b>${A.STANCE[after.stance] ? A.STANCE[after.stance].t : '—'}</b></div>` : ''}${after.conf ? `<div><span>信心</span><b>${after.conf}／5</b></div>` : ''}${after.why ? `<div><span>理由</span><p>${esc(after.why)}</p></div>` : ''}${after.risk ? `<div><span>風險</span><p>${esc(after.risk)}</p></div>` : ''}${after.exit ? `<div><span>復盤條件</span><p>${esc(after.exit)}</p></div>` : ''}</div>
-          ${after.stance && !A.afterCounts(e) ? `<p class="small muted late-note">這份結論是定案（${lockText(e)} 開盤）之後才貼回來的，只記錄下來，不改變對答案的立場——避免看到走勢才改。</p>` : ''}
+          ${after.stance && !A.afterCounts(e) ? `<p class="small muted late-note">這份結論是定案（${lockText(e)}）之後才貼回來的，只記錄下來，不改變對答案的立場——避免看到走勢才改。</p>` : ''}
           ${exits.length ? `<div class="quick">${exits.map((x, k) => `<button type="button" class="pill" data-alert="${k}">${ICON.bell}設到價提醒：${x.op === 'le' ? '跌到' : '漲到'} ${fmt.px(x.px)}</button>`).join('')}</div>` : ''}
           ${A.afterCounts(e) && !pasteOpen(e) ? '' : '<button type="button" class="link small" id="e-repaste">重新貼上</button>'}`
-    : `<p class="small muted">在 Claude 討論完，請它給你【冷眼結論】，整段貼到這裡。副官會認出立場、信心、理由、風險與復盤條件；復盤條件裡的價位可以一鍵設成到價提醒。${pasteOpen(e) ? `${lockText(e)} 開盤前貼回，討論後的立場才算進對答案。` : `已經定案（${lockText(e)} 開盤），現在才貼的結論只記錄，不改變對答案的立場。`}</p>`}
+    : `<p class="small muted">在 Claude 討論完，請它給你【冷眼結論】，整段貼到這裡。副官會認出立場、信心、理由、風險與復盤條件；復盤條件裡的價位可以一鍵設成到價提醒。${pasteOpen(e) ? `${lockText(e)} 定案前貼回，討論後的立場才算進對答案。` : `已經定案（${lockText(e)}），現在才貼的結論只記錄，不改變對答案的立場。`}</p>`}
         <div id="e-paste"${after ? ' hidden' : ''}><textarea class="input area" id="e-concl" rows="4" placeholder="貼上【冷眼結論】……"></textarea>
           <div class="seg mini" id="e-pst" hidden>${Object.entries(A.STANCE).map(([k, s]) => `<button type="button" data-pst="${k}">${s.t}</button>`).join('')}</div>
           <div class="f-err" id="e-err" role="alert"></div>
@@ -774,7 +781,7 @@ export function openEntry(id) {
         <button type="button" class="btn ghost" id="e-ask">${ICON.comms}${done ? '帶去復盤' : '帶去問 Claude'}</button>
         <button type="button" class="btn primary" data-close>完成</button>
       </div>
-      ${done ? '<p class="small muted">已經對完答案的紀錄不能刪除：戰績要誠實，錯的也要留著。</p>' : !decOpen(e) ? `<p class="small muted">已經定案（${lockText(e)} 開盤），不能刪除：戰績要誠實，錯的也要留著。</p>` : `<p class="small muted">${lockText(e)} 開盤時定案；在那之前記錯了可以刪除${e.src === 'trade' ? '（刪除紀錄不會刪掉交易本身）' : ''}。</p>`}
+      ${done ? '<p class="small muted">已經對完答案的紀錄不能刪除：戰績要誠實，錯的也要留著。</p>' : !decOpen(e) ? `<p class="small muted">已經定案（${lockText(e)}），不能刪除：戰績要誠實，錯的也要留著。</p>` : `<p class="small muted">${lockText(e)} 定案；在那之前記錯了可以刪除${e.src === 'trade' ? '（刪除紀錄不會刪掉交易本身）' : ''}。</p>`}
     </div>`, {
     label: '決策紀錄',
     onClose: () => saveNote(),
@@ -805,6 +812,8 @@ export function openEntry(id) {
       FX.sfx('warn');
       return;
     }
+    // 已經定案、而且原本的結論算數：不能換掉（不然定案後貼一份新的，就能把算數的立場拿掉）
+    if (A.afterCounts(e) && !decOpen(e)) { er.textContent = '已經定案了，討論後的結論不能再換掉。可以把新的想法寫在復盤筆記。'; FX.sfx('err'); return; }
     e.after = { ...r, stance: r.stance || pendingStance, at: new Date().toISOString() };
     delete e.after.stanceRaw;
     updEntry(e);
@@ -833,6 +842,9 @@ export function openEntry(id) {
   const del = $('#e-del', card);
   if (del) del.addEventListener('click', (ev) => {
     const b = ev.currentTarget;
+    // 視窗可能開著跨過定案時間：按下去的當下再確認一次
+    const cur = byId(e.id);
+    if (!cur || !decOpen(cur) || (cur.res && cur.res.state === 'done')) { toast('已經定案了，不能刪除：戰績要誠實，錯的也要留著'); FX.sfx('err'); reopen(); return; }
     if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = '確定刪除？'; FX.sfx('warn'); return; }
     const k = journal.items.findIndex((x) => x.id === e.id);
     if (k >= 0) journal.items.splice(k, 1);
@@ -927,7 +939,7 @@ export function openAsk(kind, o = {}) {
   const card = openModal(`<div class="form ask">
       <div class="ask-h"><span class="ask-ic">${ICON.comms}</span><div><h2 class="m-title">${titles[kind] || '帶去問 Claude'}</h2>
         <p class="m-desc">冷眼把官方資料、規則判讀${kind === 'idea' ? '、你的想法和副官的檢查' : ''}整理成一段文字。按「分享」選 Claude App，或「複製」後到 Claude 貼上。資料只有在你按下去的時候才會離開這支手機。</p></div></div>
-      ${o.saved ? `<div class="saved-note">${ICON.ok}<span>這個想法已經記進決策日記：${e ? lockText(e) : ''} 開盤時定案，之後第 ${A.HORIZON} 個交易日自動對答案；在那之前討論完貼回的結論才算數。</span></div>` : ''}
+      ${o.saved ? `<div class="saved-note">${ICON.ok}<span>這個想法已經記進決策日記：${e ? lockText(e) : ''} 定案，從那天收盤起算第 ${A.HORIZON} 個交易日自動對答案；在那之前討論完貼回的結論才算數。</span></div>` : ''}
       <label class="field"><span class="lab">我想問（選填，會放在最後面）</span><textarea class="input area" id="k-q" rows="2" maxlength="400" placeholder="${esc(ph[kind] || '')}">${esc(st.q)}</textarea></label>
       <div class="ask-opts">
         ${hasHold ? `<button type="button" class="switch-row" id="k-amt" aria-pressed="${st.amt}"><span class="switch" role="switch" aria-checked="${st.amt}"></span><span>附上金額、股數與成本<small>（關掉時只寫比例）</small></span></button>` : ''}

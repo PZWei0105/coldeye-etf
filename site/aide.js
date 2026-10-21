@@ -21,11 +21,12 @@ export const AIDE = {
   cashHigh: 0.5,     // 觀望時現金超過總資產 50%
   smallPos: 0.02,    // 巡檢：單檔不到總資產 2% 算零碎部位
   manyPos: 10,       // 巡檢：持有超過 10 檔
-  warnCool: 3,       // 有 3 個以上要注意的地方，建議冷靜一下（開盤定案前再確認）
+  warnCool: 3,       // 有 3 個以上要注意的地方，建議冷靜一下（定案前再確認）
   confHigh: 4,       // 信心 4 以上、又和規則相反，建議冷靜一下
   minN: 20,          // 對答案累積 20 筆以上，戰績才有參考價值
   naDays: 60,        // 下市的 ETF：定案後超過 60 天還對不到答案，就標示無法對答案（還在交易的冷門 ETF 會一直等）
-  lockHM: 900,       // 定案時間：記下之後的下一次開盤（星期一到五 09:00，台灣時間）
+  openHM: 900,       // 開盤 09:00：在這之前記的，算當天那一盤；之後記的，算下一個交易日那一盤
+  lockHM: 1325,      // 定案 13:25（收盤前、集合競價開始）：從那天的收盤開始對答案，所以那天盤中看到的走勢都已經算在起點裡
 };
 export const STANCE = {
   bull: { t: '想買／加碼', s: '看多' },
@@ -86,21 +87,24 @@ export function addWeekdays(d, n) {
   }
   return x;
 }
-// ------------------------------------------------------------------ 定案：記下之後的下一次開盤
+// ------------------------------------------------------------------ 定案：記下之後的下一個交易日 13:25
 const twClock = (ms) => { const d = new Date(ms + 8 * 3600e3); return { d: d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate(), hm: d.getUTCHours() * 100 + d.getUTCMinutes(), wd: d.getUTCDay() }; };
 /**
- * 一筆決定在「記下之後的下一次開盤」定案（星期一到五 09:00，台灣時間）：開盤前記的（例如早上 8 點）是當天 9 點，
- * 盤中、收盤後、週末記的是下一個星期一到五的 9 點。定案前可以刪除、冷靜後改變主意、貼回和 Claude 討論後的結論；定案後就不能改。
+ * 一筆決定在「記下之後的下一個交易日、收盤前 13:25」定案（台灣時間）：開盤前（09:00 以前）記的是當天，
+ * 盤中、收盤後、週末記的是下一個星期一到五。定案前可以刪除、冷靜後改變主意、貼回和 Claude 討論後的結論；定案後就不能改。
  * 對答案從「定案那天的收盤價」開始算（那天沒開市就是之後第一個交易日），所以定案前看到的任何走勢
- * （盤中剩下的、晚上的國際行情）都已經算在起點裡，改主意也佔不到便宜。平日放假那天照樣在 9 點定案，只是少一點修改時間。
+ * （記下那天剩下的盤、晚上的國際行情、定案那天的盤中）都已經算在起點裡，改主意也佔不到便宜
+ * （用真實歷史資料量過：只在走勢對自己有利時才留下，命中率只會多 1 個百分點左右）。
+ * 平日放假那天照樣在 13:25 定案，從之後第一個交易日的收盤起算。
  */
 export function lockDayAt(ms) {
   if (!isFinite(ms)) return null;
   const c = twClock(ms);
-  return c.wd >= 1 && c.wd <= 5 && c.hm < AIDE.lockHM ? c.d : addWeekdays(c.d, 1);
+  return c.wd >= 1 && c.wd <= 5 && c.hm < AIDE.openHM ? c.d : addWeekdays(c.d, 1);
 }
-export const lockDay = (e) => (e ? lockDayAt(Date.parse(e.at || '')) : null);
-/** 定案的時刻（毫秒）：定案那天 09:00 台灣時間 */
+/** 記下的時間壞掉（不該發生，只有手機資料損壞）：用價格日期的下一個交易日，至少還能對答案 */
+export const lockDay = (e) => (e ? lockDayAt(Date.parse(e.at || '')) || (e.snap && e.snap.d ? addWeekdays(e.snap.d, 1) : null) : null);
+/** 定案的時刻（毫秒）：定案那天 13:25 台灣時間 */
 export function lockAt(e) {
   const d = lockDay(e);
   return d ? Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100, Math.floor(AIDE.lockHM / 100) - 8, AIDE.lockHM % 100) : 0;
@@ -108,7 +112,7 @@ export function lockAt(e) {
 export const isLocked = (e, now = Date.now()) => !lockAt(e) || now >= lockAt(e);
 /** 這個時間點在定案以前嗎（貼回結論、冷靜期回覆要在定案前才算數） */
 const beforeLock = (e, iso) => { const t = Date.parse(iso || ''); return isFinite(t) && t < lockAt(e); };
-/** 冷靜期：定案前（下一次開盤前）再確認一次；回傳那天的日期 */
+/** 冷靜期：定案前（下一個交易日 13:25 前）再確認一次；回傳那天的日期 */
 export const coolDue = (ms = Date.now()) => lockDayAt(ms);
 
 // ------------------------------------------------------------------ 反方檢查（固定規則）
@@ -209,7 +213,7 @@ function marketCheck(m) {
 function emoCheck(tags) {
   const emo = (tags || []).filter((t) => EMO_TAGS.includes(t));
   if (!emo.length) return null;
-  return warn('emo', `你的理由裡有「${emo.map((t) => TAGS[t]).join('、')}」：這類理由最容易事後後悔，建議冷靜一下、開盤前再決定。`);
+  return warn('emo', `你的理由裡有「${emo.map((t) => TAGS[t]).join('、')}」：這類理由最容易事後後悔，建議冷靜一下、定案前再確認一次。`);
 }
 
 /**
@@ -425,7 +429,8 @@ export function evalEntry(e, h, h2 = null) {
   const k0 = firstIdx(D, L);
   if (k0 < 0) return { state: 'wait', n: 0 };           // 定案那天的收盤還沒進歷史資料
   const a = { d0: D[k0], px0: h.p[k0] };
-  if (h2 && h2.d && h2.d.length) { const j = lastIdx(h2.d, D[k0]); if (j >= 0) a.px02 = h2.p[j]; }
+  // 換過去那檔：從起點那天（或之後第一個有成交的日子）的收盤算，和換出的那檔一樣不吃定案前的走勢
+  if (h2 && h2.d && h2.d.length) { const j = firstIdx(h2.d, D[k0]); if (j >= 0) a.px02 = h2.p[j]; }
   const n = D.length - 1 - k0;
   if (n < HORIZON) return { state: 'wait', n, ...a };
   const kT = k0 + HORIZON;
@@ -433,9 +438,10 @@ export function evalEntry(e, h, h2 = null) {
   const out = { state: 'done', ...a, d: D[kT], px: h.p[kT], ret: tr[kT] / tr[k0] - 1 };
   if (e.stance === 'swap' || e.c2) {
     if (!h2 || !h2.d || !h2.d.length) return { state: 'na', why: '換過去的那檔缺少價格' };
-    const j0 = lastIdx(h2.d, D[k0]);
+    const j0 = firstIdx(h2.d, D[k0]);
+    if (j0 < 0) return { state: 'wait', n, ...a };                       // 換過去那檔從起點之後還沒成交過
     const jT = lastIdx(h2.d, D[kT]);
-    if (j0 < 0 || jT < j0) return { state: 'na', why: '換過去的那檔在定案那天還沒有價格' };
+    if (jT < j0) return { state: 'na', why: '換過去的那檔在這 20 個交易日裡沒有成交，沒辦法比較' };
     const tr2 = trIndex(h2);
     out.ret2 = tr2[jT] / tr2[j0] - 1;
   }
@@ -471,7 +477,7 @@ export function pairBase(hA, hB, horizon = HORIZON) {
   return n >= 60 ? { up: win / n, avg: sum / n, n } : null;
 }
 
-/** 貼回的【冷眼結論】算不算數：定案（下一次開盤）以前貼回的才算 */
+/** 貼回的【冷眼結論】算不算數：定案（下一個交易日 13:25）以前貼回的才算 */
 export const afterCounts = (e) => !!(e.after && e.after.stance && beforeLock(e, e.after.at));
 /** 冷靜後改變主意：定案以前回覆的才算 */
 export const coolDropped = (e) => !!(e.cool && e.cool.res === 'changed' && beforeLock(e, e.cool.at));
@@ -850,7 +856,8 @@ export function packReview(p) {
   const e = p.entry;
   const L = [askHeader('review', p.short), ''];
   const st = finalStance(e);
-  L.push(SEP(`我的決定（${dy(e.snap && e.snap.d)}）`));
+  const rec = Date.parse(e.at || '');
+  L.push(SEP(`我的決定（${dy(isFinite(rec) ? twClock(rec).d : e.snap && e.snap.d)}）`));
   L.push(`ETF：${p.name}${e.c2 ? ` → ${p.name2}` : ''}｜${e.src === 'trade' ? `實際${e.book === 'paper' ? '模擬' : ''}交易` : '想法'}｜立場：${STANCE[e.stance] ? STANCE[e.stance].t : '—'}${e.after && e.after.stance && finalStance(e) !== e.stance ? `（和 Claude 討論後改成：${STANCE[st].t}）` : ''}`);
   L.push(`當時價格 ${pxS(e.snap.px)}${e.snap2 ? `／${pxS(e.snap2.px)}` : ''}｜當時冷眼規則：${e.snap.st == null ? '資料不足' : `${ST_T[String(e.snap.st)]}／${PS_T[e.snap.ps] || '—'}`}`);
   if (e.conf) L.push(`信心：${e.conf}／5（${CONF[e.conf]}）`);
@@ -871,7 +878,9 @@ export function packReview(p) {
     } else if (z.why === 'nobase') L.push('這筆沒有同類 ETF 的基準可以比，不算對錯。');
     else L.push('這筆是觀望（或不是在猜漲跌），不算對錯。');
   } else if (p.now) {
-    L.push(p.now.locked ? `還沒到 ${HORIZON} 個交易日（大約第 ${p.now.n} 天），到目前為止含息報酬 ${pctS(p.now.ret)}` : `還沒定案（${dy(p.now.lock)} 9:00 開盤時定案），記下後到現在 ${pctS(p.now.ret)}`);
+    L.push(!p.now.locked ? `還沒定案（${dy(p.now.lock)} 13:25 定案），記下後到現在 ${pctS(p.now.ret)}（還沒開始計分）`
+      : p.now.fromAnchor ? `還沒到 ${HORIZON} 個交易日（大約第 ${p.now.n} 天），從定案那天收盤到現在含息報酬 ${pctS(p.now.ret)}`
+        : `已經定案，從 ${dy(p.now.lock)} 的收盤開始計分（收盤資料還沒進來）`);
   }
   if (e.note) L.push(`我的復盤筆記：「${e.note}」`);
   if (p.question) L.push('', SEP('我想問'), p.question);
@@ -971,9 +980,9 @@ export function aideRulesHTML() {
     <p><b>想買／加碼</b>依序看：注意／處置（交易受限）、冷眼規則和你同方向或相反、這個部位訊號的回測（和同類任何一天比）、短線漲多、今天已漲 ${AIDE.bigMove}% 以上、折溢價、是否跌破移動防守線、${AIDE.divSoon} 天內除息、依你的紀律最多買多少、帳面虧損又偏空時往下買（攤平）、成交值低於 ${bigS(AIDE.thinVal)}元、規模在全部 ETF 最小的 ${pctU(AIDE.smallAum)}、槓桿與反向型。</p>
     <p><b>想賣／減碼</b>另外看：今天跌 ${AIDE.bigMove}% 以上（恐慌賣出）、全部賣出的手續費與證交稅、帳面損益（成本不影響之後的漲跌）、除息前賣出領不到配息、債券 ETF 免證交稅期限。</p>
     <p><b>想換股</b>看兩檔的規則觀點、近一年報酬與波動、換過去那檔近一年多賺 ${pctU(AIDE.chase)} 以上時提醒「追逐過去的報酬」、類別不同、換股的來回成本。</p>
-    <p><b>都會看</b>大盤單日漲跌 ${AIDE.bigMarket}% 以上、理由裡有「${EMO_TAGS.map((t) => TAGS[t]).join('、')}」、信心 ${AIDE.confHigh} 以上卻和規則相反。符合任何一項、或要注意的地方有 ${AIDE.warnCool} 個以上，副官會建議<b>冷靜一下</b>：先記下來，下一次開盤前（定案前）再確認一次。</p>
-    <p><b>什麼時候定案</b>每一筆決定在記下之後的<b>下一次開盤（星期一到五早上 9 點）</b>定案：開盤前記的是當天 9 點，盤中、收盤後、週末記的是下一個交易日的 9 點。定案前你可以刪除（記錯了）、冷靜後改變主意、或貼回和 Claude 討論後的結論；定案後就不能刪、不能改，改交易紀錄也不會改到它。</p>
-    <p><b>對答案</b>從<b>定案那天的收盤價</b>開始算，到第 ${HORIZON} 個交易日（約一個月，和規則同一個尺度）的含息報酬：看多＞0、看空＜0、換股是換入的贏過換出的才算對；觀望不算對錯。因為起點在定案之後，定案前看到的任何走勢（盤中剩下的、晚上的國際行情）都已經算在起點裡，改主意也佔不到便宜。理由是「${NONVIEW_TAGS.map((t) => TAGS[t]).join('、')}」的決定不是在猜漲跌，照樣對答案、但不算進命中率；冷靜後改變主意、沒有照做的也不算，另外統計「如果照做會不會對」。</p>
+    <p><b>都會看</b>大盤單日漲跌 ${AIDE.bigMarket}% 以上、理由裡有「${EMO_TAGS.map((t) => TAGS[t]).join('、')}」、信心 ${AIDE.confHigh} 以上卻和規則相反。符合任何一項、或要注意的地方有 ${AIDE.warnCool} 個以上，副官會建議<b>冷靜一下</b>：先記下來，定案（下一個交易日 13:25）前再確認一次。</p>
+    <p><b>什麼時候定案</b>每一筆決定在記下之後的<b>下一個交易日收盤前（13:25）</b>定案：早上 9 點開盤前記的是當天 13:25，盤中、收盤後、週末記的是下一個星期一到五的 13:25。定案前你可以刪除（記錯了）、冷靜後改變主意、或貼回和 Claude 討論後的結論；定案後就不能刪、不能改，改交易紀錄也不會改到它。</p>
+    <p><b>對答案</b>從<b>定案那天的收盤價</b>開始算，到第 ${HORIZON} 個交易日（約一個月，和規則同一個尺度）的含息報酬：看多＞0、看空＜0、換股是換入的贏過換出的才算對；觀望不算對錯。因為起點是定案那天的收盤，定案前看到的任何走勢（記下那天剩下的盤、晚上的國際行情、定案那天的盤中）都已經算在起點裡，改主意也佔不到便宜。理由是「${NONVIEW_TAGS.map((t) => TAGS[t]).join('、')}」的決定不是在猜漲跌，照樣對答案、但不算進命中率；冷靜後改變主意、沒有照做的也不算，另外統計「如果照做會不會對」。</p>
     <p><b>基準</b>你的命中率一定和「同類 ETF 任何一天照同樣方向做」並列：看多用該類 ETF 回測期間 20 日後上漲的比例、看空用下跌的比例，依你每筆決定的類別加權；換股用兩檔歷史上任何一天換過去、20 日後贏的比例。至少 ${AIDE.minN} 筆以後才有參考價值。</p>
     <p><b>部位巡檢</b>現金比例、單檔是否超過你的上限、類別組成、槓桿與反向型合計、跌破移動防守線、注意／處置、${AIDE.divSoon} 天內除息、不到總資產 ${pctU(AIDE.smallPos)} 的零碎部位、持有超過 ${AIDE.manyPos} 檔、全部跌到出場線的最壞情況。</p>`;
 }

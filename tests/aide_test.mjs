@@ -33,7 +33,7 @@ t('含息報酬指數：除息當天把配息買回、分割照倍數換算、�
 // 台灣時間 yyyymmdd hh:mm → ISO（記下的時間）
 const tw = (d, hm) => new Date(Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100, Math.floor(hm / 100) - 8, hm % 100)).toISOString();
 
-t('定案時間：記下之後的下一次開盤（星期一到五 9:00）', () => {
+t('定案時間：記下之後的下一個交易日 13:25（開盤前記的是當天）', () => {
   const L = (d, hm) => A.lockDay({ at: tw(d, hm) });
   assert.equal(L(20261022, 800), 20261022);    // 週四開盤前 → 當天 9 點
   assert.equal(L(20261022, 900), 20261023);    // 週四 9 點整（已開盤）→ 週五
@@ -42,9 +42,13 @@ t('定案時間：記下之後的下一次開盤（星期一到五 9:00）', () 
   assert.equal(L(20261024, 1000), 20261026);   // 週六 → 週一
   assert.equal(L(20261026, 830), 20261026);    // 週一開盤前 → 當天
   const e = { at: tw(20261022, 1030) };
-  assert.equal(A.isLocked(e, Date.parse(tw(20261023, 859))), false);
-  assert.equal(A.isLocked(e, Date.parse(tw(20261023, 900))), true);
+  assert.equal(A.isLocked(e, Date.parse(tw(20261023, 1324))), false);
+  assert.equal(A.isLocked(e, Date.parse(tw(20261023, 1325))), true);
+  assert.equal(A.isLocked({ at: tw(20261022, 855) }, Date.parse(tw(20261022, 1300))), false);   // 開盤前記的：當天 13:25 前都還能改
   assert.equal(A.coolDue(Date.parse(tw(20261023, 2000))), 20261026);
+  // 記下的時間壞掉（只有資料損壞才會）：用價格日期的下一個交易日，不會永遠卡住
+  assert.equal(A.lockDay({ at: 'garbage', snap: { d: 20261023, px: 1 } }), 20261026);
+  assert.equal(A.isLocked({ at: 'garbage' }), true);
 });
 
 t('對答案：從定案那天的收盤算第 20 個交易日；定案那天沒開市就從之後第一個交易日', () => {
@@ -74,13 +78,22 @@ t('對答案：起點之後的除息算進報酬；起點那天除息（收盤�
   near(onEx.ret, 0);
 });
 
-t('對答案：換股兩檔用同一個起點，冷門 ETF 當天沒成交就用之前最後一次成交', () => {
+t('對答案：換股兩檔用同一個起點；換入的冷門 ETF 起點那天沒成交，從之後第一次成交算（不吃定案前的走勢）', () => {
   const hB = { d: H.d.filter((_, k) => k !== 25), p: H.d.filter((_, k) => k !== 25).map(() => 50), splits: [], divs: [] };
-  const r = A.evalEntry({ stance: 'swap', c2: 'B', at: tw(H.d[4], 1030), snap: { d: H.d[4], px: 104 }, snap2: { d: H.d[4], px: 50 } }, H, hB);
+  const e = { stance: 'swap', c2: 'B', at: tw(H.d[4], 1030), snap: { d: H.d[4], px: 104 }, snap2: { d: H.d[4], px: 50 } };
+  const r = A.evalEntry(e, H, hB);
   assert.equal(r.state, 'done');
   near(r.ret, 125 / 105 - 1); near(r.ret2, 0);
   assert.equal(r.px02, 50);
   assert.equal(A.hitOf('swap', r), false);
+  // 換入那檔：起點前一天 40、起點那天沒成交、之後才成交 44 → 從 44 算，不是從 40
+  const ds = H.d.filter((_, k) => k !== 5);
+  const hT = { d: ds, p: ds.map((d) => (d < H.d[5] ? 40 : 44)), splits: [], divs: [] };
+  const t2 = A.evalEntry(e, H, hT);
+  assert.equal(t2.px02, 44); near(t2.ret2, 0);
+  // 換入那檔從起點之後還沒成交：先等
+  const hLate = { d: H.d.slice(0, 5), p: [40, 40, 40, 40, 40], splits: [], divs: [] };
+  assert.equal(A.evalEntry(e, H, hLate).state, 'wait');
 });
 
 t('還沒到期：用現價與除息、分割紀錄算到目前為止', () => {
@@ -99,7 +112,7 @@ t('對錯與基準：看多 > 0、看空 < 0、觀望不算；基準看多用上
 
 t('最後算分的立場：定案前貼回的結論優先；換股紀錄只認換股或觀望；定案後才貼的、沒有時間的都不算', () => {
   // 10/22（週四）盤中記下 → 10/23 9:00 定案
-  const at = tw(20261022, 1030), on = tw(20261022, 2200), late = tw(20261023, 930);
+  const at = tw(20261022, 1030), on = tw(20261023, 1300), late = tw(20261023, 1330);   // 10/23 13:25 定案
   const mk = (stance, a, t = on) => ({ stance, at, snap: { d: 20261022, px: 1 }, after: { stance: a, at: t } });
   assert.equal(A.finalStance({ stance: 'bull' }), 'bull');
   assert.equal(A.finalStance(mk('bull', 'wait')), 'wait');
@@ -109,7 +122,7 @@ t('最後算分的立場：定案前貼回的結論優先；換股紀錄只認�
   assert.equal(A.finalStance(mk('bull', 'bear', late)), 'bull');
   assert.equal(A.finalStance({ stance: 'bull', at, snap: { d: 20261022, px: 1 }, after: { stance: 'bear' } }), 'bull');
   // 冷靜期：定案（開盤）前回覆「改變主意」才算
-  assert.equal(A.coolDropped({ at, cool: { due: 20261023, res: 'changed', at: tw(20261023, 830) } }), true);
+  assert.equal(A.coolDropped({ at, cool: { due: 20261023, res: 'changed', at: tw(20261023, 1200) } }), true);
   assert.equal(A.coolDropped({ at, cool: { due: 20261023, res: 'changed', at: late } }), false);
   assert.equal(A.coolDropped({ at, cool: { due: 20261023, res: 'kept', at: on } }), false);
 });
