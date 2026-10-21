@@ -214,7 +214,8 @@ export function dividendsReceived(lots, divs, splits, today) {
     let held = 0;
     for (const l of dated) {
       if (l.d >= ex) break;
-      held += l.side === 'sell' ? -l.nsh : l.nsh;
+      // 賣出最多賣到手上有記日期的股數：多賣的是「不記得日期」的舊股，不能讓之後新買的股數變成負的
+      held = l.side === 'sell' ? Math.max(0, held - l.nsh) : held + l.nsh;
     }
     if (held <= 1e-9) continue;
     const shAtEx = held / factorAfter(ex, splits);     // 換回當時的股數基準

@@ -250,8 +250,15 @@ export function primeSpeech() {
   if (!canSpeak()) return;
   if (!voices.length) loadVoices();
   const v = pickVoice();
-  if (!v) return;
-  try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; u.lang = v.lang; u.voice = v; window.speechSynthesis.speak(u); } catch { /* 不支援 */ }
+  // 語音清單還沒載入（iPhone 常見）也要在點擊當下先「開口」一次，不然之後的晨報念不出來；念的是空白、音量 0，沒有任何內容
+  if (!v && voices.length) return;
+  try {
+    const u = new SpeechSynthesisUtterance(' ');
+    u.volume = 0;
+    u.lang = v ? v.lang : 'zh-TW';
+    if (v) u.voice = v;
+    window.speechSynthesis.speak(u);
+  } catch { /* 不支援 */ }
 }
 export function stopSpeak() {
   speakToken++;

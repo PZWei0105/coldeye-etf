@@ -1065,7 +1065,7 @@ function drawSettings() {
       <div class="srow"><div><div class="h">交易自動記進決策日記</div><div class="d">在冷眼記今天的交易（含模擬倉）時，副官自動記下這個決定，20 個交易日後對答案</div></div><button class="switch" role="switch" id="s-autoj" aria-checked="${settings.autoJ !== false}" aria-label="交易自動記進決策日記"></button></div>
       <div class="srow col"><div><div class="h">Claude 專案指示（貼一次就好）</div><div class="d">在 Claude 建一個專案叫「冷眼參謀」，把這段貼進專案指示。之後「帶去問 Claude」可以打開「已經在 Claude 專案設好指示」，打包會比較短。</div></div>
         <div class="row-btns"><button class="btn small" id="s-proj">${ICON.copy}複製專案指示</button><a class="btn small ghost" href="https://claude.ai/projects" target="_blank" rel="noopener">${ICON.ext}開啟 Claude 專案</a></div></div>
-      <div class="srow"><div><div class="h">清除決策日記</div><div class="d">刪除這支手機裡的全部想法與交易紀錄（交易本身不受影響），目前 ${journal.items.length} 筆</div></div><button class="btn small danger ghost" id="s-jwipe">清除</button></div>
+      <div class="srow"><div><div class="h">整本決策日記歸零</div><div class="d">刪除這支手機裡的全部決策紀錄，包含已經對完答案的，戰績從零開始（只能整本歸零，不能只挑錯的刪；交易本身不受影響）。目前 ${journal.items.length} 筆</div></div><button class="btn small danger ghost" id="s-jwipe">清除</button></div>
     </section>
 
     <div class="sec-h"><h2>投資紀律</h2></div>
@@ -1207,11 +1207,11 @@ function bindSettings() {
   });
   $('#s-jwipe', sh).addEventListener('click', (e) => {
     const b = e.currentTarget;
-    if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = '確定清除？'; FX.sfx('warn'); return; }
+    if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = '確定整本歸零？'; FX.sfx('warn'); return; }
     journal.items.splice(0, journal.items.length);
     saveJournal();
     bus.emit('journal');
-    toast('已清除決策日記');
+    toast('決策日記已經整本歸零');
     drawSettings();
   });
   $('#s-dca', sh).addEventListener('click', (e) => { settings.dca = !settings.dca; saveSettings(); e.currentTarget.setAttribute('aria-checked', settings.dca); });

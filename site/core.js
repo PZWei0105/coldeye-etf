@@ -258,6 +258,8 @@ export async function ensureHist(code, o = {}) {
   const cur = S.summary ? S.summary.asof : null;
   const m = S.histMeta[code];
   if (S.hist[code] && !(o.fresh && (!m || m.offline || m.asof !== cur))) return S.hist[code];
+  // 同一批資料已經確定沒有這個檔（404，例如上市未滿 70 個交易日）：不用每次都再問一次
+  if (m && m.status === 404 && m.asof === cur) return null;
   try {
     const r = await fetch(`data/hist/${code}.json?t=${Math.floor(Date.now() / 60000)}`, { cache: 'no-store' });
     if (!r.ok) { S.histMeta[code] = { asof: cur, status: r.status }; return o.fresh ? null : S.hist[code] || null; }

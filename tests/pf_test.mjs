@@ -80,6 +80,13 @@ t('配息資格：除息日當天買進領不到、當天賣出領得到', () =>
   const c = pf.dividendsReceived([{ c: 'X', side: 'buy', sh: 1000, px: 20 }], divs, [], 20260301);
   assert.equal(c.total, 0);
   assert.equal(c.undated, 1);
+  // 「不記得日期」的舊股先賣掉、之後再買 2 張：新買的 2 張照樣領得到（賣出不能讓有日期的股數變成負的）
+  const d = pf.dividendsReceived([
+    { c: 'X', side: 'buy', sh: 3000, px: 18 },
+    { c: 'X', side: 'sell', d: 20260105, sh: 3000, px: 19 },
+    { c: 'X', side: 'buy', d: 20260210, sh: 2000, px: 20 },
+  ], divs, [], 20260301);
+  assert.equal(d.total, 1000);
 });
 
 t('近 12 個月配息與月份分布', () => {
