@@ -4,7 +4,7 @@
    副官只檢查、只記錄，不替你決定買賣。所有門檻都在這個檔案的常數裡，設定頁「副官怎麼檢查」照抄這裡。 */
 import {
   daysBetween, addDays, tradeCost, taxCat, taxRateOf, premBand, PROFILES, capOf, sharesText, CAT_NAMES, signalEvidence,
-  hotWhy, BOND_TAX_FREE_UNTIL, OVER_TOL,
+  hotWhy, BOND_TAX_FREE_UNTIL, OVER_TOL, twToday,
 } from './pf.js';
 
 const isNum = (x) => typeof x === 'number' && isFinite(x);
@@ -24,7 +24,8 @@ export const AIDE = {
   warnCool: 3,       // 有 3 個以上要注意的地方，建議冷靜一晚
   confHigh: 4,       // 信心 4 以上、又和規則相反，建議冷靜一晚
   minN: 20,          // 對答案累積 20 筆以上，戰績才有參考價值
-  naDays: 60,        // 決定後超過 60 天還對不到答案（下市、停止交易），就標示無法對答案
+  naDays: 60,        // 下市的 ETF：決定後超過 60 天還對不到答案，就標示無法對答案（還在交易的冷門 ETF 會一直等）
+  late: 1,           // 和 Claude 討論後的結論、冷靜期的回覆，要在決定後隔一個交易日以內才算數（避免看到走勢才改）
 };
 export const STANCE = {
   bull: { t: '想買／加碼', s: '看多' },
@@ -453,8 +454,18 @@ export function pairBase(hA, hB, horizon = HORIZON) {
 }
 
 /** 最後算分用的立場：有貼回「討論後的決定」就用它；換股紀錄只認「換股」或「觀望」，單檔紀錄的「換股」等於賣掉這檔 */
+/** 在決定後隔一個交易日以內（含）做的事才算數：之後再改立場、說改變主意，等於看到走勢才改 */
+const twDayOf = (iso) => { const t = Date.parse(iso || ''); return isFinite(t) ? twToday(t) : null; };
+export function inWindow(e, iso) {
+  const d = twDayOf(iso);
+  return !!(d && e && e.snap && e.snap.d && d <= addWeekdays(e.snap.d, AIDE.late));
+}
+/** 貼回的【冷眼結論】算不算數（決定後隔一個交易日以內貼回的才算） */
+export const afterCounts = (e) => !!(e.after && e.after.stance && inWindow(e, e.after.at));
+/** 冷靜一晚後改變主意（在冷靜期那天以內回覆的才算） */
+export const coolDropped = (e) => !!(e.cool && e.cool.res === 'changed' && twDayOf(e.cool.at) && twDayOf(e.cool.at) <= e.cool.due);
 export function finalStance(e) {
-  const a = e.after && e.after.stance;
+  const a = afterCounts(e) && e.after.stance;
   if (!a) return e.stance;
   if (e.stance === 'swap') return a === 'wait' ? 'wait' : 'swap';
   return a === 'swap' ? 'bear' : a;
@@ -493,20 +504,27 @@ export function baseEdgeOf(stance, res) {
 }
 
 /**
+ * 一筆已經對答案的紀錄怎麼算。counted＝算進命中率：在猜漲跌、有對錯、有同類基準、冷靜一晚後沒有放棄。
+ * why：nonview（長期紀律之類，不算）、dropped（冷靜後改變主意、沒照做）、wait（觀望不算對錯）、nobase（沒有同類基準可比）
+ * 畫面上的「對了／錯了」一律照這裡，和戰績的算法一致。
+ */
+export function scoreOf(e) {
+  if (!e || !e.res || e.res.state !== 'done') return null;
+  const st = finalStance(e);
+  const hit = hitOf(st, e.res);
+  const base = baseOf(st, e.res);
+  const why = nonView(e) ? 'nonview' : coolDropped(e) ? 'dropped' : hit == null ? 'wait' : !isNum(base) ? 'nobase' : null;
+  return { e, st, hit, base, counted: !why, why, edge: edgeOf(st, e.res), bedge: baseEdgeOf(st, e.res) };
+}
+const avgOf = (xs) => { const v = xs.filter(isNum); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+
+/**
  * 決策日記的戰績：只算已經對答案、而且是在猜漲跌的決定（理由是長期紀律、調整比重、要用錢的不算）。
  * 一定和「同類 ETF 任何一天照同樣方向做」的基準並列（依你決定的組成加權）。
  */
 export function journalStats(items) {
   const done = items.filter((e) => e.res && e.res.state === 'done');
-  const scored = [];
-  for (const e of done) {
-    if (nonView(e)) continue;
-    const st = finalStance(e);
-    const hit = hitOf(st, e.res);
-    const base = baseOf(st, e.res);
-    if (hit == null || !isNum(base)) continue;
-    scored.push({ e, st, hit, base, edge: edgeOf(st, e.res), bedge: baseEdgeOf(st, e.res) });
-  }
+  const scored = done.map(scoreOf).filter((z) => z && z.counted);
   const agg = (xs) => {
     const n = xs.length;
     if (!n) return { n: 0, hits: 0, rate: null, base: null, edge: null, bedge: null };
@@ -530,17 +548,17 @@ export function journalStats(items) {
   }
   const bySrc = { idea: agg(scored.filter((z) => z.e.src !== 'trade')), real: agg(scored.filter((z) => z.e.src === 'trade' && z.e.book !== 'paper')), paper: agg(scored.filter((z) => z.e.src === 'trade' && z.e.book === 'paper')) };
   // 冷靜期之後改變主意：原本的想法如果照做，對不對
-  const changed = done.filter((e) => e.cool && e.cool.res === 'changed' && hitOf(e.stance, e.res) != null && !nonView(e));
-  const cooled = { n: changed.length, origRight: changed.filter((e) => hitOf(e.stance, e.res)).length };
-  // 和 Claude 討論後改變主意：討論前、討論後各對幾次
-  const moved = done.filter((e) => e.after && e.after.stance && finalStance(e) !== e.stance && !nonView(e));
-  const disc = {
-    n: moved.length,
-    beforeRight: moved.filter((e) => hitOf(e.stance, e.res) === true).length,
-    afterRight: moved.filter((e) => hitOf(finalStance(e), e.res) === true).length,
+  const changed = done.filter((e) => coolDropped(e) && hitOf(e.stance, e.res) != null && isNum(baseOf(e.stance, e.res)) && !nonView(e));
+  const cooled = { n: changed.length, origRight: changed.filter((e) => hitOf(e.stance, e.res)).length, base: avgOf(changed.map((e) => baseOf(e.stance, e.res))) };
+  // 和 Claude 討論後改變主意：討論前、討論後各對幾次（各自和同類基準並列；觀望那一邊不算對錯）
+  const moved = done.filter((e) => afterCounts(e) && finalStance(e) !== e.stance && !nonView(e) && !coolDropped(e));
+  const side = (f) => {
+    const xs = moved.filter((e) => hitOf(f(e), e.res) != null && isNum(baseOf(f(e), e.res)));
+    return { n: xs.length, right: xs.filter((e) => hitOf(f(e), e.res)).length, base: avgOf(xs.map((e) => baseOf(f(e), e.res))) };
   };
-  const waits = done.filter((e) => finalStance(e) === 'wait' && isNum(e.res.ret));
-  const waited = { n: waits.length, avg: waits.length ? waits.reduce((a, e) => a + e.res.ret, 0) / waits.length : null, base: (() => { const v = waits.map((e) => e.res.ba).filter(isNum); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; })() };
+  const disc = { n: moved.length, before: side((e) => e.stance), after: side(finalStance) };
+  const waits = done.filter((e) => finalStance(e) === 'wait' && isNum(e.res.ret) && isNum(e.res.ba));
+  const waited = { n: waits.length, avg: avgOf(waits.map((e) => e.res.ret)), base: avgOf(waits.map((e) => e.res.ba)) };
   return { all, vsRule, byConf, byTag, bySrc, cooled, disc, waited, scored: scored.length, done: done.length, enough: scored.length >= AIDE.minN };
 }
 
@@ -548,19 +566,28 @@ export function journalStats(items) {
 const FIELDS = { 立場: 'stance', 信心: 'conf', 理由: 'why', 風險: 'risk', 復盤條件: 'exit', 復盤: 'exit' };
 const CN_NUM = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5 };
 /** 「想買／加碼」→ bull…；看不出來（例如把四個選項整串貼回來）回傳 null */
+// 「不買、先不加碼、別急著賣、暫不換股」是不動作（觀望），不能讀成買或賣
+const NEG_ACT = /(?:先|暫時?|目前|現在|還|也)?(?:不要|不宜|不必|不用|不建議|不打算|不想|不會|不急著?|沒有要|沒要|沒必要|別|勿|不)(?:急著|馬上|立刻|再|要|去|想|考慮|打算)?(?:買進?|加碼|進場|布局|佈局|賣出?|減碼|出場|停損|停利|換股|換成|換到|換掉|轉換|換)/g;
+// 「跌破 105 再減碼」「站上 111 再加碼」是條件，不是現在的立場
+const COND = /跌破|站上|站回|突破|跌到|漲到|跌至|漲至|低於|高於|如果|假如|萬一|一旦|除非|等到/;
 export function stanceOf(t) {
   const s = String(t || '').replace(/[（(][^）)]*[）)]/g, '');
-  const has = {
-    bull: /買|加碼|看多|進場|布局|佈局/.test(s),
-    bear: /賣|減碼|看空|出場|停損|停利/.test(s),
-    wait: /觀望|不動|續抱|持有|等待|先不|暫不|暫停|不要|不再/.test(s),
-    swap: /換股|換成|轉換|換到|換掉/.test(s),
-  };
-  const ks = Object.keys(has).filter((k) => has[k]);
-  if (ks.length === 1) return ks[0];
-  if (has.swap && !has.wait) return 'swap';
-  if (has.wait && ks.length === 2 && /先不|暫不|暫停|不要|不再/.test(s)) return 'wait';
-  return null;
+  const acts = new Set();
+  let wait = false;
+  for (const raw of s.split(/[，,；;。！!？?\n]/)) {
+    if (!raw.trim() || COND.test(raw)) continue;
+    let c = raw;
+    if (NEG_ACT.test(c)) { wait = true; c = c.replace(NEG_ACT, ''); }
+    NEG_ACT.lastIndex = 0;
+    if (/觀望|不動|別動|不要動|續抱|持有|等待|暫停/.test(c)) wait = true;
+    if (/買|加碼|看多|進場|布局|佈局/.test(c)) acts.add('bull');
+    if (/賣|減碼|看空|出場|停損|停利/.test(c)) acts.add('bear');
+    if (/換股|換成|轉換|換到|換掉/.test(c)) acts.add('swap');
+  }
+  if (acts.size === 1) return [...acts][0];          // 一個明確的動作（「減碼一半，不換股」是減碼）
+  if (!acts.size) return wait ? 'wait' : null;
+  if (acts.has('swap') && !wait) return 'swap';      // 換股本來就同時有賣和買
+  return null;                                       // 看不出來：讓你自己選
 }
 /** 解析貼回來的【冷眼結論】。回傳 { stance, conf, why, risk, exit } 或 null（什麼都沒認出來） */
 export function parseConclusion(txt) {
@@ -804,9 +831,13 @@ export function packReview(p) {
   L.push('', SEP('結果'));
   const r = e.res;
   if (r && r.state === 'done') {
-    const hit = hitOf(st, r);
+    const z = scoreOf(e);
     L.push(`${HORIZON} 個交易日後（${dy(r.d)}）含息報酬：${p.name} ${pctS(r.ret)}${isNum(r.ret2) ? `、${p.name2} ${pctS(r.ret2)}` : ''}`);
-    if (hit != null) L.push(`照我的立場算：${hit ? '對了' : '錯了'}｜同類 ETF 任何一天照同樣方向做，會對的機率約 ${pctU(baseOf(st, r))}`);
+    if (z.counted) L.push(`照我的立場算：${z.hit ? '對了' : '錯了'}｜同類 ETF 任何一天照同樣方向做，會對的機率約 ${pctU(z.base)}`);
+    else if (z.why === 'dropped') {
+      const h0 = hitOf(e.stance, r), b0 = baseOf(e.stance, r);
+      L.push(`冷靜一晚後我改變主意、沒有照做（不算進命中率）${h0 == null ? '' : `；原本的想法如果照做會${h0 ? '對' : '錯'}${isNum(b0) ? `，同類 ETF 任何一天照同樣方向做約 ${pctU(b0)}` : ''}`}`);
+    } else if (z.why === 'nobase') L.push('這筆沒有同類 ETF 的基準可以比，不算對錯。');
     else L.push('這筆是觀望（或不是在猜漲跌），不算對錯。');
   } else if (p.now) {
     L.push(`還沒到 ${HORIZON} 個交易日（大約第 ${p.now.n} 天），到目前為止含息報酬 ${pctS(p.now.ret)}`);
@@ -825,7 +856,7 @@ export function packWeek(p) {
   } else L.push('這週沒有新增決定。');
   if (p.done.length) {
     L.push(`這週對答案 ${p.done.length} 筆：`);
-    for (const d of p.done) L.push(`・${d.name}｜${STANCE[d.stance] ? STANCE[d.stance].t : '—'}｜20 日含息 ${pctS(d.ret)}｜${d.hit == null ? '不算對錯' : d.hit ? '對' : '錯'}${isNum(d.base) ? `（基準 ${pctU(d.base)}）` : ''}`);
+    for (const d of p.done) L.push(`・${d.name}｜${STANCE[d.stance] ? STANCE[d.stance].t : '—'}｜20 日含息 ${pctS(d.ret)}｜${d.hit == null ? (d.why === 'dropped' ? '冷靜後沒照做，不算對錯' : '不算對錯') : `${d.hit ? '對' : '錯'}（同類 ETF 任何一天照同樣方向做約 ${pctU(d.base)}）`}`);
   }
   const s = p.stats;
   if (s && s.all.n) L.push(`累積戰績：${s.all.hits}／${s.all.n} 對（${pctU(s.all.rate)}），同類任何一天照同樣方向做約 ${pctU(s.all.base)}${s.enough ? '' : `；樣本還少（不到 ${AIDE.minN} 筆），先看看就好`}`);
@@ -837,6 +868,7 @@ export function packWeek(p) {
 
 // ------------------------------------------------------------------ 備份還原：只收格式正確的日記（一欄一欄重建，不收多餘的東西）
 const okD = (d) => Number.isInteger(d) && d >= 19900101 && d <= 21001231;
+const own = (o, k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k);   // 不收 constructor、__proto__ 這類名字
 const okIso = (s) => typeof s === 'string' && s.length <= 40 && isFinite(Date.parse(s));
 const okStr = (s, n) => (typeof s === 'string' ? s.slice(0, n) : '');
 const okInt = (x, lo, hi) => (Number.isInteger(x) && x >= lo && x <= hi ? x : null);
@@ -844,7 +876,7 @@ const PS_KEYS = ['add', 'wait', 'hold', 'caution', 'trim'];
 function cleanSnap(s) {
   if (!s || !isNum(s.px) || !(s.px > 0) || !okD(s.d)) return null;
   return {
-    n: okStr(s.n, 40), k: CAT_NAMES[s.k] ? s.k : null, d: s.d, px: s.px, live: !!s.live, t: okStr(s.t, 12) || null,
+    n: okStr(s.n, 40), k: own(CAT_NAMES, s.k) ? s.k : null, d: s.d, px: s.px, live: !!s.live, t: okStr(s.t, 12) || null,
     st: [1, 0, -1].includes(s.st) ? s.st : null, ps: PS_KEYS.includes(s.ps) ? s.ps : null,
     sc: isNum(s.sc) ? s.sc : null, cf: okInt(s.cf, 0, 100), prem: isNum(s.prem) ? s.prem : null, dl: isNum(s.dl) ? s.dl : null, pc: isNum(s.pc) ? s.pc : null,
   };
@@ -862,7 +894,7 @@ export function sanitizeJournal(items) {
     if (!snap) continue;
     const x = {
       id: e.id, at: e.at, src: e.src === 'trade' ? 'trade' : 'idea', book: e.book === 'paper' ? 'paper' : 'real', c: e.c.toUpperCase(),
-      stance: e.stance, conf: okInt(e.conf, 1, 5), tags: Array.isArray(e.tags) ? uniq(e.tags.filter((t) => TAGS[t])).slice(0, 12) : [],
+      stance: e.stance, conf: okInt(e.conf, 1, 5), tags: Array.isArray(e.tags) ? uniq(e.tags.filter((t) => own(TAGS, t))).slice(0, 12) : [],
       text: okStr(e.text, 500), snap,
     };
     if (typeof e.lot === 'string' && e.lot.length <= 40) x.lot = e.lot;
@@ -908,6 +940,7 @@ export function aideRulesHTML() {
     <p><b>想換股</b>看兩檔的規則觀點、近一年報酬與波動、換過去那檔近一年多賺 ${pctU(AIDE.chase)} 以上時提醒「追逐過去的報酬」、類別不同、換股的來回成本。</p>
     <p><b>都會看</b>大盤單日漲跌 ${AIDE.bigMarket}% 以上、理由裡有「${EMO_TAGS.map((t) => TAGS[t]).join('、')}」、信心 ${AIDE.confHigh} 以上卻和規則相反。符合任何一項、或要注意的地方有 ${AIDE.warnCool} 個以上，副官會建議<b>冷靜一晚</b>：記下來，下一個交易日開盤前再確認一次。</p>
     <p><b>對答案</b>決定之後第 ${HORIZON} 個交易日（約一個月，和規則同一個尺度），用當時看到的價格算含息報酬：看多＞0、看空＜0、換股是換入的贏過換出的才算對；觀望不算對錯。理由是「${NONVIEW_TAGS.map((t) => TAGS[t]).join('、')}」的決定不是在猜漲跌，照樣對答案、但不算進命中率。</p>
+    <p><b>算不算數</b>和 Claude 討論後貼回的結論、冷靜期的回覆，要在決定後<b>隔一個交易日以內</b>才算數；之後才貼、才改，只記錄下來，不改變對答案的立場（避免看到走勢才改）。冷靜一晚後改變主意、沒有照做的想法，不算進命中率，另外統計「如果照做會不會對」。已經對完答案的紀錄不能刪除；刪掉那筆交易，日記也會留著。</p>
     <p><b>基準</b>你的命中率一定和「同類 ETF 任何一天照同樣方向做」並列：看多用該類 ETF 回測期間 20 日後上漲的比例、看空用下跌的比例，依你每筆決定的類別加權；換股用兩檔歷史上任何一天換過去、20 日後贏的比例。至少 ${AIDE.minN} 筆以後才有參考價值。</p>
     <p><b>部位巡檢</b>現金比例、單檔是否超過你的上限、類別組成、槓桿與反向型合計、跌破移動防守線、注意／處置、${AIDE.divSoon} 天內除息、不到總資產 ${pctU(AIDE.smallPos)} 的零碎部位、持有超過 ${AIDE.manyPos} 檔、全部跌到出場線的最壞情況。</p>`;
 }

@@ -99,7 +99,7 @@ export const isJournalKey = (k) => k === 'coldeye.journal';
 
 // ------------------------------------------------------------------ 全域狀態與事件
 export const S = {
-  summary: null, live: null, offline: false, news: null, track: null, divs: null, detail: {}, hist: {}, breadth: null, pxSeen: new Map(),
+  summary: null, live: null, offline: false, news: null, track: null, divs: null, detail: {}, hist: {}, histMeta: {}, breadth: null, pxSeen: new Map(),
   tab: store.get('tab', 'home'), all: { q: '', cat: '*', sig: '*', sort: 'score' }, newsTab: 'official',
   range: 120, rows: new Map(), deferredInstall: null, P: null, adv: new Map(), openCode: null,
   firstPaint: true, changes: [],
@@ -250,10 +250,22 @@ export async function ensureDivs(force = false) {
   try { S.divs = await getJSON('divs.json'); store.set('cache.divs', S.divs); } catch { /* 用快取 */ }
   return S.divs;
 }
-export async function ensureHist(code) {
-  if (S.hist[code]) return S.hist[code];
-  try { S.hist[code] = await getJSON(`hist/${code}.json`); } catch { return null; }
-  return S.hist[code];
+/**
+ * 歷史檔。fresh：對答案用，一定要和目前的收盤資料（summary 的 asof）同一批、而且不是離線時的舊副本，
+ * 不然換股的另一檔可能停在幾天前，算出錯的報酬又被存成定案。histMeta 記下這份是哪一批、是不是離線、HTTP 狀態（404＝沒有這個檔）。
+ */
+export async function ensureHist(code, o = {}) {
+  const cur = S.summary ? S.summary.asof : null;
+  const m = S.histMeta[code];
+  if (S.hist[code] && !(o.fresh && (!m || m.offline || m.asof !== cur))) return S.hist[code];
+  try {
+    const r = await fetch(`data/hist/${code}.json?t=${Math.floor(Date.now() / 60000)}`, { cache: 'no-store' });
+    if (!r.ok) { S.histMeta[code] = { asof: cur, status: r.status }; return o.fresh ? null : S.hist[code] || null; }
+    const h = await r.json();
+    S.hist[code] = h;
+    S.histMeta[code] = { asof: cur, status: r.status, offline: r.headers.get('X-ColdEye-Offline') === '1' };
+  } catch { return o.fresh ? null : S.hist[code] || null; }
+  return o.fresh && S.histMeta[code].offline ? null : S.hist[code];
 }
 export async function ensureDetail(code) {
   if (S.detail[code]) return S.detail[code];

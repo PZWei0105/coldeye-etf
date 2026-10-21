@@ -106,39 +106,54 @@ export function onTrade({ lot, tags = [], paper = false }) {
     stance: lot.side === 'sell' ? 'bear' : 'bull', conf: null, tags: tags.slice(0, 6), text: lot.note || '', snap,
   });
 }
-/** 交易被刪掉（真實部位刪除、模擬倉撤銷）：日記裡那一筆也拿掉；交易被修改：跟著改價格與方向 */
+/** 交易被刪掉（真實部位刪除、模擬倉撤銷）：日記裡那一筆也拿掉。已經對完答案的留著（只是不再連到這筆交易）：
+ *  刪掉交易不能順便把錯的決定從戰績裡拿掉 */
 export function onLotDel({ id }) {
   const k = journal.items.findIndex((e) => e.src === 'trade' && e.lot === id);
-  if (k >= 0) { journal.items.splice(k, 1); saveJournal(); bus.emit('journal'); }
-}
-export function onLotEdit({ lot }) {
-  const k = journal.items.findIndex((x) => x.src === 'trade' && x.lot === lot.id);
   if (k < 0) return;
   const e = journal.items[k];
-  const row = S.rows.get(lot.c);
-  // 改成別天或冷眼沒有的代號：和「只記今天的交易」同一條規則，日記那筆拿掉（當時看到的狀態已經不是今天的）
-  if (!row || (e.book !== 'paper' && lot.d !== today())) {
-    journal.items.splice(k, 1);
-    saveJournal();
-    bus.emit('journal');
-    return;
-  }
-  e.stance = lot.side === 'sell' ? 'bear' : 'bull';
-  // 換了代號：整份「當時看到的狀態」（類別、規則觀點…）跟著換，同類基準才會對
-  if (lot.c !== e.c || !e.snap) e.snap = { ...snapOf(row), live: false, t: null };
-  e.c = lot.c;
-  if (lot.px > 0) e.snap.px = lot.px;
-  e.snap.d = lot.d;
-  e.text = lot.note || e.text;
-  delete e.res;
+  if (e.res && e.res.state === 'done') delete e.lot;
+  else journal.items.splice(k, 1);
   saveJournal();
   bus.emit('journal');
+}
+/**
+ * 交易被修改（只有真實部位可以改；模擬倉成交後不能改）。日記記的是「你在 App 記下這筆交易那一刻」的決定：
+ * - 已經對完答案（或無法對答案）的不跟著改：結果一存就不再變。
+ * - 改備註：更新文字。改手續費、稅：日記不受影響。
+ * - 還沒對答案時改買賣方向、價格、代號：跟著改（改代號就換成那一檔的類別；不是當天改的，當時的規則觀點留空，不拿今天的冒充）。
+ * - 改日期：不跟著改到別天（等於事後挑結果）；連代號也一起換掉的話，這筆交易已經不是當時記下的決定，日記留著當「想法」，不再連到這筆交易。
+ */
+export function onLotEdit({ lot }) {
+  const e = journal.items.find((x) => x.src === 'trade' && x.lot === lot.id);
+  if (!e) return;
+  let changed = false;
+  if (lot.note && lot.note !== e.text) { e.text = lot.note; changed = true; }
+  const settled = e.res && (e.res.state === 'done' || e.res.state === 'na');
+  if (!settled && e.snap) {
+    const stance = lot.side === 'sell' ? 'bear' : 'bull';
+    if (stance !== e.stance) { e.stance = stance; changed = true; }
+    if (lot.d !== e.snap.d) {
+      if (lot.c !== e.c) { delete e.lot; e.src = 'idea'; changed = true; }
+    } else if (lot.c !== e.c) {
+      const row = S.rows.get(lot.c);
+      if (row) {
+        const snap = { ...snapOf(row), px: lot.px > 0 ? lot.px : e.snap.px, d: e.snap.d, live: false, t: null };
+        if (e.snap.d !== today()) Object.assign(snap, { st: null, ps: null, sc: null, cf: null, prem: null, dl: null, pc: null });
+        e.snap = snap;
+        e.c = lot.c;
+        changed = true;
+      }
+    } else if (lot.px > 0 && lot.px !== e.snap.px) { e.snap.px = lot.px; changed = true; }
+  }
+  if (changed) { saveJournal(); bus.emit('journal'); }
 }
 
 // ------------------------------------------------------------------ 對答案（到期的去抓歷史資料計算，算完存起來）
 let evalBusy = false;
 export async function refreshEvals() {
-  if (evalBusy || !S.summary) return;
+  // 離線時拿到的是上次存下的舊資料：不對答案（結果一存就不再變，用舊資料算會錯一輩子）
+  if (evalBusy || !S.summary || S.offline) return;
   evalBusy = true;
   try {
     await ensureTrack();
@@ -147,15 +162,18 @@ export async function refreshEvals() {
     if (!due.length) return;
     const codes = [...new Set(due.flatMap((e) => [e.c, e.c2].filter(Boolean)))];
     const hs = {};
-    for (const c of codes) hs[c] = await ensureHist(c);
+    // fresh：一定用和目前收盤資料同一批的歷史檔（不用這次開 App 之前抓的、也不用離線的舊副本）
+    for (const c of codes) hs[c] = await ensureHist(c, { fresh: true });
+    // 已經下市：不在目前的資料裡，而且歷史檔確定不存在（冷眼只保留還在交易的 ETF 的歷史檔）
+    const gone = (c) => S.rows.get(c) == null && !!S.histMeta[c] && S.histMeta[c].status === 404;
+    const long = (e) => A.weekdaysBetween(e.snap.d, td) > A.AIDE.naDays;
     let changed = false;
     for (const e of due) {
       const h = hs[e.c];
       const h2miss = !!e.c2 && !hs[e.c2];
       if (!h || h2miss) {
-        // 歷史檔抓不到：這檔可能已經下市；過了很久還是抓不到才標示，不然只是網路問題（下次再算）
-        const gone = (!h && S.rows.get(e.c) == null) || (h2miss && S.rows.get(e.c2) == null);
-        if (gone && A.weekdaysBetween(e.snap.d, td) > A.AIDE.naDays) { e.res = { state: 'na', why: '這檔已經不在冷眼的資料裡（可能下市了）' }; changed = true; }
+        // 抓不到歷史檔：網路問題、或上市未滿 70 個交易日還沒有歷史檔 → 下次再算；只有確定下市而且過很久，才標示無法對答案
+        if (((!h && gone(e.c)) || (h2miss && gone(e.c2))) && long(e)) { e.res = { state: 'na', why: '這檔已經下市，冷眼的資料裡沒有它的價格了' }; changed = true; }
         continue;
       }
       const r = A.evalEntry(e, h, e.c2 ? hs[e.c2] : null);
@@ -169,8 +187,12 @@ export async function refreshEvals() {
         r.at = new Date().toISOString();
         e.res = r;
         changed = true;
-      } else if (r.state === 'na' || A.weekdaysBetween(e.snap.d, td) > A.AIDE.naDays) {
-        e.res = { state: 'na', why: r.why || '超過兩個月還沒有新的成交價格' };
+      } else if (r.state === 'na') {
+        e.res = { state: 'na', why: r.why };
+        changed = true;
+      } else if (long(e) && (S.rows.get(e.c) == null || (e.c2 && S.rows.get(e.c2) == null))) {
+        // 還沒滿 20 個交易日就下市了。還在交易的冷門 ETF 會一直等，成交滿 20 天就對答案
+        e.res = { state: 'na', why: '這檔在滿 20 個交易日之前就下市了' };
         changed = true;
       }
     }
@@ -190,9 +212,13 @@ function progressOf(e) {
   if (e.c2 && e.snap2) { const r2 = S.rows.get(e.c2); if (r2) { const q2 = quote(r2); ret2 = A.interimRet(e.snap2, q2.px, q2.date || td, dv(e.c2).d, dv(e.c2).s); } }
   return { n, ret, ret2, due: A.addWeekdays(e.snap.d, A.HORIZON) };
 }
-const coolDue = (e) => e.cool && !e.cool.res && today() >= e.cool.due;
+// 冷靜期的回覆、貼回 Claude 的結論，都要在決定後隔一個交易日以內（AIDE.late）才算數；過了就不再提醒
+const coolOpen = (e) => !!(e.cool && !e.cool.res && today() <= e.cool.due);
+const coolDue = (e) => coolOpen(e) && today() >= e.cool.due;
+const coolLapsed = (e) => !!(e.cool && !e.cool.res && today() > e.cool.due);
+const pasteOpen = (e) => !!(e.snap && e.snap.d && today() <= A.addWeekdays(e.snap.d, A.AIDE.late));
 const matured = (e) => e.res && e.res.state === 'done' && !e.seen;
-const awaitingPaste = (e) => e.asked && !e.after && !(e.res && e.res.state === 'done') && A.weekdaysBetween(twDay(e.asked), today()) <= 3;
+const awaitingPaste = (e) => e.asked && !e.after && !(e.res && e.res.state === 'done') && pasteOpen(e);
 /** 需要 PZ 處理的：冷靜期到了、對完答案還沒看 */
 export function aidePending() {
   return {
@@ -212,14 +238,20 @@ export function aideSpeech() {
 }
 
 // ------------------------------------------------------------------ 結果的顯示
+/** 一筆對完答案的標示：和戰績同一套算法（A.scoreOf），沒算進命中率的不寫對錯 */
+function verdictOf(e) {
+  const z = A.scoreOf(e);
+  if (!z) return null;
+  const lab = z.counted ? (z.hit ? '對了' : '錯了') : { nonview: '不計分', dropped: '沒照做', wait: '觀望', nobase: '不計分' }[z.why];
+  return { ...z, lab, cls: z.counted ? (z.hit ? 'good' : 'bad') : 'muted' };
+}
+const avgN = (xs) => { const v = xs.filter(isNum); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
 function statusHTML(e) {
   if (e.res && e.res.state === 'na') return `<span class="js-na">無法對答案</span>`;
   if (e.res && e.res.state === 'done') {
-    const st = A.finalStance(e);
-    const hit = A.hitOf(st, e.res);
-    const r = st === 'swap' && isNum(e.res.ret2) ? e.res.ret2 - e.res.ret : e.res.ret;
-    const lab = A.nonView(e) ? '<b class="muted">不計分</b>' : hit == null ? '<b class="muted">觀望</b>' : hit ? '<b class="good">對了</b>' : '<b class="bad">錯了</b>';
-    return `<span class="lab2">${lab}${!e.seen ? '<i class="new-dot" aria-label="新結果"></i>' : ''}</span><small class="num ${dirCls(r)}">${st === 'swap' ? '差 ' : ''}${pctS(r)}</small>`;
+    const v = verdictOf(e);
+    const r = v.st === 'swap' && isNum(e.res.ret2) ? e.res.ret2 - e.res.ret : e.res.ret;
+    return `<span class="lab2"><b class="${v.cls}">${v.lab}</b>${!e.seen ? '<i class="new-dot" aria-label="新結果"></i>' : ''}</span><small class="num ${dirCls(r)}">${v.st === 'swap' ? '差 ' : ''}${pctS(r)}</small>`;
   }
   const p = progressOf(e);
   const r = e.c2 && isNum(p.ret2) && isNum(p.ret) ? p.ret2 - p.ret : p.ret;
@@ -228,7 +260,7 @@ function statusHTML(e) {
 function rowHTML(e) {
   const flags = [];
   if (coolDue(e)) flags.push('<span class="chip act alert">冷靜期到了</span>');
-  else if (e.cool && !e.cool.res) flags.push('<span class="chip act info">冷靜期</span>');
+  else if (coolOpen(e)) flags.push('<span class="chip act info">冷靜期</span>');
   if (awaitingPaste(e)) flags.push('<span class="chip act go2">等貼回結論</span>');
   return `<button class="jr" data-j="${esc(e.id)}">
     <span class="jr-d num">${fmt.d(twDay(e.at))}</span>
@@ -287,8 +319,8 @@ function pendingHTML(p) {
   for (const e of p.cool) rows.push({ e, chip: '<span class="chip act alert">冷靜期到了</span>', t: `你想「${A.STANCE[e.stance].t}」${esc(nameOf(e.c))}${e.c2 ? ` → ${esc(nameOf(e.c2))}` : ''}。冷靜一晚之後，還是這麼想嗎？` });
   for (const e of p.done) {
     const st = A.finalStance(e);
-    const hit = A.hitOf(st, e.res);
-    rows.push({ e, chip: '<span class="chip act go">對答案了</span>', t: `${esc(nameOf(e.c))}（${fmt.d(twDay(e.at))}「${A.STANCE[st].t}」）${A.nonView(e) || hit == null ? '的結果出來了' : '：點開揭曉'}` });
+    const z = A.scoreOf(e);
+    rows.push({ e, chip: '<span class="chip act go">對答案了</span>', t: `${esc(nameOf(e.c))}（${fmt.d(twDay(e.at))}「${A.STANCE[st].t}」）${z && z.counted ? '：點開揭曉' : '的結果出來了'}` });
   }
   for (const e of p.paste) rows.push({ e, chip: '<span class="chip act go2">等貼回結論</span>', t: `和 Claude 討論完 ${esc(nameOf(e.c))} 了嗎？把【冷眼結論】貼回來，${A.HORIZON} 個交易日後一起對答案。` });
   if (!rows.length) return '';
@@ -312,30 +344,33 @@ function weekInfo() {
   const made = journal.items.filter((e) => twDay(e.at) >= from);
   const done = journal.items.filter((e) => e.res && e.res.state === 'done' && e.res.at && twDay(e.res.at) >= from);
   const pending = journal.items.filter((e) => !e.res).length;
-  const cool = journal.items.filter((e) => e.cool && !e.cool.res).length;
+  const cool = journal.items.filter(coolOpen).length;
   return { from, made, done, pending, cool };
 }
 function weekHTML() {
   const w = weekInfo();
   if (!w.made.length && !w.done.length && !w.pending) return '';
-  const hits = w.done.filter((e) => A.hitOf(A.finalStance(e), e.res) === true && !A.nonView(e)).length;
-  const scorable = w.done.filter((e) => A.hitOf(A.finalStance(e), e.res) != null && !A.nonView(e)).length;
+  const sc = weekScore(w);
   const emo = w.made.filter((e) => (e.tags || []).some((t) => A.EMO_TAGS.includes(t))).length;
   const lines = [
     `這週記了 <b class="num">${w.made.length}</b> 筆決定${w.made.length ? `（想法 ${w.made.filter((e) => e.src !== 'trade').length}、交易 ${w.made.filter((e) => e.src === 'trade').length}）` : ''}${emo ? `，其中 <b class="num">${emo}</b> 筆的理由偏情緒` : ''}。`,
-    w.done.length ? `對完答案 <b class="num">${w.done.length}</b> 筆${scorable ? `：對 <b class="num">${hits}</b>／${scorable}` : ''}。` : '這週沒有到期的決定。',
+    w.done.length ? `對完答案 <b class="num">${w.done.length}</b> 筆${sc.n ? `：算進命中率的對 <b class="num">${sc.hits}</b>／${sc.n}，<span data-term="base">同類任何一天</span>照同樣方向做約 <b class="num">${pctU(sc.base)}</b>` : ''}。` : '這週沒有到期的決定。',
     `還在等對答案 <b class="num">${w.pending}</b> 筆${w.cool ? `；冷靜期待確認 <b class="num">${w.cool}</b> 筆` : ''}。`,
   ];
   return `<div class="sec-h"><h2>本週復盤</h2><span class="aside num">${fmt.d(w.from)} 起</span></div>
     <section class="panel pad week"><ul class="wk">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
       <div class="row-btns">${FX.hasVoice() ? `<button class="btn small ghost" id="a-wk-say">${ICON.speaker}念給我聽</button>` : ''}<button class="btn small ghost" id="a-ask-wk">${ICON.comms}帶這週去問 Claude</button></div></section>`;
 }
+/** 這週對完答案、算進命中率的：對幾筆、同類任何一天的基準 */
+function weekScore(w) {
+  const sc = w.done.map(A.scoreOf).filter((z) => z && z.counted);
+  return { n: sc.length, hits: sc.filter((z) => z.hit).length, base: avgN(sc.map((z) => z.base)) };
+}
 function weekSpeech() {
   const w = weekInfo();
-  const hits = w.done.filter((e) => A.hitOf(A.finalStance(e), e.res) === true && !A.nonView(e)).length;
-  const scorable = w.done.filter((e) => A.hitOf(A.finalStance(e), e.res) != null && !A.nonView(e)).length;
+  const sc = weekScore(w);
   const s = A.journalStats(journal.items);
-  return `本週復盤。這週記了 ${w.made.length} 筆決定。${w.done.length ? `對完答案 ${w.done.length} 筆${scorable ? `，對了 ${hits} 筆` : ''}。` : '這週沒有到期的決定。'}還在等對答案的有 ${w.pending} 筆。${s.all.n ? `累積命中率 ${Math.round(s.all.rate * 100)}%，同類任何一天大約 ${Math.round(s.all.base * 100)}%。` : ''}`;
+  return `本週復盤。這週記了 ${w.made.length} 筆決定。${w.done.length ? `對完答案 ${w.done.length} 筆${sc.n ? `，算進命中率的 ${sc.n} 筆對了 ${sc.hits} 筆，同類任何一天照同樣方向做大約 ${Math.round(sc.base * 100)}%` : ''}。` : '這週沒有到期的決定。'}還在等對答案的有 ${w.pending} 筆。${s.all.n ? `累積命中率 ${Math.round(s.all.rate * 100)}%，同類任何一天大約 ${Math.round(s.all.base * 100)}%。` : ''}`;
 }
 function vsBar(label, rate, base, n) {
   const w = (x) => clamp((x || 0) * 100, 0, 100).toFixed(1);
@@ -369,8 +404,9 @@ function statsHTML() {
   if (s.byConf.hi.n) r('很有把握（信心 4～5）', hr(s.byConf.hi));
   if (s.byConf.lo.n) r('沒那麼有把握（1～3）', hr(s.byConf.lo));
   if (isNum(a.edge)) r('依你的方向，20 日平均報酬', `<span class="num ${dirCls(a.edge)}">${pctS(a.edge, 2)}</span><small class="muted">同類任何一天 ${pctS(a.bedge, 2)}</small>`);
-  if (s.cooled.n) r('冷靜一晚後改變主意', `${s.cooled.n} 次：原本的想法對 ${s.cooled.origRight} 次`);
-  if (s.disc.n) r('和 Claude 討論後改變主意', `${s.disc.n} 次：討論前對 ${s.disc.beforeRight}、討論後對 ${s.disc.afterRight}`);
+  if (s.cooled.n) r('冷靜一晚後改變主意（沒照做）', `${s.cooled.n} 次：原本的想法如果照做，對 ${s.cooled.origRight} 次（${pctU(s.cooled.origRight / s.cooled.n)}）<small class="muted">同類任何一天 ${pctU(s.cooled.base)}</small>`);
+  const sd = (g) => (g.n ? `對 ${g.right}／${g.n}（同類任何一天 ${pctU(g.base)}）` : '觀望，不算對錯');
+  if (s.disc.n) r('和 Claude 討論後改變主意', `${s.disc.n} 次<small class="muted">討論前的想法：${sd(s.disc.before)}；討論後：${sd(s.disc.after)}</small>`);
   if (s.waited.n) r(`選擇觀望（${s.waited.n} 次）之後 20 日平均`, `<span class="num ${dirCls(s.waited.avg)}">${pctS(s.waited.avg, 2)}</span><small class="muted">同類任何一天 ${pctS(s.waited.base, 2)}</small>`);
   const tags = Object.entries(s.byTag).filter(([, g]) => g.n >= 3).sort((x, y) => y[1].n - x[1].n);
   return `${head}<section class="panel jstats">
@@ -395,7 +431,7 @@ function bindAide(v) {
   const awk = $('#a-ask-wk', v);
   if (awk) awk.addEventListener('click', () => openAsk('week'));
   const say = $('#a-wk-say', v);
-  if (say) say.addEventListener('click', () => { FX.sfx('comms'); if (!FX.speak(weekSpeech(), { force: true })) toast('這個瀏覽器不支援語音播報'); });
+  if (say) say.addEventListener('click', () => { FX.sfx('comms'); if (!FX.speak(weekSpeech(), { force: true })) toast(FX.voiceWhy()); });
 }
 
 // ================================================================== 首頁卡片、單檔頁入口
@@ -615,11 +651,12 @@ export function openIdea(o = {}) {
 
 // ================================================================== 冷靜期：隔天再確認
 function coolAnswer(e, res) {
+  if (!coolOpen(e)) { toast('冷靜期已經過了，照原本的想法對答案'); return; }
   e.cool.res = res;
   e.cool.at = new Date().toISOString();
   updEntry(e);
   FX.cue(res === 'kept' ? 'ok' : 'lock');
-  toast(res === 'kept' ? '記下了：冷靜之後還是這麼想' : '記下了：冷靜之後改變主意。原本的想法照樣會對答案，看看冷靜有沒有幫到你', null);
+  toast(res === 'kept' ? '記下了：冷靜之後還是這麼想' : '記下了：冷靜之後改變主意、不照做。它不算進你的命中率，但副官會告訴你「如果照做」會不會對', null);
 }
 
 // ================================================================== 日記詳情
@@ -634,17 +671,24 @@ export function openEntry(id) {
   else FX.sfx('open');
   const name = e.snap ? e.snap.n || nameOf(e.c) : nameOf(e.c);
   const name2 = e.c2 ? (e.snap2 ? e.snap2.n : nameOf(e.c2)) : '';
-  const hit = done ? A.hitOf(st, e.res) : null;
-  const base = done ? A.baseOf(st, e.res) : null;
+  const v = done ? verdictOf(e) : null;
   let outcome;
   if (done) {
     const r = e.res;
     const diff = st === 'swap' && isNum(r.ret2) ? r.ret2 - r.ret : null;
-    outcome = `<div class="oc done tone-${A.nonView(e) || hit == null ? 'mute' : hit ? 'hit' : 'miss'}">
+    const B = '<span data-term="base">同類任何一天</span>照同樣方向做';
+    let note = '';
+    if (v.counted) note = `${B}，會對的機率約 <b class="num">${pctU(v.base)}</b>。${v.hit ? '這次你對了，但單一次可能是運氣，累積多筆才看得出判斷力。' : '這次錯了，但單一次不代表判斷差，看累積的戰績。'}`;
+    else if (v.why === 'dropped') {
+      const h0 = A.hitOf(e.stance, r), b0 = A.baseOf(e.stance, r);
+      note = `冷靜一晚後你改變主意、沒有照做，這筆不算進命中率。${h0 == null ? '' : `原本的想法如果照做會${h0 ? '對' : '錯'}${isNum(b0) ? `（${B}約 <b class="num">${pctU(b0)}</b>）` : ''}。`}`;
+    } else if (v.why === 'nobase') note = `這筆沒有「同類任何一天」的基準可以比（${e.c2 ? '換過去的那檔上市太短，歷史不夠' : '這一類還沒有回測資料'}），所以不寫對錯、也不算進命中率。`;
+    else if (v.why === 'nonview') note = '理由是長期紀律、調整比重或要用錢，不是在猜漲跌：照樣對答案給你看，但不算命中率。';
+    outcome = `<div class="oc done tone-${v.counted ? (v.hit ? 'hit' : 'miss') : 'mute'}">
       <div class="oc-k">${A.HORIZON} 個交易日後・${fmt.dy(r.d)}</div>
-      <div class="oc-v"><b class="num ${dirCls(diff ?? r.ret)}" id="oc-n">${pctS(diff ?? r.ret, 2)}</b><span class="oc-tag">${A.nonView(e) ? '不計分' : hit == null ? '觀望不算對錯' : hit ? '對了' : '錯了'}</span></div>
+      <div class="oc-v"><b class="num ${dirCls(diff ?? r.ret)}" id="oc-n">${pctS(diff ?? r.ret, 2)}</b><span class="oc-tag">${v.why === 'wait' ? '觀望不算對錯' : v.lab}</span></div>
       <div class="oc-s">${e.c2 ? `${esc(name)} ${pctS(r.ret, 2)}、${esc(name2)} ${pctS(r.ret2, 2)}（含息）` : `含息報酬，當時 ${fmt.px(e.snap.px)} → ${fmt.px(r.px)}`}</div>
-      ${isNum(base) && !A.nonView(e) ? `<div class="oc-b"><span data-term="base">同類任何一天</span>照同樣方向做，會對的機率約 <b class="num">${pctU(base)}</b>。${hit != null ? (hit ? '這次你對了，但單一次可能是運氣，累積多筆才看得出判斷力。' : '這次錯了，但單一次不代表判斷差，看累積的戰績。') : ''}</div>` : ''}
+      ${note ? `<div class="oc-b">${note}</div>` : ''}
     </div>`;
   } else if (e.res && e.res.state === 'na') {
     outcome = `<div class="oc na"><b>沒辦法對答案</b><span class="small muted">${esc(e.res.why || '')}</span></div>`;
@@ -655,9 +699,11 @@ export function openEntry(id) {
       <div class="jr-prog big"><i style="width:${(p.n / A.HORIZON * 100).toFixed(0)}%"></i></div>
       <div class="oc-s">到目前為止 <b class="num ${dirCls(r)}">${pctS(r, 2)}</b>${e.c2 ? `（${esc(name2)} ${pctS(p.ret2, 2)} − ${esc(name)} ${pctS(p.ret, 2)}）` : '（含息）'}</div></div>`;
   }
-  const coolBox = e.cool ? (e.cool.res
-    ? `<div class="cool-box done">${ICON.clock}<span>冷靜期：${e.cool.res === 'kept' ? '隔天還是這麼想' : '隔天改變主意了'}（${fmt.d(twDay(e.cool.at))}）</span></div>`
-    : `<div class="cool-box">${ICON.clock}<span><b>${coolDue(e) ? '冷靜期到了' : `冷靜期：${fmt.d(e.cool.due)} 開盤前再確認`}</b>　冷靜一晚之後，還是這麼想嗎？</span><span class="row-btns"><button class="btn small" id="e-kept">還是這麼想</button><button class="btn small ghost" id="e-changed">改變主意了</button></span></div>`) : '';
+  const coolBox = !e.cool ? '' : e.cool.res
+    ? `<div class="cool-box done">${ICON.clock}<span>冷靜期：${e.cool.res === 'kept' ? '隔天還是這麼想' : `隔天改變主意了${A.coolDropped(e) ? '，沒有照做（不算進命中率）' : ''}`}（${fmt.d(twDay(e.cool.at))}）</span></div>`
+    : coolLapsed(e)
+      ? `<div class="cool-box done">${ICON.clock}<span>冷靜期（${fmt.d(e.cool.due)}）過了沒有回覆：照原本的想法對答案。</span></div>`
+      : `<div class="cool-box">${ICON.clock}<span><b>${coolDue(e) ? '冷靜期到了（今天以內回覆才算數）' : `冷靜期：${fmt.d(e.cool.due)} 開盤前再確認`}</b>　冷靜一晚之後，還是這麼想嗎？</span><span class="row-btns"><button class="btn small" id="e-kept">還是這麼想</button><button class="btn small ghost" id="e-changed">改變主意了</button></span></div>`;
   const ck = e.checks;
   const after = e.after;
   const exits = after && after.exit ? A.parseExit(after.exit, row ? quote(row).px : e.snap.px) : [];
@@ -683,9 +729,10 @@ export function openEntry(id) {
       ${ck ? `<details class="en-ck"><summary>${ICON.aide}副官當時說：${esc(ck.verdict)}<small class="num">✓ ${ck.ok}　⚠ ${ck.warn}${ck.stop ? `　⛔ ${ck.stop}` : ''}</small></summary>${checksListHTML(ck.items || [])}</details>` : ''}
       <div class="en-sec"><div class="en-st">${ICON.comms}和 Claude 討論後的結論</div>
         ${after ? `<div class="after">${after.stance ? `<div><span>立場</span><b>${A.STANCE[after.stance] ? A.STANCE[after.stance].t : '—'}</b></div>` : ''}${after.conf ? `<div><span>信心</span><b>${after.conf}／5</b></div>` : ''}${after.why ? `<div><span>理由</span><p>${esc(after.why)}</p></div>` : ''}${after.risk ? `<div><span>風險</span><p>${esc(after.risk)}</p></div>` : ''}${after.exit ? `<div><span>復盤條件</span><p>${esc(after.exit)}</p></div>` : ''}</div>
+          ${after.stance && !A.afterCounts(e) ? `<p class="small muted late-note">這份結論${after.at ? `是 ${fmt.d(twDay(after.at))} ` : ''}才貼回來的（超過決定後隔一個交易日），只記錄下來，不改變對答案的立場——避免看到走勢才改。</p>` : ''}
           ${exits.length ? `<div class="quick">${exits.map((x, k) => `<button type="button" class="pill" data-alert="${k}">${ICON.bell}設到價提醒：${x.op === 'le' ? '跌到' : '漲到'} ${fmt.px(x.px)}</button>`).join('')}</div>` : ''}
-          <button type="button" class="link small" id="e-repaste">重新貼上</button>`
-    : `<p class="small muted">在 Claude 討論完，請它給你【冷眼結論】，整段貼到這裡。副官會認出立場、信心、理由、風險與復盤條件；復盤條件裡的價位可以一鍵設成到價提醒。</p>`}
+          ${A.afterCounts(e) && !pasteOpen(e) ? '' : '<button type="button" class="link small" id="e-repaste">重新貼上</button>'}`
+    : `<p class="small muted">在 Claude 討論完，請它給你【冷眼結論】，整段貼到這裡。副官會認出立場、信心、理由、風險與復盤條件；復盤條件裡的價位可以一鍵設成到價提醒。${pasteOpen(e) ? `${fmt.d(A.addWeekdays(e.snap.d, A.AIDE.late))} 以前貼回，討論後的立場才算進對答案。` : '現在才貼的結論只記錄，不改變對答案的立場（超過決定後隔一個交易日）。'}</p>`}
         <div id="e-paste"${after ? ' hidden' : ''}><textarea class="input area" id="e-concl" rows="4" placeholder="貼上【冷眼結論】……"></textarea>
           <div class="seg mini" id="e-pst" hidden>${Object.entries(A.STANCE).map(([k, s]) => `<button type="button" data-pst="${k}">${s.t}</button>`).join('')}</div>
           <div class="f-err" id="e-err" role="alert"></div>
@@ -693,19 +740,20 @@ export function openEntry(id) {
       </div>
       <label class="field en-sec"><span class="en-st">${ICON.chart}復盤筆記</span><textarea class="input area" id="e-note" rows="2" maxlength="400" placeholder="${done ? '這次學到什麼？下次遇到類似情況要怎麼做？' : '對完答案後，回來寫下學到的事'}">${esc(e.note || '')}</textarea></label>
       <div class="m-actions">
-        <button type="button" class="btn danger ghost" id="e-del">刪除${e.src === 'trade' ? '紀錄' : ''}</button>
+        ${done ? '' : `<button type="button" class="btn danger ghost" id="e-del">刪除${e.src === 'trade' ? '紀錄' : ''}</button>`}
         <button type="button" class="btn ghost" id="e-ask">${ICON.comms}${done ? '帶去復盤' : '帶去問 Claude'}</button>
         <button type="button" class="btn primary" data-close>完成</button>
       </div>
-      ${e.src === 'trade' ? '<p class="small muted">這筆是交易自動記下的；刪除紀錄不會刪掉交易本身。</p>' : ''}
+      ${done ? '<p class="small muted">已經對完答案的紀錄不能刪除：戰績要誠實，錯的也要留著。</p>' : e.src === 'trade' ? '<p class="small muted">這筆是交易自動記下的；刪除紀錄不會刪掉交易本身。</p>' : ''}
     </div>`, {
     label: '決策紀錄',
     onClose: () => saveNote(),
   });
   noteEl = $('#e-note', card);
-  if (reveal) {
-    const sound = A.nonView(e) || hit == null ? 'online' : hit ? 'hit' : 'miss';
-    setTimeout(() => { FX.cue(sound); FX.stamp(A.nonView(e) ? '結果揭曉' : hit == null ? '觀望' : hit ? '對了' : '錯了', hit === false ? 'amber' : hit ? 'glacier' : 'aurora', `${A.HORIZON} 個交易日後 ${pctS(e.res.ret2 != null && st === 'swap' ? e.res.ret2 - e.res.ret : e.res.ret, 2)}`); FX.pulse($('.oc', card), 'fx-reveal', 900); }, 120);
+  if (reveal && v) {
+    const sound = v.counted ? (v.hit ? 'hit' : 'miss') : 'online';
+    const word = v.counted ? v.lab : v.why === 'wait' ? '觀望' : '結果揭曉';
+    setTimeout(() => { FX.cue(sound); FX.stamp(word, v.counted ? (v.hit ? 'glacier' : 'amber') : 'aurora', `${A.HORIZON} 個交易日後 ${pctS(e.res.ret2 != null && st === 'swap' ? e.res.ret2 - e.res.ret : e.res.ret, 2)}`); FX.pulse($('.oc', card), 'fx-reveal', 900); }, 120);
   }
   $$('[data-open]', card).forEach((b) => b.addEventListener('click', () => { closeModal(); openDetailLazy(b.dataset.open); }));
   const kept = $('#e-kept', card);
@@ -731,7 +779,7 @@ export function openEntry(id) {
     delete e.after.stanceRaw;
     updEntry(e);
     FX.cue('lock');
-    toast('已存下討論後的結論', null);
+    toast(A.afterCounts(e) ? '已存下討論後的結論' : '已存下結論（超過決定後隔一個交易日，只記錄、不改變對答案的立場）', null);
     reopen();
   });
   $$('[data-pst]', card).forEach((b) => b.addEventListener('click', () => {
@@ -752,7 +800,8 @@ export function openEntry(id) {
     b.disabled = true;
   }));
   $('#e-ask', card).addEventListener('click', () => { saveNote(); noteEl = null; openAsk(done ? 'review' : 'idea', { id: e.id }); });
-  $('#e-del', card).addEventListener('click', (ev) => {
+  const del = $('#e-del', card);
+  if (del) del.addEventListener('click', (ev) => {
     const b = ev.currentTarget;
     if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = '確定刪除？'; FX.sfx('warn'); return; }
     const k = journal.items.findIndex((x) => x.id === e.id);
@@ -834,7 +883,7 @@ export function openAsk(kind, o = {}) {
       return A.packWeek({
         short: st.short, when: whenText(), from: w.from,
         made: w.made.map((x) => ({ name: nameOf(x.c) + (x.c2 ? ` → ${nameOf(x.c2)}` : ''), stance: x.stance, src: x.src, tags: x.tags, verdict: x.checks && x.checks.verdict })),
-        done: w.done.map((x) => { const s2 = A.finalStance(x); return { name: nameOf(x.c), stance: s2, ret: x.res.ret, hit: A.nonView(x) ? null : A.hitOf(s2, x.res), base: A.baseOf(s2, x.res) }; }),
+        done: w.done.map((x) => { const z = A.scoreOf(x); return { name: nameOf(x.c), stance: z.st, ret: x.res.ret, hit: z.counted ? z.hit : null, base: z.counted ? z.base : null, why: z.why }; }),
         stats: A.journalStats(journal.items), pending: w.pending, cool: w.cool, question: st.q.trim(),
       });
     }

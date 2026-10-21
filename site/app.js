@@ -11,7 +11,7 @@ import { openDetail, closeDetail, renderDetail, refreshDetailQuote } from './she
 import { openTradeForm, openCashForm, openBackup, checkAlerts, closeModal, modalOpen, wipeBook, openPaperStart, PAPER_FRESH_MIN, openModal } from './forms.js';
 import { installExplain, setExplain, explainOn, glossaryHTML, bindGlossary } from './learn.js';
 import { irisSVG, heatHTML, heatLegend, linesSVG, bindLines } from './viz.js';
-import { brief, benchValue, equityCurve } from './calc.js';
+import { brief, benchValue, equityCurve, dcaDueToday } from './calc.js';
 import { openDuel, openTM } from './tools.js';
 import {
   renderAide, aideHomeHTML, bindAideHome, aideBadge, aideSpeech, refreshEvals, onTrade, onLotDel, onLotEdit, openIdea, openAsk,
@@ -429,7 +429,7 @@ function bindBrief(v) {
   if (say) say.addEventListener('click', () => {
     if (FX.isSpeaking()) { FX.stopSpeak(); return; }
     FX.sfx('comms');
-    if (!FX.speak(briefSpeech(false), { force: true })) toast('這個瀏覽器不支援語音播報');
+    if (!FX.speak(briefSpeech(false), { force: true })) toast(FX.voiceWhy());
   });
   const ask = $('#br-ask', v);
   if (ask) ask.addEventListener('click', () => openAsk('market'));
@@ -470,7 +470,7 @@ function buildActions(P) {
   // 定期定額的扣款日（週末順延到星期一）
   for (const p of settings.plans || []) {
     const r = S.rows.get(p.c);
-    if (!r || dcaDue(p.day) !== today()) continue;
+    if (!r || !dcaDueToday(p.day, today())) continue;
     out.push({ pri: 1, code: p.c, chip: chip('扣款日', 'alert'), title: r.n, text: `今天扣 <b class="num">${money(p.amt)}</b> 元（每月 ${p.day} 號）。定期定額照紀律扣，不看短期訊號${r.ps === 'trim' || r.ps === 'caution' ? `；規則現在是「${POS[r.ps].t}」，另外的單筆加碼先等一等` : ''}。` });
   }
   const held = new Set(P ? P.holdings.map((x) => x.code) : []);
@@ -489,16 +489,6 @@ function buildActions(P) {
   return out.sort((a, b) => a.pri - b.pri).filter((a) => { const k = a.code + a.chip; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 9);
 }
 /** 這個月的扣款日：當月的 day 號，遇到週六、週日順延到星期一（颱風假等臨時休市看不到） */
-function dcaDue(day) {
-  const { y, m } = twParts();
-  let d = y * 10000 + m * 100 + day;
-  for (let k = 0; k < 3; k++) {
-    const wd = new Date(Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100)).getUTCDay();
-    if (wd >= 1 && wd <= 5) break;
-    d = PF.addDays(d, 1);
-  }
-  return d;
-}
 function actionsHTML(P) {
   const acts = buildActions(P);
   let html = `<div class="sec-h"><h2>今日行動</h2><span class="aside">${acts.length ? `${acts.length} 件` : ''}</span></div>`;
@@ -1068,7 +1058,7 @@ function drawSettings() {
     <section class="panel set">
       <div class="srow"><div><div class="h">音效</div><div class="d">點按、切換、檢查、上鎖、到價警報都有聲音（iPhone 側邊靜音開關打開時不出聲）</div></div><button class="switch" role="switch" id="s-sfx" aria-checked="${settings.sfx !== false}" aria-label="音效"></button></div>
       <div class="srow"><div><div class="h">音量</div></div><div class="seg mini">${[[1, '小'], [2, '中'], [3, '大']].map(([k, t]) => `<button data-vol="${k}" aria-pressed="${settings.vol === k}">${t}</button>`).join('')}</div></div>
-      <div class="srow"><div><div class="h">語音播報</div><div class="d">${FX.hasVoice() ? '每天開機時，副官把晨報念給你聽（用手機內建的中文語音，不連網）' : '這個瀏覽器不支援語音播報'}</div></div><span class="row-btns"><button class="btn small ghost" id="s-say"${FX.hasVoice() ? '' : ' disabled'}>${ICON.speaker}試聽</button><button class="switch" role="switch" id="s-voice" aria-checked="${settings.voice !== false}" aria-label="語音播報"></button></span></div>
+      <div class="srow"><div><div class="h">語音播報</div><div class="d">${FX.hasVoice() ? '每天開機時，副官把晨報念給你聽（只用裝置內建的中文語音，不連網；只有網路語音的裝置不會念）' : FX.voiceWhy()}</div></div><span class="row-btns"><button class="btn small ghost" id="s-say"${FX.hasVoice() ? '' : ' disabled'}>${ICON.speaker}試聽</button><button class="switch" role="switch" id="s-voice" aria-checked="${settings.voice !== false}" aria-label="語音播報"></button></span></div>
       <div class="srow"><div><div class="h">開機要點一下啟動</div><div class="d">手機規定要先點一下才能出聲。打開：每天第一次開啟時按「啟動」，有完整的點火音效和語音；關掉：自動開機、不出聲</div></div><button class="switch" role="switch" id="s-ignite" aria-checked="${settings.ignite !== false}" aria-label="開機要點一下啟動"></button></div>
       <div class="srow"><div><div class="h">畫面特效</div><div class="d">切換分頁的掃描、副官檢查的逐條鎖定、蓋章與結果揭曉（手機設定「減少動態效果」時自動關閉）</div></div><button class="switch" role="switch" id="s-fx" aria-checked="${settings.fx !== false}" aria-label="畫面特效"></button></div>
       <div class="srow"><div><div class="h">震動回饋</div><div class="d">Android 手機有效（iPhone 的網頁不支援震動）</div></div><button class="switch" role="switch" id="s-haptic" aria-checked="${settings.haptic !== false}" aria-label="震動回饋"></button></div>
@@ -1207,7 +1197,7 @@ function bindSettings() {
   $('#s-say', sh).addEventListener('click', () => {
     if (FX.isSpeaking()) { FX.stopSpeak(); return; }
     FX.sfx('comms');
-    FX.speak(briefSpeech(true), { force: true });
+    if (!FX.speak(briefSpeech(true), { force: true })) toast(FX.voiceWhy());
   });
   $('#s-proj', sh).addEventListener('click', async () => {
     const t = projectText();

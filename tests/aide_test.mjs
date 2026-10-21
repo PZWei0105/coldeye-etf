@@ -74,35 +74,52 @@ t('對錯與基準：看多 > 0、看空 < 0、觀望不算；基準看多用上
   assert.equal(A.hitOf('bear', { state: 'done', ret: 0 }), false);
 });
 
-t('最後算分的立場：討論後的決定優先；換股紀錄只認換股或觀望', () => {
+t('最後算分的立場：討論後的決定優先；換股紀錄只認換股或觀望；隔一個交易日以後才貼的不算', () => {
+  // 10/22（週四）決定；台灣時間 10/23 晚上 11 點以前貼回都算，10/26（週一）才貼不算
+  const on = '2026-10-23T14:00:00.000Z', late = '2026-10-25T16:30:00.000Z';
+  const mk = (stance, a, at = on) => ({ stance, snap: { d: 20261022, px: 1 }, after: { stance: a, at } });
   assert.equal(A.finalStance({ stance: 'bull' }), 'bull');
-  assert.equal(A.finalStance({ stance: 'bull', after: { stance: 'wait' } }), 'wait');
-  assert.equal(A.finalStance({ stance: 'swap', after: { stance: 'bull' } }), 'swap');
-  assert.equal(A.finalStance({ stance: 'swap', after: { stance: 'wait' } }), 'wait');
-  assert.equal(A.finalStance({ stance: 'bull', after: { stance: 'swap' } }), 'bear');
+  assert.equal(A.finalStance(mk('bull', 'wait')), 'wait');
+  assert.equal(A.finalStance(mk('swap', 'bull')), 'swap');
+  assert.equal(A.finalStance(mk('swap', 'wait')), 'wait');
+  assert.equal(A.finalStance(mk('bull', 'swap')), 'bear');
+  assert.equal(A.finalStance(mk('bull', 'bear', late)), 'bull');
+  assert.equal(A.finalStance({ stance: 'bull', snap: { d: 20261022, px: 1 }, after: { stance: 'bear' } }), 'bull');   // 沒有時間的不算
+  // 冷靜期：當天（due）以內回覆「改變主意」才算
+  assert.equal(A.coolDropped({ cool: { due: 20261023, res: 'changed', at: on } }), true);
+  assert.equal(A.coolDropped({ cool: { due: 20261023, res: 'changed', at: late } }), false);
+  assert.equal(A.coolDropped({ cool: { due: 20261023, res: 'kept', at: on } }), false);
 });
 
 t('戰績：和基準並列、長期紀律不算命中率、和規則同向／唱反調分開、冷靜期與討論前後', () => {
-  const mk = (stance, ret, st, extra = {}) => ({ stance, snap: { d: 20260101, px: 1, st }, res: { state: 'done', ret, bu: 0.6, ba: 0.02 }, ...extra });
+  const mk = (stance, ret, st, extra = {}) => ({ stance, snap: { d: 20260105, px: 1, st }, res: { state: 'done', ret, bu: 0.6, ba: 0.02 }, ...extra });
+  const at = '2026-01-05T08:00:00.000Z';
   const items = [
     mk('bull', 0.05, 1), mk('bull', -0.02, 1), mk('bull', 0.01, -1, { conf: 5 }), mk('bear', 0.03, 1, { conf: 4 }),
     mk('bull', 0.04, 0, { tags: ['dca'] }),                                  // 長期紀律：不算
-    mk('bear', -0.05, -1, { cool: { res: 'changed' } }),                    // 冷靜後改變主意，原本是對的
-    mk('bull', -0.03, 1, { after: { stance: 'wait' } }),                    // 討論後改成觀望：不算命中率
+    mk('bear', -0.05, -1, { cool: { due: 20260106, res: 'changed', at } }),  // 冷靜後改變主意（沒照做）：不算命中率，另外統計
+    mk('bull', -0.03, 1, { after: { stance: 'wait', at } }),                // 討論後改成觀望：不算命中率
     { stance: 'bull', res: { state: 'wait' } },
   ];
   const s = A.journalStats(items);
   assert.equal(s.done, 7);
-  assert.equal(s.all.n, 5);
-  assert.equal(s.all.hits, 3);
-  near(s.all.base, (0.6 * 3 + 0.4 * 2) / 5);
-  assert.equal(s.vsRule.same.n, 3); assert.equal(s.vsRule.same.hits, 2);
+  assert.equal(s.all.n, 4);
+  assert.equal(s.all.hits, 2);
+  near(s.all.base, (0.6 * 3 + 0.4 * 1) / 4);
+  assert.equal(s.vsRule.same.n, 2); assert.equal(s.vsRule.same.hits, 1);
   assert.equal(s.vsRule.opp.n, 2); assert.equal(s.vsRule.opp.hits, 1); assert.equal(s.vsRule.opp.ruleHits, 1);
   assert.equal(s.byConf.hi.n, 2);
-  assert.equal(s.cooled.n, 1); assert.equal(s.cooled.origRight, 1);
-  assert.equal(s.disc.n, 1); assert.equal(s.disc.beforeRight, 0); assert.equal(s.disc.afterRight, 0);
+  assert.equal(s.cooled.n, 1); assert.equal(s.cooled.origRight, 1); near(s.cooled.base, 0.4);
+  assert.equal(s.disc.n, 1);
+  assert.deepEqual(s.disc.before, { n: 1, right: 0, base: 0.6 });
+  assert.equal(s.disc.after.n, 0);
   assert.equal(s.waited.n, 1);
   assert.equal(s.enough, false);
+  // 每一筆的標示和戰績同一套算法
+  const why = items.map((e) => { const z = A.scoreOf(e); return z ? (z.counted ? (z.hit ? 'hit' : 'miss') : z.why) : null; });
+  assert.deepEqual(why, ['hit', 'miss', 'hit', 'miss', 'nonview', 'dropped', 'wait', null]);
+  // 沒有同類基準（例如換到歷史太短的 ETF）：不算對錯
+  assert.equal(A.scoreOf({ stance: 'swap', c2: 'X', snap: { d: 1, px: 1 }, res: { state: 'done', ret: 0.01, ret2: 0.05 } }).why, 'nobase');
 });
 
 t('換股基準：任何一天換過去，20 天後贏的比例', () => {
@@ -134,6 +151,14 @@ t('Claude 的【冷眼結論】：各種寫法都認得出來', () => {
   assert.equal(A.parseConclusion('立場：減碼一半').stance, 'bear');
   assert.equal(A.parseConclusion('立場：先不加碼，續抱').stance, 'wait');
   assert.equal(A.parseConclusion('立場：想換股（0056 換成 00878）').stance, 'swap');
+  // 否定與條件：「不買」不是買、「跌破再減碼」是條件不是立場
+  const st = (x) => A.stanceOf(x);
+  for (const x of ['不買', '不加碼', '不賣', '不換股', '先不買', '暫不加碼', '別急著賣，續抱', '不買也不賣', '續抱，跌破 105 再減碼', '先觀望，若跌破 105.2 就減碼', '不打算加碼']) assert.equal(st(x), 'wait', x);
+  assert.equal(st('減碼一半，不換股'), 'bear');
+  assert.equal(st('不要追高，分批買進'), 'bull');
+  assert.equal(st('分批買進，跌破 101 停損'), 'bull');
+  assert.equal(st('賣掉 0056 換成 00878'), 'swap');
+  assert.equal(st('收盤站上 111.3 再加碼'), null);
   // 原封不動把四個選項貼回來：認不出來，要使用者自己選
   const b = A.parseConclusion('【冷眼結論】\n立場：想買／加碼、想賣／減碼、先觀望、想換股（四選一）\n信心：1～5');
   assert.ok(!b.stance && b.stanceRaw);

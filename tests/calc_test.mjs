@@ -111,6 +111,29 @@ t('熱力圖：面積和數值成正比、不超出範圍', () => {
   }
 });
 
+t('定期定額扣款日：每個計畫每個月剛好提醒一次、都在星期一到五；2027/2/27（週六）順延到 3/1 也不會漏', () => {
+  for (let day = 1; day <= 28; day++) {
+    const perMonth = new Map();
+    let d = 20261101;
+    while (d <= 20281130) {
+      if (C.dcaDueToday(day, d)) {
+        const wd = new Date(Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100)).getUTCDay();
+        assert.ok(wd >= 1 && wd <= 5, `${day}: ${d}`);
+        // 算成「哪一期」：順延跨月的算上個月那一期
+        const due = [0, 1, 2].map((k) => pf.addDays(d, -k)).find((x) => x % 100 === day);
+        const key = Math.floor(due / 100);
+        perMonth.set(key, (perMonth.get(key) || 0) + 1);
+      }
+      d = pf.addDays(d, 1);
+    }
+    assert.equal(perMonth.size, 25, `day ${day}: ${perMonth.size} 期`);
+    for (const [k, v] of perMonth) assert.equal(v, 1, `day ${day} ${k}: ${v} 次`);
+  }
+  assert.equal(C.dcaDueToday(27, 20270301), true);     // 2027/2/27 週六 → 3/1 週一
+  assert.equal(C.dcaDueToday(28, 20270301), true);     // 2027/2/28 週日 → 3/1 週一
+  assert.equal(C.dcaDueToday(1, 20270301), true);
+});
+
 t('部位走勢：市值、淨投入、除息前一天買才領得到、分割後股數變多', () => {
   const h = { d: [20260105, 20260106, 20260107, 20260108, 20260109], p: [100, 102, 100, 25.5, 26], splits: [[20260108, 4]], divs: [[20260107, 2]] };
   const lots = [
@@ -138,6 +161,32 @@ t('部位走勢：賣出拿回的錢、超賣不算、冷門 ETF 沒成交用前
   assert.deepEqual(r.mv, [60000, 10000, 11000]);
   assert.deepEqual(r.inv, [60000, 9000, 9000]);
   assert.deepEqual(r.cash, [40000, 91000, 91000]);
+});
+
+t('部位走勢：比歷史資料還早買的，之前的配息也要算到；冷門 ETF 除息那天沒成交，市值不能和配息重複算', () => {
+  // 2018 年買、歷史資料從 2020 年開始：2019 年的配息照樣入帳
+  const hA = { d: [20200102, 20200103], p: [30, 30.5], splits: [], divs: [[20190716, 1.4], [20191023, 0.4]] };
+  const a = C.equityCurve([{ c: 'A', side: 'buy', d: 20180601, sh: 5000, px: 25, fee: 0, at: '1' }], { A: hA });
+  assert.equal(a.d[0], 20200102);
+  assert.equal(a.div[0], 5000 * 1.8);
+  // 冷門 T 在除息日 8/18 沒有成交（L 有成交，所以那天在曲線上）：參考價先扣掉配息
+  const hT = { d: [20210816, 20210817, 20210819], p: [10, 10, 9.6], splits: [], divs: [[20210818, 0.5]] };
+  const hL = { d: [20210816, 20210817, 20210818, 20210819], p: [50, 50, 50, 50], splits: [], divs: [] };
+  const L = [{ c: 'T', side: 'buy', d: 20210816, sh: 1000, px: 10, fee: 0, at: '1' }, { c: 'L', side: 'buy', d: 20210816, sh: 1, px: 50, fee: 0, at: '2' }];
+  const e = C.equityCurve(L, { T: hT, L: hL });
+  const k = e.d.indexOf(20210818);
+  assert.equal(e.div[k], 500);
+  near(e.mv[k] + e.div[k], 1000 * 10 + 50);               // 除息當天：市值少 500、配息多 500
+  near(e.mv[k + 1], 1000 * 9.6 + 50);                      // 隔天有成交：用真的價格
+  // 分割那天沒成交：參考價除以倍數，市值不會暴增
+  const hS = { d: [20250610, 20250611, 20250620], p: [200, 200, 50.5], splits: [[20250618, 4]], divs: [] };
+  const hM = { d: [20250610, 20250611, 20250618, 20250620], p: [1, 1, 1, 1], splits: [], divs: [] };
+  const s = C.equityCurve([{ c: 'S', side: 'buy', d: 20250610, sh: 100, px: 200, fee: 0, at: '1' }, { c: 'M', side: 'buy', d: 20250610, sh: 1, px: 1, fee: 0, at: '2' }], { S: hS, M: hM });
+  near(s.mv[s.d.indexOf(20250618)], 400 * 50 + 1);
+  // 從中間開始畫（例如只看近一年）：之前的除息不能拿來扣參考價
+  const r = C.equityCurve([{ c: 'T', side: 'buy', d: 20210816, sh: 1000, px: 10, fee: 0, at: '1' }, { c: 'L', side: 'buy', d: 20210816, sh: 1, px: 50, fee: 0, at: '2' }], { T: hT, L: hL }, { from: 20210819 });
+  near(r.mv[0], 1000 * 9.6 + 50);
+  assert.equal(r.div[0], 500);
 });
 
 t('部位走勢：模擬倉最後一天的總資產＝部位計算的總資產', () => {

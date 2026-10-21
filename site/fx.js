@@ -159,7 +159,7 @@ export function haptic(kind = 'tap') {
 /** 聲音＋震動一起 */
 export function cue(name) { sfx(name); if (HAPTIC[name] != null) haptic(name); }
 
-// ------------------------------------------------------------------ 語音播報（瀏覽器內建的語音，不連網）
+// ------------------------------------------------------------------ 語音播報（只用裝置內建的語音，不連網）
 let voices = [];
 const canSpeak = () => typeof window !== 'undefined' && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
 function loadVoices() { try { voices = window.speechSynthesis.getVoices() || []; } catch { voices = []; } }
@@ -167,13 +167,33 @@ if (canSpeak()) {
   loadVoices();
   try { window.speechSynthesis.addEventListener('voiceschanged', loadVoices); } catch { /* 舊瀏覽器 */ }
 }
+const isZh = (v) => /^zh|cmn/i.test(v.lang) || /中文|國語|國語|普通話|Chinese/i.test(v.name);
+/**
+ * 只用裝置內建（離線）的語音。網路語音（例如桌機 Chrome 的「Google 國語（臺灣）」、Edge 的 Online 語音）
+ * 會把要念的文字送到語音服務，而晨報裡有你的持股和戰績，不能送出去。
+ */
 function pickVoice() {
-  const zh = voices.filter((v) => /^zh|cmn/i.test(v.lang) || /中文|國語|國語|普通話|Chinese/i.test(v.name));
+  const zh = voices.filter((v) => v.localService !== false && !/Online/i.test(v.name) && isZh(v));
   const tw = zh.filter((v) => /TW|Hant|臺灣|台灣|Taiwan/i.test(`${v.lang} ${v.name}`));
-  return tw.find((v) => /Mei-Jia|美佳|Google|Yating|Hanhan|HsiaoChen|HsiaoYu|Zhiwei/i.test(v.name)) || tw[0]
+  return tw.find((v) => /Mei-?Jia|美佳|Yating|Hanhan|HsiaoChen|HsiaoYu|Zhiwei/i.test(v.name)) || tw[0]
     || zh.find((v) => !/HK|yue|粵|Cantonese/i.test(`${v.lang} ${v.name}`)) || null;
 }
-export const hasVoice = () => canSpeak();
+/** none：瀏覽器不支援；ok：有內建中文語音；remote：只有網路語音（不使用）；nozh：沒有中文語音；unknown：語音清單還沒載入 */
+export function voiceStatus() {
+  if (!canSpeak()) return 'none';
+  if (!voices.length) loadVoices();
+  if (!voices.length) return 'unknown';
+  if (pickVoice()) return 'ok';
+  return voices.some(isZh) ? 'remote' : 'nozh';
+}
+export const hasVoice = () => ['ok', 'unknown'].includes(voiceStatus());
+/** 沒辦法念的時候，給使用者看的一句話 */
+export function voiceWhy() {
+  const s = voiceStatus();
+  if (s === 'remote') return '這台裝置只有「網路語音」：要念的內容會送到語音服務，為了不把你的持股送出去，冷眼不用它。可以在系統設定安裝「中文（台灣）」語音';
+  if (s === 'nozh' || s === 'unknown') return '這台裝置沒有內建的中文語音，可以在系統設定安裝「中文（台灣）」語音';
+  return '這個瀏覽器不支援語音播報';
+}
 /** 把畫面上的文字改成好念的句子：+0.84% → 上漲百分之 0.84、10/24 → 10 月 24 日、去掉千分位 */
 export function speechText(s) {
   return String(s || '')
@@ -204,13 +224,15 @@ export function speak(text, { force = false } = {}) {
   const cut = (str, re) => str.replace(re, '$1\u0000').split('\u0000');
   const parts = cut(s, /([。！？；\n])/g).map((x) => x.trim()).filter(Boolean)
     .flatMap((x) => (x.length > 140 ? cut(x, /([，、])/g) : [x]));
+  if (!voices.length) loadVoices();
   const v = pickVoice();
+  if (!v) return false;   // 沒有內建的中文語音：寧可不念，也不用網路語音
   const vol = { 1: 0.6, 2: 0.9, 3: 1 }[prefs().vol] || 0.9;
   setSpeaking(true);
   parts.forEach((p, i) => {
     const u = new SpeechSynthesisUtterance(p);
-    u.lang = v ? v.lang : 'zh-TW';
-    if (v) u.voice = v;
+    u.lang = v.lang;
+    u.voice = v;
     u.rate = 1.04;
     u.pitch = 1;
     u.volume = vol;
@@ -226,7 +248,10 @@ export function speak(text, { force = false } = {}) {
 /** iPhone 規定語音要在「點擊的當下」先開口一次，之後才能自動念：開機點火時先念一個聽不到的空白 */
 export function primeSpeech() {
   if (!canSpeak()) return;
-  try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; u.lang = 'zh-TW'; window.speechSynthesis.speak(u); } catch { /* 不支援 */ }
+  if (!voices.length) loadVoices();
+  const v = pickVoice();
+  if (!v) return;
+  try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; u.lang = v.lang; u.voice = v; window.speechSynthesis.speak(u); } catch { /* 不支援 */ }
 }
 export function stopSpeak() {
   speakToken++;

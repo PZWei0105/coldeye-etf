@@ -1,6 +1,6 @@
 /* 冷眼 — 純計算：大盤之瞳、冷眼晨報、存股時光機、模擬倉基準、ETF 對決、熱力圖版面。
    全部是純函式，不碰畫面、不連網；同樣的輸入永遠得到同樣的結果（tests/calc_test.mjs 會檢查）。 */
-import { FEE_RATE, tradeCost, daysBetween } from './pf.js';
+import { FEE_RATE, tradeCost, daysBetween, addDays } from './pf.js';
 
 const isNum = (x) => typeof x === 'number' && isFinite(x);
 const round = (x, n = 0) => { const k = 10 ** n; return Math.round(x * k) / k; };
@@ -263,7 +263,7 @@ export function equityCurve(lots, hists, opt = {}) {
   const cal = [...days].sort((a, b) => a - b);
   if (!cal.length) return out;
   // 每一檔：日期 → 收盤；分割、除息依日期排好
-  const px = {}, ev = {}, ptr = {}, last = {}, held = {};
+  const px = {}, ev = {}, ptr = {}, last = {}, lastD = {}, held = {};
   for (const c of ok) {
     const h = hists[c];
     px[c] = new Map(h.d.map((d, i) => [d, h.p[i]]));
@@ -274,13 +274,13 @@ export function equityCurve(lots, hists, opt = {}) {
     ptr[c] = 0;
     held[c] = 0;
     // 開始那天以前最後一次的收盤（第一天就要有價格）
-    let lp = null;
-    for (let i = 0; i < h.d.length && h.d[i] < start; i++) lp = h.p[i];
+    let lp = null, ld = 0;
+    for (let i = 0; i < h.d.length && h.d[i] < start; i++) { lp = h.p[i]; ld = h.d[i]; }
     last[c] = lp;
+    lastD[c] = ld;
   }
   let inv = 0, div = 0, cash = isFinite(opt.cash0) ? opt.cash0 : 0;
   let li = 0;
-  // 開始那天以前的交易（opt.from 比第一筆交易晚的時候）先全部套用，不畫出來
   const applyLot = (l) => {
     const fee = isFinite(l.fee) ? l.fee : 0;
     const tax = isFinite(l.tax) ? l.tax : 0;
@@ -297,26 +297,32 @@ export function equityCurve(lots, hists, opt = {}) {
       cash -= l.sh * l.px + fee;
     }
   };
-  const applyEvents = (c, upto) => {
-    const e = ev[c];
-    while (ptr[c] < e.length && e[ptr[c]][0] <= upto) {
-      const [, kind, v] = e[ptr[c]++];
-      if (kind === 's') held[c] *= v;
-      else if (held[c] > 1e-9) { const amt = Math.floor(held[c] * v + 1e-9); div += amt; cash += amt; }
+  // 一次分割或除息。冷門 ETF 在那天（或到今天為止）沒有成交：參考價先照除權息調整
+  // （除息＝前一次收盤減掉配息、分割＝除以倍數），不然配息已經入帳、市值卻還是除息前的價格，會重複算
+  const applyEvent = (c, d) => {
+    const [x, kind, v] = ev[c][ptr[c]++];
+    const noPx = x > lastD[c] && !(px[c].get(d) > 0);   // 參考價是這次除權息之前的價格，而且今天還沒有新的成交
+    if (kind === 's') { held[c] *= v; if (noPx && last[c] > 0) last[c] /= v; return; }
+    if (held[c] > 1e-9) { const amt = Math.floor(held[c] * v + 1e-9); div += amt; cash += amt; }
+    if (noPx && last[c] > 0) last[c] = Math.max(last[c] - v, 0);
+  };
+  // 依日期先後處理到 upto 為止的交易與分割、除息（同一天先除權息、再交易：除息當天才買領不到）。
+  // 第一筆交易比歷史資料早（例如 2018 年買的）也一樣照時間順序，之前的配息才不會漏掉
+  const step = (upto) => {
+    for (;;) {
+      const nl = li < use.length && use[li].d <= upto ? use[li].d : Infinity;
+      let ne = Infinity, ec = null;
+      for (const c of ok) { const e = ev[c][ptr[c]]; if (e && e[0] <= upto && e[0] < ne) { ne = e[0]; ec = c; } }
+      if (ne === Infinity && nl === Infinity) return;
+      if (ne <= nl) applyEvent(ec, upto); else applyLot(use[li++]);
     }
   };
-  while (li < use.length && use[li].d < start) {
-    const l = use[li++];
-    for (const c of ok) applyEvents(c, l.d);   // 交易當天以前（含）生效的分割、除息
-    applyLot(l);
-  }
   for (const d of cal) {
-    for (const c of ok) applyEvents(c, d);      // 當天生效的分割、除息：用前一天收盤後的持股
-    while (li < use.length && use[li].d <= d) applyLot(use[li++]);
+    step(d);
     let mv = 0;
     for (const c of ok) {
       const p = px[c].get(d);
-      if (p > 0) last[c] = p;
+      if (p > 0) { last[c] = p; lastD[c] = d; }
       if (held[c] > 1e-9 && last[c] > 0) mv += held[c] * last[c];
     }
     out.d.push(d);
@@ -400,4 +406,21 @@ export function squarify(items, x, y, w, h) {
   }
   if (row.length) layRow(row);
   return out;
+}
+
+// ------------------------------------------------------------------ 定期定額的扣款日
+/** y 年 m 月那一期定期定額的扣款日：每月 day 號（1～28），遇到週末順延到星期一 */
+export function dcaDate(y, m, day) {
+  let d = y * 10000 + m * 100 + day;
+  for (let k = 0; k < 3; k++) {
+    const wd = new Date(Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100)).getUTCDay();
+    if (wd >= 1 && wd <= 5) break;
+    d = addDays(d, 1);
+  }
+  return d;
+}
+/** 今天是不是扣款日：這個月那一期，或上個月那一期順延過來的（例如 2/27 是星期六 → 3/1 星期一） */
+export function dcaDueToday(day, td) {
+  const y = Math.floor(td / 10000), m = Math.floor(td / 100) % 100;
+  return dcaDate(y, m, day) === td || dcaDate(m === 1 ? y - 1 : y, m === 1 ? 12 : m - 1, day) === td;
 }
