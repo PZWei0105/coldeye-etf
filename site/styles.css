@@ -1230,7 +1230,7 @@ body.explain .chip[data-term], body.explain .w-g[data-term], body.explain ul[dat
   box-shadow: inset 0 0 0 1px var(--seam-2); clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
 }
 .conf-pick button b { font-size: 16px; line-height: 1.1; }
-.conf-pick button small { font-size: 10.5px; white-space: nowrap; }
+.conf-pick button small { font-size: 10.5px; white-space: nowrap; color: inherit; margin-left: 0; opacity: .9; }
 .conf-pick button[aria-pressed="true"] { color: var(--aurora-ink); background: linear-gradient(180deg, var(--aurora), color-mix(in srgb, var(--aurora) 78%, #000)); box-shadow: none; }
 .tag-pick { display: flex; flex-wrap: wrap; gap: 6px; }
 .tg {

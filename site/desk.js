@@ -139,14 +139,18 @@ export async function refreshEvals() {
     let changed = false;
     for (const e of due) {
       const h = hs[e.c];
-      if (!h) {
-        // 歷史檔抓不到：這檔可能已經下市；過了很久還是抓不到才標示，不然只是網路問題
-        if (S.rows.get(e.c) == null && A.weekdaysBetween(e.snap.d, td) > A.AIDE.naDays) { e.res = { state: 'na', why: '這檔已經不在冷眼的資料裡（可能下市了）' }; changed = true; }
+      const h2miss = !!e.c2 && !hs[e.c2];
+      if (!h || h2miss) {
+        // 歷史檔抓不到：這檔可能已經下市；過了很久還是抓不到才標示，不然只是網路問題（下次再算）
+        const gone = (!h && S.rows.get(e.c) == null) || (h2miss && S.rows.get(e.c2) == null);
+        if (gone && A.weekdaysBetween(e.snap.d, td) > A.AIDE.naDays) { e.res = { state: 'na', why: '這檔已經不在冷眼的資料裡（可能下市了）' }; changed = true; }
         continue;
       }
       const r = A.evalEntry(e, h, e.c2 ? hs[e.c2] : null);
       if (r.state === 'done') {
-        const cs = S.track && S.track.by_cat && S.track.by_cat[e.snap.k];
+        // 同類基準（track.json）沒載入就先不定案：結果一存就不再變，沒有基準的話這筆會永遠無法和「任何一天」並列
+        if (!(S.track && S.track.by_cat)) continue;
+        const cs = S.track.by_cat[e.snap.k];
         r.bu = cs ? cs.base_up : null;
         r.ba = cs ? cs.base_avg : null;
         if (e.c2 && hs[e.c2]) { const pb = A.pairBase(h, hs[e.c2]); if (pb) { r.pb = pb.up; r.pa = pb.avg; } }
