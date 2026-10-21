@@ -475,7 +475,7 @@ export function aideHomeHTML() {
   } else if (s.all.n) {
     body = `<p class="ac-calm">你的決定已經對答案 <b class="num">${s.all.n}</b> 筆：命中 <b class="num">${pctU(s.all.rate)}</b>，<span data-term="base">同類任何一天</span>約 <b class="num">${pctU(s.all.base)}</b>。${waiting ? `還有 ${waiting} 筆在等。` : ''}</p>`;
   } else if (journal.items.length) {
-    body = `<p class="ac-calm">已經記了 <b class="num">${journal.items.length}</b> 筆決定，最早一筆約 ${fmt.d(A.addWeekdays(journal.items.reduce((m, e) => Math.min(m, e.snap ? e.snap.d : 99999999), 99999999), A.HORIZON))} 對答案。</p>`;
+    body = `<p class="ac-calm">已經記了 <b class="num">${journal.items.length}</b> 筆決定，最早一筆約 ${fmt.d(A.addWeekdays(journal.items.reduce((m, e) => Math.min(m, A.lockDay(e) || (e.snap ? e.snap.d : 99999999)), 99999999), A.HORIZON))} 對答案。</p>`;
   } else {
     body = '<p class="ac-calm">看完資料有想法？說給副官聽：用規則幫你檢查、記下來、一個月後自動對答案；想討論就帶去問 Claude。</p>';
   }
