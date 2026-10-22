@@ -56,6 +56,7 @@
 - 極夜深藍底；冰川藍 #4ee0ff＝系統與動作、極光紫 #b59cff＝「你自己」（持有、成本、提醒、模擬倉）、琥珀 #ffb02e＝小心；紅漲 #ff4d6a 綠跌 #17d39a 只用在價格、損益與多空。數字一律用 Oxanium，標題 Noto Serif TC，內文 Noto Sans TC。
 - 面板是切角（clip-path，`--cut`）＋角落刻度；鎖定框（`.hud`）只給「冷眼建議」那張卡，琥珀斜紋（`.hazard`）只給要小心的狀態，不要到處用。
 - 筆電／電視寬度（≥1100px）是左側停靠列＋三欄戰情室；手機維持單欄。分頁有六個（指揮台、部位、雷達、副官、情報、戰績）。
+- 盤面熱力的「盤中縮時」（`app.js` 的 `heatReplay`）：讀 `data/spark.json`（後台每一輪輸出、今天每一檔的 [分鐘, 價]），把熱力圖從開盤快轉到現在（只換格子顏色與漲跌數字、不動排版；參考價用 `quote()` 的 `px − ch`，所以播完剛好接上現在的顏色；`spark.json` 的日期和報價日期不同就不播）。純顯示。
 - 聲光（PZ 要求「聲光效果拉滿」）：動態只放在有意義的時刻——開機點火、大盤之瞳的掃描、價格閃動、切換分頁的掃描、副官檢查逐條鎖定、記錄時蓋章、對答案揭曉；副官核心環會慢慢轉。全部可在設定關（`settings.fx`，body 加 `nofx`），並尊重「減少動態效果」。
 - 音效用 WebAudio 即時合成（`fx.js` 的 `SOUNDS`，不放音檔）；手機要先點一下才能出聲，所以開機預設停在「啟動」按鈕（`settings.ignite`）。語音播報用瀏覽器的 speechSynthesis，但只用裝置內建（`localService`）的中文語音——桌機 Chrome 的「Google 國語」、Edge 的 Online 語音會把文字送到網路，而晨報裡有持股，所以這種裝置不念（`voiceStatus`／`voiceWhy` 說明原因）；iPhone 要在點擊當下先 `primeSpeech()`。震動只有 Android 有效。iPhone 側邊靜音時不出聲（`audioSession.type = 'ambient'`）。
 - 檔案分工：`calc.js` 純計算（時光機、對決百分位、熱力圖排版、晨報、資產走勢、定期定額排程與預估）、`aide.js` 副官純計算、`dca.js` 定期定額畫面與自動入帳、`viz.js` 畫圖（瞳孔環、熱力圖、六角雷達、折線）、`learn.js` 名詞解釋（看懂模式）、`tools.js` 對決與時光機畫面、`desk.js` 副官畫面、`fx.js` 聲光。新增名詞時同時補 `learn.js` 的 TERMS，畫面上的元素加 `data-term`。新增介面檔案要同時加進 `sw.js` 的 `SHELL_FILES`。

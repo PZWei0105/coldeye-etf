@@ -440,11 +440,24 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .hm-t .num { font-size: 11.5px; font-weight: 600; }
 .hm-t.mid .num { font-size: 10px; opacity: .85; }
 .hm-cat { position: absolute; z-index: 1; font-size: 10.5px; line-height: 14px; color: var(--frost-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: .04em; }
-.heat-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 4px; }
+.heat-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px 10px; padding: 0 4px; flex-wrap: wrap; }
 .hm-leg { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--frost-3); }
 .hm-ramp { display: inline-flex; gap: 2px; }
 .hm-ramp i { width: 16px; height: 8px; }
 .heat-cap { margin: 0; padding: 0 4px; }
+.heat-wrap { position: relative; }
+.heat-acts { display: inline-flex; gap: 14px; align-items: center; flex: none; white-space: nowrap; margin-left: auto; }
+/* 盤中縮時的時鐘：疊在熱力圖右上角 */
+.hm-clock {
+  position: absolute; right: 8px; bottom: 8px; z-index: 3; pointer-events: none; min-width: 112px;
+  padding: 5px 11px 7px; background: color-mix(in oklab, var(--hull) 90%, transparent); border: 1px solid var(--frame-2);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  box-shadow: 0 0 22px var(--glacier-wash);
+}
+.hm-clock .k { display: block; font-size: 10.5px; color: var(--frost-2); letter-spacing: .12em; }
+.hm-clock b { display: block; font-size: 26px; line-height: 1.1; color: var(--glacier); text-shadow: 0 0 14px var(--glacier-wash); }
+.hm-clock i { display: block; height: 2px; margin-top: 4px; background: var(--glacier-wash); }
+.hm-clock s { display: block; height: 100%; width: 0; background: var(--glacier); box-shadow: 0 0 8px var(--glacier); }
 .h-news { display: none; }
 .news.mini .n-item { padding: 10px 14px; }
 .news.mini .n-t { font-size: 13.5px; line-height: 1.5; }

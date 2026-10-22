@@ -11,7 +11,7 @@ import {
 import { openDetail, closeDetail, renderDetail, refreshDetailQuote } from './sheet.js';
 import { openTradeForm, openCashForm, openBackup, checkAlerts, closeModal, modalOpen, wipeBook, openPaperStart, PAPER_FRESH_MIN, openModal } from './forms.js';
 import { installExplain, setExplain, explainOn, glossaryHTML, bindGlossary } from './learn.js';
-import { irisSVG, heatHTML, heatLegend, linesSVG, bindLines } from './viz.js';
+import { irisSVG, heatHTML, heatLegend, heatColor, linesSVG, bindLines } from './viz.js';
 import { brief, benchValue, equityCurve } from './calc.js';
 import { runPlans, onDcaLotDel, dcaActions, plansHTML, dcaStripHTML, bindPlans, openConfirm, openPending, dcaTagsHTML, dcaAfterWipe } from './dca.js';
 import { openDuel, openTM } from './tools.js';
@@ -509,8 +509,8 @@ function heatRows(filter) {
 function heatCardHTML(mini) {
   const mode = settings.heatMode;
   return `<div class="sec-h"><h2>盤面熱力</h2><div class="seg mini" role="tablist">${[['chg', '今日漲跌'], ['score', '規則分數']].map(([k, t]) => `<button data-hmode="${k}" aria-pressed="${mode === k}">${t}</button>`).join('')}</div></div>
-    <section class="panel heat-card"><div class="heat" data-heat="${mini ? 'mini' : 'full'}"></div>
-      <div class="heat-foot">${heatLegend(mode)}${mini ? '<button class="link small" id="heat-more">看全部</button>' : ''}</div>
+    <section class="panel heat-card"><div class="heat-wrap"><div class="heat" data-heat="${mini ? 'mini' : 'full'}"></div><div class="hm-clock" hidden><span class="k">盤中縮時</span><b class="num">09:00</b><i><s></s></i></div></div>
+      <div class="heat-foot">${heatLegend(mode)}<span class="heat-acts">${mode === 'chg' ? `<button class="link small" data-replay>${ICON.play || '▶'} 盤中縮時</button>` : ''}${mini ? '<button class="link small" id="heat-more">看全部</button>' : ''}</span></div>
       <p class="small muted heat-cap">格子大小＝<span data-term="val">成交值</span>，${mode === 'chg' ? '顏色＝今天漲跌（紅漲綠跌）' : '顏色＝<span data-term="sc">規則分數</span>（紅偏多、綠偏空）'}。${mini ? '只放成交值前 60 檔；' : ''}點格子看那一檔。</p></section>`;
 }
 function drawHeats(root, filter) {
@@ -526,8 +526,79 @@ function drawHeats(root, filter) {
     $$('.hm-t', box).forEach((b) => b.addEventListener('click', () => openDetail(b.dataset.code)));
   }
 }
+// 盤中縮時：用後台每一輪記下的盤中走勢（data/spark.json），把熱力圖從開盤快轉到現在。只換顏色、不動格子，純顯示。
+let heatRP = null;
+function stopHeatReplay(redraw = true) {
+  const rp = heatRP;
+  if (!rp) return;
+  heatRP = null;
+  cancelAnimationFrame(rp.raf);
+  clearTimeout(rp.end);
+  if (rp.clock) rp.clock.hidden = true;
+  if (rp.btn) rp.btn.innerHTML = `${ICON.play || '▶'} 盤中縮時`;
+  if (redraw && rp.root && rp.root.isConnected) drawHeats(rp.root, rp.filter);
+}
+async function heatReplay(btn, root, filter) {
+  if (heatRP) { stopHeatReplay(); return; }
+  const card = btn.closest('.heat-card');
+  const boxes = $$('[data-heat]', card);
+  let sp;
+  try { sp = await getJSON('spark.json'); } catch { sp = null; }
+  if (!sp || !sp.s || !sp.d) { toast('還沒有今天的盤中走勢（開盤後幾分鐘就有）'); return; }
+  // 每一格：這一天的走勢點＋那天的參考價（和格子上的漲跌用同一個參考價，播完剛好接上現在的顏色）
+  const tiles = [];
+  let tMax = 0;
+  for (const box of boxes) {
+    for (const el of $$('.hm-t', box)) {
+      const row = S.rows.get(el.dataset.code);
+      const a = sp.s[el.dataset.code];
+      if (!row || !a || a.length < 2) continue;
+      const q = quote(row);
+      if (q.date !== sp.d || !isNum(q.px) || !isNum(q.ch)) continue;
+      const ref = q.px - q.ch;
+      if (!(ref > 0)) continue;
+      const pts = [];
+      for (let i = 0; i + 1 < a.length; i += 2) pts.push([a[i], a[i + 1]]);
+      tiles.push({ el, num: el.querySelector('.num'), big: el.classList.contains('big'), pts, ref, i: -1 });
+      tMax = Math.max(tMax, pts[pts.length - 1][0]);
+    }
+  }
+  if (!tiles.length || tMax < 5) { toast('還沒有今天的盤中走勢（開盤後幾分鐘就有）'); return; }
+  tMax = Math.min(tMax, 285);
+  const dur = Math.max(8000, Math.min(16000, (tMax / 270) * 16000));
+  const clock = $('.hm-clock', card);
+  const t0 = performance.now();
+  heatRP = { raf: 0, end: 0, clock, btn, root, filter };
+  btn.innerHTML = `${ICON.stopSq || '■'} 停止`;
+  clock.hidden = false;
+  $('.k', clock).textContent = `盤中縮時 ${Math.floor(sp.d / 100) % 100}/${sp.d % 100}`;
+  FX.sfx('scan');
+  let mark = -1;
+  const frame = (now) => {
+    if (!heatRP || heatRP.clock !== clock) return;
+    if (!card.isConnected) { stopHeatReplay(false); return; }
+    const k = Math.min(1, (now - t0) / dur);
+    const t = tMax * k;
+    for (const x of tiles) {
+      while (x.i + 1 < x.pts.length && x.pts[x.i + 1][0] <= t) x.i++;
+      const pc = ((x.i >= 0 ? x.pts[x.i][1] : x.ref) / x.ref - 1) * 100;   // 第一筆成交之前：還在昨收
+      x.el.style.background = heatColor(pc, 3);
+      if (x.big && x.num) x.num.textContent = `${pc > 0 ? '+' : ''}${pc.toFixed(2)}%`;
+    }
+    const mm = Math.min(270, Math.round(t));
+    $('b', clock).textContent = `${String(9 + Math.floor(mm / 60)).padStart(2, '0')}:${String(mm % 60).padStart(2, '0')}`;
+    $('s', clock).style.width = `${(k * 100).toFixed(1)}%`;
+    const m30 = Math.floor(t / 30);
+    if (m30 !== mark) { mark = m30; if (k < 1 && m30 > 0) FX.sfx('tick'); }
+    if (k < 1) { heatRP.raf = requestAnimationFrame(frame); return; }
+    FX.sfx('ok');
+    heatRP.end = setTimeout(() => { if (heatRP && heatRP.clock === clock) stopHeatReplay(); }, 1600);
+  };
+  heatRP.raf = requestAnimationFrame(frame);
+}
 function bindHeat(v, filter) {
   drawHeats(v, filter);
+  $$('[data-replay]', v).forEach((b) => b.addEventListener('click', () => heatReplay(b, v, filter)));
   $$('[data-hmode]', v).forEach((b) => b.addEventListener('click', () => {
     settings.heatMode = b.dataset.hmode;
     saveSettings();
