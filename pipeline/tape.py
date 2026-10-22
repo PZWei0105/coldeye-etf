@@ -311,9 +311,14 @@ def make_cal(state):
 # ---------------------------------------------------------------- 盤後零股、盤後定價
 
 def fetch_after(http, d: int):
-    """證交所 盤後零股交易行情單（TWT53U）與 盤後定價交易（BFT41U）。只有上市的；上櫃的沙盤用收盤價代替。"""
+    """證交所 盤後零股交易行情單（TWT53U）與 盤後定價交易（BFT41U）。只有上市的；上櫃的沙盤用收盤價代替。
+    每檔 [盤後零股成交價, 成交股數, 盤後定價成交股數, 盤後定價最後揭示買量, 盤後定價最後揭示賣量]（量一律換成股）。"""
     ds = str(d)
     out = {}
+
+    def row_of(c):
+        return out.setdefault(c, [None, 0, 0, 0, 0])
+
     js = http.json(f'{TWSE}/afterTrading/TWT53U?date={ds}&selectType=ALL&response=json')
     for t in tables_of(js):
         f = t['fields']
@@ -321,21 +326,22 @@ def fetch_after(http, d: int):
         if ic is None or ipx is None:
             continue
         for row in t['data']:
-            c = str(row[ic]).strip()
-            out.setdefault(c, [None, 0, 0])
-            out[c][0] = num(row[ipx])
-            out[c][1] = int(num(row[ish]) or 0)
+            r = row_of(str(row[ic]).strip())
+            r[0] = num(row[ipx])
+            r[1] = int(num(row[ish]) or 0)
     time.sleep(2.5)
     js = http.json(f'{TWSE}/afterTrading/BFT41U?date={ds}&selectType=ALL&response=json')
     for t in tables_of(js):
         f = t['fields']
         ic, ish = find_col(f, '證券代號'), find_col(f, '成交數量')
+        ib, ia = find_col(f, '最後揭示買量'), find_col(f, '最後揭示賣量')
         if ic is None or ish is None:
             continue
         for row in t['data']:
-            c = str(row[ic]).strip()
-            out.setdefault(c, [None, 0, 0])
-            out[c][2] = int(num(row[ish]) or 0)
+            r = row_of(str(row[ic]).strip())
+            r[2] = int(num(row[ish]) or 0) * 1000          # 盤後定價以「張」為單位，換成股
+            r[3] = int(num(row[ib]) or 0) * 1000 if ib is not None else 0
+            r[4] = int(num(row[ia]) or 0) * 1000 if ia is not None else 0
     return out
 
 
