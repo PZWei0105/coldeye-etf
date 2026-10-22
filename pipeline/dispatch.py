@@ -42,7 +42,8 @@ def next_tick(mode: str, t0: float, live_date, now: dt.datetime | None = None):
     if mode == 'kick':
         h, m, s = FIRST_TICK
         return int(now.replace(hour=h, minute=m, second=s, microsecond=0).timestamp())
-    if mode not in ('intraday', 'deploy'):
+    # 探測（probe）推上來時正好在盤中，也要接力，不然盤中更新會斷到備援排程接上為止
+    if mode not in ('intraday', 'deploy', 'probe'):
         return None
     hm = now.hour * 100 + now.minute
     if hm < 900:
