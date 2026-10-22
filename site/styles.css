@@ -446,6 +446,14 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .hm-ramp i { width: 16px; height: 8px; }
 .heat-cap { margin: 0; padding: 0 4px; }
 .heat-wrap { position: relative; }
+/* 更新紀錄 */
+.upd-list { display: grid; gap: 4px; max-height: 60vh; overflow: auto; }
+.upd { padding: 8px 2px 6px; border-bottom: 1px solid var(--seam); }
+.upd:last-child { border-bottom: 0; }
+.upd-h { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.upd-h b { color: var(--glacier); font-size: 15px; }
+.upd ul { margin: 6px 0 0; padding-left: 1.2em; }
+.upd li { margin: 3px 0; color: var(--frost-2); font-size: 14px; line-height: 1.55; }
 .heat-acts { display: inline-flex; gap: 14px; align-items: center; flex: none; white-space: nowrap; margin-left: auto; }
 /* 盤中縮時的時鐘：疊在熱力圖右上角 */
 .hm-clock {

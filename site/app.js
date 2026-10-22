@@ -20,6 +20,10 @@ import {
   projectText, rulesHTML as aideRulesHTML, hooks as aideHooks, coreSVG,
 } from './desk.js';
 import * as FX from './fx.js';
+import { UPDATES } from './updates.js';
+
+// 打開之前手機上就有冷眼的資料（老用戶）：有新功能要提示；全新的人不跳
+const HAD_SAVE = (() => { try { return Object.keys(localStorage).some((k) => k.startsWith('coldeye.') && k !== 'coldeye.settings'); } catch { return false; } })();
 
 // ------------------------------------------------------------------ 分頁
 const TABS = [
@@ -1126,6 +1130,9 @@ function drawSettings() {
   const capRows = Object.keys(CAT).map((k) => `<tr><td>${esc(CAT[k])}</td>${['cons', 'mid', 'aggr'].map((p) => `<td class="r num${p === settings.risk ? ' on' : ''}">${(PF.PROFILES[p].caps[k] * 100).toFixed(0)}%</td>`).join('')}</tr>`).join('');
   sh.innerHTML = `<div class="sheet-top"><button class="icon-btn" id="back" aria-label="返回">${ICON.back}</button><span class="ttl"><b class="ttl-b">設定</b></span></div>
   <div class="sheet-body prefs">
+    <div class="sec-h"><h2>更新紀錄</h2><span class="aside">${UPDATES.length ? fmt.dy(UPDATES[0].d) : ''}</span></div>
+    <section class="panel set"><div class="srow"><div><div class="h">${UPDATES.length ? esc(UPDATES[0].title) : '—'}</div><div class="d">冷眼最近加了什麼、怎麼用</div></div><button class="btn small ghost" id="s-upd">打開</button></div></section>
+
     <div class="sec-h"><h2>個人化</h2></div>
     <section class="panel set">
       <div class="srow"><div><div class="h">怎麼稱呼你</div><div class="d">指揮台的問候語、開機畫面的駕駛員名稱</div></div><input class="input short" id="s-name" maxlength="8" value="${esc(settings.name || '')}" placeholder="PZ"></div>
@@ -1231,6 +1238,7 @@ function bindSettings() {
   $$('[data-ra]', sh).forEach((b) => b.addEventListener('click', () => { const k = alerts.findIndex((a) => a.id === b.dataset.ra); if (k >= 0) alerts.splice(k, 1); saveAlerts(); drawSettings(); render(); }));
   $('#s-mode', sh).addEventListener('click', () => { switchMode(isPaper() ? 'real' : 'paper'); diffSeen(); computePF(); render(); drawSettings(); toast(isPaper() ? '切到模擬倉' : '切回真實部位'); });
   $('#s-bk', sh).addEventListener('click', () => openBackup());
+  $('#s-upd', sh).addEventListener('click', () => showUpdates(UPDATES.slice(0, 12), '更新紀錄'));
   $('#s-wipe', sh).addEventListener('click', (e) => {
     const b = e.currentTarget;
     if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = '確定清除？'; return; }
@@ -1554,5 +1562,25 @@ async function boot() {
     }
   });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  setTimeout(() => announceUpdates(8), 2500);
+}
+
+// ------------------------------------------------------------------ 更新紀錄：有沒看過的新功能，開機畫面結束後提示一次
+function updatesHTML(list) {
+  return list.map((u) => `<div class="upd"><div class="upd-h"><b>${esc(u.title)}</b><span class="num muted">${fmt.dy(u.d)}</span></div><ul>${u.items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>`).join('');
+}
+function showUpdates(list, title) {
+  openModal(`<div class="form"><h2 class="m-title">${esc(title)}</h2><div class="upd-list">${updatesHTML(list)}</div><div class="m-actions"><button type="button" class="btn" data-close>知道了</button></div></div>`, { label: title });
+}
+function announceUpdates(tries) {
+  if (!UPDATES.length) return;
+  // 開機畫面、對話框、單檔頁開著的時候先不打擾，等一下再看
+  if (document.body.classList.contains('booting') || modalOpen() || S.openCode) { if (tries > 0) setTimeout(() => announceUpdates(tries - 1), 4000); return; }
+  const seen = store.get('seenUpd', null);
+  const latest = UPDATES[0].id;
+  store.set('seenUpd', latest);
+  if (seen === latest || (!seen && !HAD_SAVE)) return;
+  const k = seen ? UPDATES.findIndex((u) => u.id === seen) : 1;
+  showUpdates(UPDATES.slice(0, Math.max(1, Math.min(3, k < 0 ? 1 : k))), '冷眼更新了');
 }
 boot();
