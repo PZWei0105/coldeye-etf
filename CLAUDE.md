@@ -35,6 +35,12 @@
 - 核對（`openConfirm`）：照國泰成交回報改股數、均價（或成交金額，一律用金額÷股數）後 `est: false`；均價和收盤差超過 2 成擋下。一般交易表單打開定期定額的交易：手續費不重算，真的改了才算核對。對齊（`openCalibrate`／`dcaCalibrate`）：只照同一個比例調整「預估」那幾筆的股數、每筆花的錢不變；比例超出 0.8～1.25（`CAL_RANGE`，台股一天最多漲跌 10%）不給對齊，差 5% 以上（`CAL_OK`）要按兩次，對完可以復原（這次打開 App 期間；只復原還是對齊完那個樣子的，之後改過的不動）。按「對齊」時用最新的交易紀錄再比一次，預估剛變過（例如剛自動記了一期）就不寫、重新預覽。股數太少或分割前的紀錄只能整份調、對不到剛好的時候會說差幾股，要按兩次。
 - 定期定額的交易不進決策日記（不是在猜漲跌）。今日行動：扣款日提醒（`dcaDueToday` 週末順延；今天確定休市——後台開盤後有跑、證交所資料停在之前——就說順延；平日放假順延到今天的，只有這支手機看過那幾天「今天休市」（`coldeye.closed`）才提醒：`dcaRolledToday`＋`rolledKnown`）、待核對與要確認的筆數（`dcaActions`）。
 
+## 給沙盤用的資料（`pipeline/tape.py`）
+- 沙盤 SANDTABLE（repo `sandtable`，網址 /sandtable/）是 PZ 的台股 ETF 模擬操盤 App，**自己不抓資料**，讀這個網站的 `data/`。冷眼只是多輸出幾個檔，全部步驟各自 try／`step`，失敗不影響冷眼。
+- 盤中每一輪（`intraday`，含 `deploy`）：MIS `getStockInfo`（整股最佳五檔、開高低、漲跌停 u/w；國外成分 u=9999.95 視為沒有漲跌停）與 `getOddInfo`（盤中零股五檔），一次查 120 檔、間隔 2 秒；量一律換成「股」。存進 `tape` 分支（`tape.json.gz`：`cur` 今天每一輪的快照、`prev` 前一個交易日、`last` 最新一輪；每次只留一個 commit），只記 08:25～13:45、資料日期是今天的快照（休市就只更新 last）。
+- 每次部署（`publish`）都從 tape 寫出 `quotes.json`（最新一輪整股＋零股）、`tape/{代號}.json`（cur／prev）。收盤後（`compute`）寫 `k/{代號}.json`（最近 500 根日 K，原始價格，`c_` 是收盤）、`cal.json`（證交所開休市日期：休市日、只辦交割日、用實際成交推出的開市日與颱風假）、`after.json`（14:35 以後抓證交所盤後零股行情 TWT53U、盤後定價 BFT41U，量換成股，保留 12 個交易日）。state 多了 `cal.json`、`after.json`。
+- 這些檔案的格式改了，要同步改沙盤的 `src/data.js`。測試：`python3 tests/tape_test.py [probe 資料夾]`。
+
 ## 怎麼操作
 - 修改程式後推到 `main` 會觸發 workflow，執行 `control/job.json` 指定的工作；只改介面時把 job 設成 `deploy`。
 - 雲端 Claude 工作環境連不到台灣官方網站，資料一律由 GitHub Actions 抓；要實測新端點就把 job 設成 `probe` 並編輯 `control/probe.json`，結果會推到 `probe-results` 分支。
