@@ -6,3 +6,4 @@ public/
 node_modules/
 .venv/
 .tape/
+.tape-days/

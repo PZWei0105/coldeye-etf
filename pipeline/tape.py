@@ -3,14 +3,19 @@
 冷眼與沙盤共用同一套官方資料；這個模組只「多輸出」沙盤需要、冷眼用不到的東西，全部失敗也不影響冷眼：
 - 盤中每一輪：證交所 MIS 的最佳五檔、開高低、漲跌停（整股），以及盤中零股的五檔與成交。
 - tape：當天每一輪的快照（存在 repo 的 tape 分支，每次只留一個 commit），沙盤用它判斷委託有沒有成交。
+  每一筆快照記兩個時間：t＝後台去問的時間、q＝證交所這筆資料本身的時間（MIS 的 tlong）。
+  MIS 的整股資料常常落後一兩分鐘（偶爾更久），沙盤一律用 q 判斷先後，不然會把「委託之前」的行情當成之後的。
+- 收完盤的交易日封存到 tape-days 分支（{日期}/{代號}.json，保留最近 ARCHIVE_KEEP 個交易日），
+  沙盤好幾天沒打開，也能用當天的逐筆快照判斷那幾天的委託（不會因為「什麼時候打開 App」而有不同結果）。
 - 收盤後：K 線（開高低收量）、交易日曆（證交所開休市日期）、盤後零股與盤後定價的成交結果。
 
-輸出（都在網站的 data/ 底下）：quotes.json、tape/{代號}.json、k/{代號}.json、cal.json、after.json。
+輸出（都在網站的 data/ 底下）：quotes.json、tape/{代號}.json、k/{代號}.json、cal.json、after.json、after/{日期}.json。
 """
 import datetime as dt
 import gzip
 import json
 import pathlib
+import shutil
 import time
 import traceback
 
@@ -24,11 +29,15 @@ TWSE = 'https://www.twse.com.tw/rwd/zh'
 BRANCH = 'tape'
 DIR = '.tape'
 FILE = 'tape.json.gz'
+ARCHIVE_BRANCH = 'tape-days'   # 收完盤的交易日：{日期}/{代號}.json（沙盤從 raw.githubusercontent.com 讀）
+ARCHIVE_DIR = '.tape-days'
+ARCHIVE_KEEP = 40      # 封存最近 40 個交易日（約兩個月）
 BATCH = 120            # 一次查 120 檔（實測 121 檔可以，100 檔以上單次約 6～11 秒）
 TAPE_FROM = 825        # 只記交易時段（08:25～13:45）的快照
 TAPE_TO = 1345
 K_BARS = 500           # K 線輸出最近 500 個交易日
-AFTER_KEEP = 12        # 盤後零股／定價結果保留最近 12 個交易日
+AFTER_KEEP = 40        # 盤後零股／定價結果保留最近 40 個交易日（after/{日期}.json）
+AFTER_INLINE = 3       # after.json 直接帶最近 3 天
 
 
 # ================================================================== 抓 MIS
@@ -53,6 +62,17 @@ def _hms(s):
     return None
 
 
+def _epoch(d, hms):
+    """台灣日期 YYYYMMDD ＋ 時刻 HHMMSS → epoch 秒。"""
+    if not d or hms is None:
+        return None
+    try:
+        x = dt.datetime(d // 10000, d // 100 % 100, d % 100, hms // 10000, hms // 100 % 100, hms % 100, tzinfo=TW)
+    except ValueError:
+        return None
+    return int(x.timestamp())
+
+
 def parse_quote(m, odd=False):
     """把 MIS 一檔的原始欄位整理成沙盤用的格式。整股的量是「張」、零股是「股」，這裡一律換成「股」。"""
     unit = 1 if odd else 1000
@@ -64,6 +84,17 @@ def parse_quote(m, odd=False):
         zt = _hms(trade.get('t'))
     v = num(m.get('v'))
     u = num(m.get('u'))
+    d = int(m['d']) if str(m.get('d', '')).isdigit() else None
+    # 這筆資料本身的時間（MIS 的 tlong，毫秒）；沒有就用 t（時:分:秒）
+    q = None
+    try:
+        tl = m.get('tlong')
+        if tl not in (None, '', '-'):
+            q = int(int(tl) // 1000)
+    except (TypeError, ValueError):
+        q = None
+    if q is None:
+        q = _epoch(d, _hms(m.get('t')))
     return {
         'z': z, 'zt': zt,
         'o': num(m.get('o')), 'h': num(m.get('h')), 'l': num(m.get('l')),
@@ -75,7 +106,8 @@ def parse_quote(m, odd=False):
         'b': _levels(m.get('b'), m.get('g'), unit),
         'pz': num(m.get('pz')),            # 試撮價（開盤前、收盤前、盤中零股第一次撮合前）
         't': _hms(m.get('t')),
-        'd': int(m['d']) if str(m.get('d', '')).isdigit() else None,
+        'q': q,
+        'd': d,
     }
 
 
@@ -126,7 +158,7 @@ def fetch_books(state):
 # ================================================================== tape 分支
 
 def _empty_series():
-    return {'t': [], 'z': [], 'zt': [], 'h': [], 'l': [], 'v': [], 'a': [], 'b': [], 'pz': []}
+    return {'t': [], 'q': [], 'z': [], 'zt': [], 'h': [], 'l': [], 'v': [], 'a': [], 'b': [], 'pz': []}
 
 
 def load_tape():
@@ -148,15 +180,23 @@ def save_tape(path, tape, msg):
 
 
 def append(tape, books, today: int, hm: int):
-    """把這一輪快照加進當天的 tape。換日時，前一天的整份變成 prev。"""
+    """把這一輪快照加進當天的 tape。換日時，前一天的整份變成 prev（標成「完成」）。
+    證交所這一檔的資料時間（q）沒變，就是資料沒更新，不重複記。"""
     tape['last'] = {'at': books['at'], 'reg': books['reg'], 'odd': books['odd']}
+    cur = tape.get('cur')
+    if cur and cur.get('d') == today and hm > TAPE_TO:
+        cur['done'] = True    # 今天的盤中行情結束了，之後不會再加快照
     days = [q.get('d') for q in books['reg'].values() if q.get('d')]
     data_day = max(set(days), key=days.count) if days else None
     if data_day != today or not (TAPE_FROM <= hm <= TAPE_TO):
         return False          # 休市（資料停在之前的日期）或不在交易時段：只更新 last
-    cur = tape.get('cur')
     if not cur or cur.get('d') != today:
         if cur and cur.get('codes'):
+            cur['done'] = True
+            old = tape.get('prev')
+            # 要被擠掉的那一天如果還沒封存（收盤後那一輪失敗了），先交給 intraday() 封存
+            if old and old.get('codes') and old.get('d') not in (tape.get('archived') or []):
+                tape.setdefault('_drop', []).append(old)
             tape['prev'] = cur
         cur = tape['cur'] = {'d': today, 'codes': {}}
     for key in ('reg', 'odd'):
@@ -165,10 +205,17 @@ def append(tape, books, today: int, hm: int):
                 continue
             rec = cur['codes'].setdefault(c, {})
             s = rec.setdefault(key, _empty_series())
+            if len(s.get('q') or []) != len(s['t']):
+                s['q'] = (s.get('q') or []) + [None] * (len(s['t']) - len(s.get('q') or []))   # 舊資料沒有 q
             at = books['at_of'][key].get(c, books['at'])
             if s['t'] and s['t'][-1] >= at:
                 continue
+            qt = q.get('q')
+            last_q = next((x for x in reversed(s['q']) if x is not None), None)
+            if qt is not None and last_q is not None and qt <= last_q:
+                continue          # 證交所這一檔的資料沒有更新
             s['t'].append(at)
+            s['q'].append(qt)
             for f in ('z', 'zt', 'h', 'l', 'v', 'a', 'b', 'pz'):
                 s[f].append(q.get(f))
             if key == 'reg':
@@ -190,21 +237,80 @@ def intraday(state, log):
     path, tape = load_tape()
     now = now_tw()
     added = append(tape, books, d2i(now.date()), now.hour * 100 + now.minute)
+    drop = tape.pop('_drop', None)
+    if drop:
+        try:
+            if archive_days(drop):
+                _mark_archived(tape, [x['d'] for x in drop])
+        except Exception as e:  # noqa: BLE001
+            traceback.print_exc()
+            log.setdefault('tape_errors', []).append(f'archive {e!r}'[:200])
     save_tape(path, tape, f"tape {now:%Y-%m-%d %H:%M}{'' if added else ' (last only)'}")
     return tape
+
+
+def _mark_archived(tape, days):
+    tape['archived'] = sorted(set(tape.get('archived') or []) | set(days))[-ARCHIVE_KEEP:]
+
+
+def archive_days(recs):
+    """把收完盤的交易日存進 tape-days 分支：{日期}/{代號}.json，格式和 tape/{代號}.json 的 cur／prev 一樣。
+    保留最近 ARCHIVE_KEEP 個交易日；index.json 列出有哪幾天。"""
+    recs = [r for r in recs if r and r.get('codes')]
+    if not recs:
+        return False
+    path = gitstate.open_branch(ARCHIVE_BRANCH, ARCHIVE_DIR)
+    write_archive(path, recs)
+    return gitstate.save_branch(ARCHIVE_BRANCH, ARCHIVE_DIR, 'tape days ' + ','.join(str(r['d']) for r in recs))
+
+
+def write_archive(path: pathlib.Path, recs):
+    for rec in recs:
+        ddir = path / str(rec['d'])
+        ddir.mkdir(parents=True, exist_ok=True)
+        for c, r in rec['codes'].items():
+            write_json(ddir / f'{c}.json', {'d': rec['d'], 'done': True, **r})
+    days = sorted(int(p.name) for p in path.iterdir() if p.is_dir() and p.name.isdigit() and len(p.name) == 8)
+    for d in days[:-ARCHIVE_KEEP]:
+        shutil.rmtree(path / str(d), ignore_errors=True)
+    write_json(path / 'index.json', {'days': days[-ARCHIVE_KEEP:]})
+    return days[-ARCHIVE_KEEP:]
+
+
+def finish_day(state, log):
+    """收盤後（eod）：今天的 tape 標成「完成」（13:45 以後不會再有快照），並把完成、還沒封存的交易日存進 tape-days。"""
+    now = now_tw()
+    if now.hour * 100 + now.minute <= TAPE_TO:
+        return 0
+    today = d2i(now.date())
+    path, tape = load_tape()
+    cur = tape.get('cur')
+    changed = False
+    if cur and cur.get('d') == today and cur.get('codes') and not cur.get('done'):
+        cur['done'] = True
+        changed = True
+    done_days = set(tape.get('archived') or [])
+    todo = [x for x in (tape.get('prev'), cur) if x and x.get('codes') and (x.get('done') or x.get('d', 0) < today)
+            and x.get('d') not in done_days]
+    if todo and archive_days(todo):
+        _mark_archived(tape, [x['d'] for x in todo])
+        changed = True
+    if changed:
+        save_tape(path, tape, f'tape done {now:%Y-%m-%d %H:%M}')
+    return len(todo)
 
 
 # ================================================================== 輸出
 
 def _code_file(cur, prev, c):
-    def pick(day):
+    def pick(day, done):
         if not day:
             return None
         rec = (day.get('codes') or {}).get(c)
         if not rec:
             return None
-        return {'d': day['d'], **rec}
-    return {'c': c, 'cur': pick(cur), 'prev': pick(prev)}
+        return {'d': day['d'], 'done': bool(done or day.get('done')), **rec}
+    return {'c': c, 'cur': pick(cur, False), 'prev': pick(prev, True)}
 
 
 def publish(data_dir: pathlib.Path, tape=None):
@@ -346,7 +452,7 @@ def fetch_after(http, d: int):
 
 
 def update_after(state, log, http):
-    """14:35 以後才有今天的盤後結果；每個交易日抓一次。"""
+    """14:35 以後才有今天的盤後結果；每個交易日抓一次。只留 ETF。"""
     now = now_tw()
     if now.hour * 100 + now.minute < 1435:
         return 0
@@ -358,6 +464,8 @@ def update_after(state, log, http):
     if str(today) in store:
         return 0
     got = fetch_after(http, today)
+    etfs = _etf_codes(state)
+    got = {c: v for c, v in got.items() if c in etfs}
     if got:
         store[str(today)] = got
         for k in sorted(store.keys())[:-AFTER_KEEP]:
@@ -365,7 +473,30 @@ def update_after(state, log, http):
     return len(got)
 
 
+def _etf_codes(state):
+    return set(state['daily'].keys()) | set(state['meta'].keys())
+
+
+def write_after(out_dir: pathlib.Path, state):
+    """after/{日期}.json 每天一個檔；after.json 帶 _days（有哪幾天）和最近 AFTER_INLINE 天的內容。"""
+    store = state.data.get('after') or {}
+    etfs = _etf_codes(state)
+    days = sorted(k for k in store.keys() if k.isdigit())[-AFTER_KEEP:]
+    adir = out_dir / 'after'
+    adir.mkdir(parents=True, exist_ok=True)
+    keep = set()
+    clean = {}
+    for d in days:
+        clean[d] = {c: v for c, v in (store[d] or {}).items() if c in etfs}
+        write_json(adir / f'{d}.json', clean[d])
+        keep.add(f'{d}.json')
+    for p in adir.glob('*.json'):
+        if p.name not in keep:
+            p.unlink()
+    write_json(out_dir / 'after.json', {'_days': [int(d) for d in days], **{d: clean[d] for d in days[-AFTER_INLINE:]}})
+
+
 def write_outputs(out_dir: pathlib.Path, state, codes):
     write_k(out_dir, state, codes)
     write_json(out_dir / 'cal.json', make_cal(state))
-    write_json(out_dir / 'after.json', state.data.get('after') or {})
+    write_after(out_dir, state)

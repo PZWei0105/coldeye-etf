@@ -38,6 +38,11 @@ q2 = tape.parse_quote({'c': '00679B', 'z': '25.83', 't': '09:01:58', 'u': '9999.
 check('國外成分：u=9999.95 視為沒有漲跌停', q2['u'] is None and q2['w'] is None and q2['zt'] == 90158, q2)
 q3 = tape.parse_quote({'c': '0050', 'z': '-', 't': '09:02:14', 'v': '0', 'd': '20261022', 'a': '108.45_', 'f': '1123_'}, odd=True)
 check('零股量是股、還沒成交時 z 為 None', q3['z'] is None and q3['a'] == [[108.45, 1123]], q3)
+TL = int(dt.datetime(2026, 10, 22, 9, 42, 34, tzinfo=tape.TW).timestamp())
+q4 = tape.parse_quote({'c': '0050', 'z': '108.3', 't': '09:42:34', 'tlong': str(TL * 1000), 'd': '20261022'})
+check('資料時間 q 用 MIS 的 tlong', q4['q'] == TL, q4)
+q5 = tape.parse_quote({'c': '0050', 'z': '108.3', 't': '09:42:34', 'd': '20261022'})
+check('沒有 tlong 時用 t 推算資料時間', q5['q'] == TL, q5)
 
 # ---- tape 累積與換日
 t = {'cur': None, 'prev': None, 'last': None}
@@ -47,6 +52,7 @@ check('重複的快照不重複加', tape.append(t, books, 20261022, 903) and le
 b2 = json.loads(json.dumps(books))
 b2['at_of']['reg']['0050'] = 400
 b2['reg']['0050']['z'] = 109.5
+b2['reg']['0050']['q'] += 300       # 證交所的資料時間也往前走了
 tape.append(t, b2, 20261022, 907)
 check('新的快照加在後面', t['cur']['codes']['0050']['reg']['z'] == [109.1, 109.5])
 check('零股另外一條', t['cur']['codes']['0050']['odd']['t'] == [101])
@@ -57,7 +63,43 @@ for k in ('reg', 'odd'):
 b3['at_of']['reg']['0050'] = 90000
 tape.append(t, b3, 20261023, 901)
 check('換日：前一天變成 prev', t['prev']['d'] == 20261022 and t['cur']['d'] == 20261023 and len(t['cur']['codes']['0050']['reg']['t']) == 1)
+check('換日：前一天標成完成', t['prev'].get('done') is True)
 check('休市（資料日期不是今天）不加', not tape.append(t, b3, 20261026, 905))
+
+# ---- 資料時間 q：證交所這一檔的資料沒更新就不重複記；13:45 以後標成完成；換日要擠掉沒封存的那一天
+t2 = {'cur': None, 'prev': None, 'last': None}
+def bk(at, qq, z, d=20261022):
+    r = {'0050': {'d': d, 'z': z, 'zt': None, 'h': None, 'l': None, 'v': 0, 'a': [], 'b': [], 'pz': None, 'q': qq}}
+    return {'at': at, 'reg': r, 'odd': {}, 'at_of': {'reg': {'0050': at}, 'odd': {}}}
+tape.append(t2, bk(1000, 900, 108.0), 20261022, 930)
+tape.append(t2, bk(1300, 900, 108.0), 20261022, 935)
+check('資料時間沒變：不重複記', len(t2['cur']['codes']['0050']['reg']['t']) == 1)
+tape.append(t2, bk(1600, 1500, 108.1), 20261022, 940)
+s50 = t2['cur']['codes']['0050']['reg']
+check('資料時間有變：記下，q 跟著存', s50['t'] == [1000, 1600] and s50['q'] == [900, 1500], s50)
+old_series = {'t': [10, 20], 'z': [1, 2], 'zt': [None, None], 'h': [None, None], 'l': [None, None], 'v': [0, 0],
+              'a': [[], []], 'b': [[], []], 'pz': [None, None]}
+t3 = {'cur': {'d': 20261022, 'codes': {'0050': {'reg': old_series}}}, 'prev': None, 'last': None}
+tape.append(t3, bk(1700, 1650, 108.2), 20261022, 945)
+check('舊資料沒有 q：補 None 再接上', t3['cur']['codes']['0050']['reg']['q'] == [None, None, 1650], t3['cur']['codes']['0050']['reg'])
+tape.append(t2, bk(1900, 1500, 108.1), 20261022, 1350)
+check('13:45 以後：今天標成完成、不再加快照', t2['cur'].get('done') is True and len(s50['t']) == 2)
+t4 = {'cur': {'d': 20261023, 'codes': {'0050': {}}}, 'prev': {'d': 20261022, 'codes': {'0050': {}}}, 'last': None, 'archived': []}
+tape.append(t4, bk(5000, 4900, 108.0, d=20261026), 20261026, 905)
+check('換日：要被擠掉、還沒封存的那一天交給封存', [x['d'] for x in t4.get('_drop', [])] == [20261022] and t4['prev']['d'] == 20261023)
+t5 = {'cur': {'d': 20261023, 'codes': {'0050': {}}}, 'prev': {'d': 20261022, 'codes': {'0050': {}}}, 'last': None, 'archived': [20261022]}
+tape.append(t5, bk(5000, 4900, 108.0, d=20261026), 20261026, 905)
+check('已經封存過的就不再封存', '_drop' not in t5)
+
+# ---- 封存：{日期}/{代號}.json、只留最近 ARCHIVE_KEEP 天、index.json
+arc = pathlib.Path(tempfile.mkdtemp())
+for k in range(tape.ARCHIVE_KEEP + 2):
+    (arc / str(20260101 + k)).mkdir()
+kept = tape.write_archive(arc, [{'d': 20261022, 'done': True, 'codes': {'0050': {'reg': s50, 'y': 108.15}}}])
+f = json.loads((arc / '20261022' / '0050.json').read_text())
+check('封存檔格式和 tape 的 cur／prev 一樣', f['d'] == 20261022 and f['done'] is True and f['reg']['q'] == [900, 1500] and f['y'] == 108.15, f)
+check('封存只留最近 ARCHIVE_KEEP 天', len(kept) == tape.ARCHIVE_KEEP and kept[-1] == 20261022 and not (arc / '20260101').exists(), kept[:3])
+check('封存有 index.json', json.loads((arc / 'index.json').read_text())['days'] == kept)
 
 # ---- 輸出
 tmp = pathlib.Path(tempfile.mkdtemp())
@@ -66,6 +108,28 @@ qq = json.loads((tmp / 'quotes.json').read_text())
 f50 = json.loads((tmp / 'tape' / '0050.json').read_text())
 check('quotes.json 有整股與零股', '0050' in qq['reg'] and '0050' in qq['odd'])
 check('tape/0050.json 有今天與前一天', f50['cur']['d'] == 20261023 and f50['prev']['d'] == 20261022, f50.keys())
+check('tape/0050.json：前一天一定是完成的、今天還沒', f50['prev']['done'] is True and f50['cur']['done'] is False)
+
+
+# ---- 盤後結果：after/{日期}.json、after.json 的 _days 與最近幾天、只留 ETF
+class AfterState:
+    def __init__(self):
+        self.data = {'after': {str(20261001 + k): {'0050': [100 + k, 1, 0, 0, 0], '2330': [1, 1, 1, 1, 1]} for k in range(5)},
+                     'daily': {'0050': {}}, 'meta': {'0050': {}}}
+
+    def __getitem__(self, k):
+        return self.data[k]
+
+
+ad = pathlib.Path(tempfile.mkdtemp())
+(ad / 'after').mkdir()
+(ad / 'after' / '20200101.json').write_text('{}')
+tape.write_after(ad, AfterState())
+aj = json.loads((ad / 'after.json').read_text())
+check('after.json 有 _days 和最近 3 天', aj['_days'] == [20261001 + k for k in range(5)] and sorted(k for k in aj if k != '_days') == ['20261003', '20261004', '20261005'], list(aj))
+d1 = json.loads((ad / 'after' / '20261001.json').read_text())
+check('after/{日期}.json 每天一個檔、只留 ETF', d1 == {'0050': [100, 1, 0, 0, 0]}, d1)
+check('過期的 after 檔會刪掉', not (ad / 'after' / '20200101.json').exists())
 
 
 # ---- 交易日曆

@@ -38,7 +38,9 @@
 ## 給沙盤用的資料（`pipeline/tape.py`）
 - 沙盤 SANDTABLE（repo `sandtable`，網址 /sandtable/）是 PZ 的台股 ETF 模擬操盤 App，**自己不抓資料**，讀這個網站的 `data/`。冷眼只是多輸出幾個檔，全部步驟各自 try／`step`，失敗不影響冷眼。
 - 盤中每一輪（`intraday`，含 `deploy`）：MIS `getStockInfo`（整股最佳五檔、開高低、漲跌停 u/w；國外成分 u=9999.95 視為沒有漲跌停）與 `getOddInfo`（盤中零股五檔），一次查 120 檔、間隔 2 秒；量一律換成「股」。存進 `tape` 分支（`tape.json.gz`：`cur` 今天每一輪的快照、`prev` 前一個交易日、`last` 最新一輪；每次只留一個 commit），只記 08:25～13:45、資料日期是今天的快照（休市就只更新 last）。
-- 每次部署（`publish`）都從 tape 寫出 `quotes.json`（最新一輪整股＋零股）、`tape/{代號}.json`（cur／prev）。收盤後（`compute`）寫 `k/{代號}.json`（最近 500 根日 K，原始價格，`c_` 是收盤）、`cal.json`（證交所開休市日期：休市日、只辦交割日、用實際成交推出的開市日與颱風假）、`after.json`（14:35 以後抓證交所盤後零股行情 TWT53U、盤後定價 BFT41U，量換成股，保留 12 個交易日）。state 多了 `cal.json`、`after.json`。
+- **每筆快照有兩個時間**：`t`＝後台去問的時間、`q`＝證交所這筆資料本身的時間（MIS 的 `tlong`）。MIS 的整股資料常常落後一兩分鐘（實測中位數約 1 分鐘、最多 7 分多），沙盤一律用 `q` 判斷先後；`q` 沒變（資料沒更新）的那一檔不重複記。2026/10/22 盤中以前的快照沒有 `q`。
+- 一天結束：13:45 以後（或收盤後的 eod 那一輪 `finish_day`）把今天標成 `done`；換日時前一天變成 `prev` 也標 `done`。完成的交易日封存到 **`tape-days` 分支**（`{日期}/{代號}.json`，格式和 `tape/{代號}.json` 的 cur／prev 一樣，`index.json` 列出有哪幾天，保留 `ARCHIVE_KEEP`＝40 個交易日，每次只留一個 commit）；沙盤從 `https://raw.githubusercontent.com/PZWei0105/coldeye-etf/tape-days/…` 讀（有 CORS）。收盤後那一輪封存失敗的話，換日要擠掉那一天時會再封存一次（`_drop`）。`tape` 分支的 `archived` 記錄封存過哪幾天。
+- 每次部署（`publish`）都從 tape 寫出 `quotes.json`（最新一輪整股＋零股）、`tape/{代號}.json`（cur／prev，含 `done`）。收盤後（`compute`）寫 `k/{代號}.json`（最近 500 根日 K，原始價格，`c_` 是收盤）、`cal.json`（證交所開休市日期：休市日、只辦交割日、用實際成交推出的開市日與颱風假）、盤後結果（14:35 以後抓證交所盤後零股行情 TWT53U、盤後定價 BFT41U，量換成股，只留 ETF，保留 40 個交易日）：`after/{日期}.json` 每天一個檔，`after.json` 是 `{_days: [有哪幾天], 最近 3 天的內容}`。state 多了 `cal.json`、`after.json`。
 - 這些檔案的格式改了，要同步改沙盤的 `src/data.js`。測試：`python3 tests/tape_test.py [probe 資料夾]`。
 
 ## 怎麼操作

@@ -319,9 +319,10 @@ def eod(state, log, weekly=False):
                     lst.append([hd, n, units])
                     del lst[:-60]
             state.mark('tdcc', when=when)
-    # 沙盤用：交易日曆、盤後零股與盤後定價結果
+    # 沙盤用：交易日曆、盤後零股與盤後定價結果、今天的 tape 收尾並封存
     step(log, 'sandtable_cal', tape.update_cal, state, log, http_tw)
     step(log, 'sandtable_after', tape.update_after, state, log, http_tw)
+    step(log, 'sandtable_finish', tape.finish_day, state, log)
     state['_extra'] = {'mis': mis, 'pre': pre, 'risk': risk, 'news': news}
     store_news(state, news)
 
