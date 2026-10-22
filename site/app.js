@@ -21,6 +21,8 @@ import {
 } from './desk.js';
 import * as FX from './fx.js';
 import { UPDATES } from './updates.js';
+import { lessonHomeHTML, bindLessonHome, openLessonList, LESSONS, seenCount } from './lessons.js';
+import { openCase, casesCardHTML } from './cases.js';
 
 // 打開之前手機上就有冷眼的資料（老用戶）：有新功能要提示；全新的人不跳
 const HAD_SAVE = (() => { try { return Object.keys(localStorage).some((k) => k.startsWith('coldeye.') && k !== 'coldeye.settings'); } catch { return false; } })();
@@ -284,7 +286,7 @@ function renderHome() {
   // 手機上依序排成一欄；寬螢幕（筆電、電視）變成三欄戰情室：左「大盤之瞳＋晨報」、中「行動＋關注」、右「熱力圖」
   v.innerHTML = `<div class="home">
     ${stallHTML()}
-    <div class="col c1"><div class="h-eye">${eyeHTML(P, has)}</div><div class="h-brief">${briefHTML()}</div><div class="h-aide">${aideHomeHTML()}</div></div>
+    <div class="col c1"><div class="h-eye">${eyeHTML(P, has)}</div><div class="h-brief">${briefHTML()}</div><div class="h-lesson">${lessonHomeHTML()}</div><div class="h-aide">${aideHomeHTML()}</div></div>
     <div class="col c2"><div class="h-acts">${actionsHTML(P)}</div><div class="h-watch">${watchHTML()}</div></div>
     <div class="col c3"><div class="h-heat">${heatCardHTML(true)}</div><div class="h-news">${newsMiniHTML()}</div></div>
     <div class="h-foot">${installCard()}<p class="disclaim">資料來自證交所、櫃買中心、集保結算所等官方發布；觀點與建議由固定規則計算，不保證報酬，買賣請自行判斷。</p></div>
@@ -295,6 +297,7 @@ function renderHome() {
   bindInstall(v);
   bindHeat(v);
   bindBrief(v);
+  bindLessonHome(v, lessonNav);
   bindAideHome(v, go);
   animateNeedles(v);
   const more = $('#heat-more', v);
@@ -390,6 +393,17 @@ function bindHero(v, P) {
   S.firstPaint = false;
 }
 
+/** 今日一課裡的「看戰績」「開存股時光機」這類連結：切分頁或開工具頁 */
+function lessonNav(tab, sheet) {
+  if (sheet === 'tm') { swapSheet('tm', (push) => openTM(push)); return; }
+  if (sheet === 'duel') { swapSheet('duel', (push) => openDuel(push)); return; }
+  if (sheet === 'cases') { swapSheet('cases', (push) => openCase(null, push)); return; }
+  if (tab && TABS.some((t) => t.id === tab)) { if (S.openCode) closeDetail(); go(tab); }
+}
+/** 已經開著一個全螢幕頁（例如設定）時換成另一頁：直接換掉網址，不要先 back 再 push（會和瀏覽器的歷史搶） */
+function swapSheet(hash, open) {
+  if (S.openCode) { S.openCode = null; history.replaceState({ tool: hash }, '', '#' + hash); open(false); } else open(true);
+}
 const md = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
 const BR_ICON = {
   market: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 15.5l4.5-5 3.5 3 6.5-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -833,7 +847,7 @@ async function drawEq(v) {
   if (idx[idx.length - 1] !== r.d.length - 1) idx.push(r.d.length - 1);
   const dates = idx.map((i) => r.d[i]);
   const sv = series.map((s) => ({ ...s, vals: idx.map((i) => s.vals[i]) }));
-  box.innerHTML = linesSVG({ dates, series: sv, fmtY: (x) => (settings.privacy ? '' : Math.abs(x) >= 1e4 ? `${(x / 1e4).toFixed(Math.abs(x) >= 1e6 ? 0 : 1)}萬` : x.toFixed(0)), ref, h: 210 });
+  box.innerHTML = linesSVG({ dates, series: sv, fmtY: (x) => (settings.privacy ? '' : Math.abs(x) >= 1e4 ? `${(x / 1e4).toFixed(Math.abs(x) >= 1e6 ? 0 : 1)}萬` : x.toFixed(0)), ref, h: 210, w: box.clientWidth });
   bindLines(box, { dates, series: sv, fmtV });
   $('#eqleg', v).innerHTML = sv.map((s) => `<span><i class="${s.dash ? 'dash' : ''}" style="border-color:${s.col}"></i>${esc(s.name)}</span>`).join('') + `<span class="muted num">到 ${fmt.d(r.d[r.d.length - 1])} 收盤</span>`;
   $('#eqnote', v).textContent = note;
@@ -1034,8 +1048,9 @@ async function renderTrack() {
   }
   const T = S.track;
   const o = T.overall;
-  const tmCard = `<button class="panel tool-card" id="to-tm">${TOOL_ICON.tm}<span><b>存股時光機</b><span>如果當初每月固定買，現在會怎樣？和「只在冷眼說可加碼時才買」比一比。</span></span><span class="chev">${ICON.chev}</span></button>`;
-  if (!o) { v.innerHTML = tmCard + '<section class="panel empty">歷史資料還在回補中，完成後這裡會顯示回測結果。</section>'; $('#to-tm', v).addEventListener('click', () => openTM()); return; }
+  const tmCard = `<button class="panel tool-card" id="to-tm">${TOOL_ICON.tm}<span><b>存股時光機</b><span>如果當初每月固定買，現在會怎樣？和「只在冷眼說可加碼時才買」比一比。</span></span><span class="chev">${ICON.chev}</span></button>` + casesCardHTML();
+  const bindTools = () => { $('#to-tm', v).addEventListener('click', () => openTM()); $('#to-cases', v).addEventListener('click', () => openCase()); };
+  if (!o) { v.innerHTML = tmCard + '<section class="panel empty">歷史資料還在回補中，完成後這裡會顯示回測結果。</section>'; bindTools(); return; }
   const adj = T.overall_adj || { bull: o.base_up, bear: 1 - o.base_up };
   const pc = (z, d = 1) => (isNum(z) ? (z * 100).toFixed(d) + '%' : '—');
   const delta = (a, b) => (isNum(a) && isNum(b) ? `<b class="${a - b >= 0.02 ? 'good' : a - b > -0.02 ? 'meh' : 'bad'}">${a >= b ? '高' : '低'} ${Math.abs((a - b) * 100).toFixed(1)} 點</b>` : '');
@@ -1063,7 +1078,7 @@ async function renderTrack() {
   }
   html += `<section class="panel pad prose"><p><b>怎麼算的：</b>${esc(T.method.note)}</p><p>命中的定義：偏多之後 20 個交易日含息報酬大於 0；偏空之後小於 0。中性不算命中。回測是用過去資料檢查規則，不代表未來一樣準。</p></section>`;
   v.innerHTML = `<div class="track">${html}</div>`;
-  $('#to-tm', v).addEventListener('click', () => openTM());
+  bindTools();
   const sel = $('#pos-cat', v);
   if (sel) sel.addEventListener('change', (e) => { S.posCat = e.target.value; renderTrack(); });
 }
@@ -1196,6 +1211,12 @@ function drawSettings() {
       <div class="srow"><div><div class="h">顯示評論與情緒用語新聞</div><div class="d">預設隱藏標題含預測、推薦、渲染字眼的新聞</div></div><button class="switch" role="switch" id="s-op" aria-checked="${settings.opinion}" aria-label="顯示評論新聞"></button></div>
     </section>
 
+    <div class="sec-h"><h2>學習</h2><span class="aside num">已上 ${seenCount()}／${LESSONS.length} 課</span></div>
+    <section class="panel set">
+      <div class="srow"><div><div class="h">今日一課</div><div class="d">每天一課，基礎觀念、陷阱提醒、看盤判斷輪流；內容固定、附官方出處，也能從這裡看全部課程</div></div><button class="btn small ghost" id="s-lessons">全部課程</button></div>
+      <div class="srow"><div><div class="h">案例教室</div><div class="d">用真實的歷史走勢講 2020 疫情、2022 升息、2024/8/5、2025 關稅、0050 分割、00940 這些事當時該怎麼看</div></div><button class="btn small ghost" id="s-cases">打開</button></div>
+    </section>
+
     <div class="sec-h"><h2>規則與來源</h2></div>
     <section class="panel">
       <details class="rules"><summary>冷眼小辭典</summary><div class="in">${glossaryHTML()}</div></details>
@@ -1239,6 +1260,8 @@ function bindSettings() {
   $('#s-mode', sh).addEventListener('click', () => { switchMode(isPaper() ? 'real' : 'paper'); diffSeen(); computePF(); render(); drawSettings(); toast(isPaper() ? '切到模擬倉' : '切回真實部位'); });
   $('#s-bk', sh).addEventListener('click', () => openBackup());
   $('#s-upd', sh).addEventListener('click', () => showUpdates(UPDATES.slice(0, 12), '更新紀錄'));
+  $('#s-lessons', sh).addEventListener('click', () => openLessonList());
+  $('#s-cases', sh).addEventListener('click', () => swapSheet('cases', (push) => openCase(null, push)));
   $('#s-wipe', sh).addEventListener('click', (e) => {
     const b = e.currentTarget;
     if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = '確定清除？'; return; }
@@ -1471,6 +1494,7 @@ window.addEventListener('popstate', () => {
   if (h === 'settings') { if (S.openCode !== '__prefs') openSettings(false); return; }
   if (h === 'duel') { if (S.openCode !== '__duel') openDuel(false); return; }
   if (h === 'tm') { if (S.openCode !== '__tm') openTM(false); return; }
+  if (h === 'cases') { if (S.openCode !== '__cases') openCase(S.caseId || null, false); return; }
   if (h && S.rows.has(h)) { openDetail(h, false); return; }
   if (S.openCode) closeDetail(true);
 });
@@ -1540,6 +1564,7 @@ async function boot() {
   if (h === 'settings') openSettings(false);
   else if (h === 'duel') openDuel(false);
   else if (h === 'tm') openTM(false);
+  else if (h === 'cases') openCase(null, false);
   else if (h && S.rows.has(h)) openDetail(h, false);
   // 盤中（以手機時間判斷，不靠舊的 live.json）每分鐘看一次後台有沒有新資料
   setInterval(() => { if (document.visibilityState === 'visible' && ((S.live && S.live.open) || inSession())) refreshLive(); }, 60000);

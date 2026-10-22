@@ -27,6 +27,12 @@
 - 「帶去問 Claude」只是把文字交給使用者分享或複製（`aide.js` 的 `packEtf`／`packPf`／`packMarket`／`packReview`／`packDuel`／`packWeek`），App 本身不送出任何資料；持股預設只寫比例，使用者打開開關才附金額（副官檢查裡有金額或股數的句子另外存一份比例說法 `tp`，舊紀錄用 `redactAmt` 遮掉）。規則段要求 Claude 只用官方來源、不直接叫人買賣、最後用【冷眼結論】格式總結，`parseConclusion` 依這個格式解析。
 - 資產走勢用 `calc.js` 的 `equityCurve`（交易紀錄＋`hist/` 的官方收盤，交易與分割、除息照時間順序重播；比歷史資料還早的交易也算得到之前的配息；冷門 ETF 除權息當天沒成交時，參考價先照除權息調整）重算。
 
+## 今日一課與案例教室（帶著 PZ 成長）
+- 兩個都是**固定內容、不連 AI**：`site/lessons.js` 的 `LESSONS`（三類：basic 基礎觀念、trap 陷阱提醒、read 看盤判斷）、`site/cases.js` 的 `CASES`。每一課、每個案例**一定要有官方出處**（`src`，只放一手來源：證交所、櫃買、集保、金管會、央行、健保署、法規資料庫、國泰官方說明、美國財政部），文字要白話、不能像社群 KOL 的口吻、不直接叫人買賣。不確定的數字不要寫死，用 `ex`／`(st) => …` 從當下資料算。
+- 今日一課照日期輪（`EPOCH`＝2026/10/22 起算，三類輪流，`lessonOrder`／`todayLessonIdx`），可往前翻、看全部課程；上過的記在 `coldeye.lessons`（只在手機）。`id` 不要改（紀錄跟著 id）；新增一課直接加進 `LESSONS`，`terms` 要是 `learn.js` TERMS 的 key、`cases` 要是 CASES 的 id、`nav` 只能是分頁或 tm／duel／cases。「現在的例子」`ex()` 不能炸（沒資料回空字串）。有內建中文語音的裝置可以念（和晨報同一套 `fx.js` 規則）。
+- 案例教室的數字全部在手機上由 `data/hist/{代號}.json` 算（`windowStats`／`recoverAfter`／`divFill`／`sigChanges`／`caseStats`，純函式，含息用 `aide.js` 的 `trIndex`）；敘述裡的「硬數字」（加權指數跌幾點、00940 募了多少）要先查證官方或可靠報導，其餘用 `(st) => …` 動態帶入。`raw: true` 的案例畫原始價格 vs 還原價（分割、除息）。開在 `#sheet`（網址 `#cases`）；從設定頁或另一個全螢幕頁切過去要用 `app.js` 的 `swapSheet`（replaceState，不要 back 再 push）。
+- 折線圖（`viz.js` 的 `linesSVG`）：`marks` 標事件、`w` 傳容器寬度（寬螢幕字才不會被放大）。測試：`node tests/lessons_test.mjs [hist 資料夾]`（內容完整性、輪課、例子不炸、案例統計與文字；給 hist 資料夾會用真實資料把每個案例算一遍）。
+
 ## 定期定額（PZ 用國泰證券）
 - 規則照國泰官方說明（https://istockapp.cathaysec.com.tw/Marketing/DCA/）：每月 1～31 號任選、可多選；遇市場假日順延到下一個交易日；那個月沒有的日期（例如 2/30）那一期不買；盤中、盤後分批買零股，不設價格；每筆金額已含手續費（2026/12/31 前每筆 1 元，以百元為單位、最低 100 元）；扣款失敗（餘額不足）不補扣，連續 3 次失敗自動終止全部台股定期定額。**申請、變更、終止都是 1 個交易日後生效，最晚要在扣款日前 2 天送出**（4 號送、5 號生效、6 號扣；前 1 天才送，隔天照舊扣）→ `calc.js` 的 `dcaCutover`＝送出日之後第 2 個交易日。**股票停止交易（例如 0050 在 2025/6/11～6/17 分割停止買賣）那幾天券商不扣、也不補**（國泰台股說明沒有寫這一條；根據是 0050 分割時各券商都沒扣也沒補的報導 https://technews.tw/?p=1409883，以及國泰美股說明「資產分割等公司活動當次不扣款」；之後國泰有正式說明要照著改）。國泰改規則時改 `calc.js` 的定期定額區塊與 `dca.js` 的說明文字。
 - 計畫存在設定的 `plans`（只在手機），格式一律經過 `calc.js` 的 `normPlan`（新增、編輯、舊版 `{ day }`／v2 轉換、還原備份都是）：`{ id, c, days, amt, fee, start, end, stop, sb?, v: 3 }`；**開始、停扣看的是實際成交的交易日**（舊版 `{ day }`／v2 轉過來的帶 `sb: true`，照舊版看原本的扣款日，在表單裡存過一次就變新算法）。使用者刪掉的那幾期存在設定的 `dcaSkip`、說過「不是同一筆」的存在 `dcaNoAsk`（都是 `代號|原本扣款日`，跟著代號走，計畫刪掉重建也不會補回來）。這三樣一律經過 `core.js` 的 `savePlans`（先讀儲存空間最新的、再改、再存）；`saveSettings` 不會用記憶體裡的舊副本蓋掉它們；另一個分頁改了會由 `storage` 事件 `reloadPlans`。
@@ -50,7 +56,7 @@
 - 盤中更新是「接力」：每一輪結束前由 `next` 工作等到約 5 分鐘後自己發出下一輪（`pipeline/dispatch.py` 的 `next_tick`），13:36 後或偵測到休市就停；08:37–08:53 的排程只負責暖身，09:00 準時發出第一輪；每 10 分鐘的排程是接力斷掉時的備援。已有排隊中的執行時不會再發，避免把推送或備援擠掉。
 - 執行紀錄在 `state` 分支的 `status.json` 的 `_runs`；盤中那幾輪沒有新聞變動時不寫 state（看 Actions 的執行列表）。
 - 歷史資料從 2020-01 起（`build.py` 的 `HISTORY_START`），回測包含 2022 年大跌，也包含已下市的 ETF（避免只看活下來的）。每檔的原始收盤、規則訊號取樣、分割與配息輸出在 `out/hist/{代號}.json`，給存股時光機用。
-- 本機測試：`python3 tests/local_pipeline.py`、`python3 tests/local_build.py <輸出資料夾>`（需要先有 probe 的原始回應）；部位計算：`node tests/pf_test.mjs [summary.json divs.json track.json]`、`node tests/pf_regress.mjs`；時光機、對決、熱力圖、資產走勢：`node tests/calc_test.mjs [hist/0050.json]`；副官：`node tests/aide_test.mjs [hist 資料夾] [track.json]`。
+- 本機測試：`python3 tests/local_pipeline.py`、`python3 tests/local_build.py <輸出資料夾>`（需要先有 probe 的原始回應）；部位計算：`node tests/pf_test.mjs [summary.json divs.json track.json]`、`node tests/pf_regress.mjs`；時光機、對決、熱力圖、資產走勢：`node tests/calc_test.mjs [hist/0050.json]`；副官：`node tests/aide_test.mjs [hist 資料夾] [track.json]`。今日一課與案例教室：`node tests/lessons_test.mjs [hist 資料夾]`。
 
 ## 介面設計（機甲 HUD）
 - 極夜深藍底；冰川藍 #4ee0ff＝系統與動作、極光紫 #b59cff＝「你自己」（持有、成本、提醒、模擬倉）、琥珀 #ffb02e＝小心；紅漲 #ff4d6a 綠跌 #17d39a 只用在價格、損益與多空。數字一律用 Oxanium，標題 Noto Serif TC，內文 Noto Sans TC。
@@ -59,4 +65,4 @@
 - 盤面熱力的「盤中縮時」（`app.js` 的 `heatReplay`）：讀 `data/spark.json`（後台每一輪輸出、今天每一檔的 [分鐘, 價]），把熱力圖從開盤快轉到現在（只換格子顏色與漲跌數字、不動排版；參考價用 `quote()` 的 `px − ch`，所以播完剛好接上現在的顏色；`spark.json` 的日期和報價日期不同就不播）。純顯示。
 - 聲光（PZ 要求「聲光效果拉滿」）：動態只放在有意義的時刻——開機點火、大盤之瞳的掃描、價格閃動、切換分頁的掃描、副官檢查逐條鎖定、記錄時蓋章、對答案揭曉；副官核心環會慢慢轉。全部可在設定關（`settings.fx`，body 加 `nofx`），並尊重「減少動態效果」。
 - 音效用 WebAudio 即時合成（`fx.js` 的 `SOUNDS`，不放音檔）；手機要先點一下才能出聲，所以開機預設停在「啟動」按鈕（`settings.ignite`）。語音播報用瀏覽器的 speechSynthesis，但只用裝置內建（`localService`）的中文語音——桌機 Chrome 的「Google 國語」、Edge 的 Online 語音會把文字送到網路，而晨報裡有持股，所以這種裝置不念（`voiceStatus`／`voiceWhy` 說明原因）；iPhone 要在點擊當下先 `primeSpeech()`。震動只有 Android 有效。iPhone 側邊靜音時不出聲（`audioSession.type = 'ambient'`）。
-- 檔案分工：`calc.js` 純計算（時光機、對決百分位、熱力圖排版、晨報、資產走勢、定期定額排程與預估）、`aide.js` 副官純計算、`dca.js` 定期定額畫面與自動入帳、`viz.js` 畫圖（瞳孔環、熱力圖、六角雷達、折線）、`learn.js` 名詞解釋（看懂模式）、`tools.js` 對決與時光機畫面、`desk.js` 副官畫面、`fx.js` 聲光。新增名詞時同時補 `learn.js` 的 TERMS，畫面上的元素加 `data-term`。新增介面檔案要同時加進 `sw.js` 的 `SHELL_FILES`。
+- 檔案分工：`calc.js` 純計算（時光機、對決百分位、熱力圖排版、晨報、資產走勢、定期定額排程與預估）、`aide.js` 副官純計算、`dca.js` 定期定額畫面與自動入帳、`viz.js` 畫圖（瞳孔環、熱力圖、六角雷達、折線）、`learn.js` 名詞解釋（看懂模式）、`lessons.js` 今日一課、`cases.js` 案例教室、`tools.js` 對決與時光機畫面、`desk.js` 副官畫面、`fx.js` 聲光。新增名詞時同時補 `learn.js` 的 TERMS，畫面上的元素加 `data-term`。新增介面檔案要同時加進 `sw.js` 的 `SHELL_FILES`。

@@ -121,7 +121,7 @@ async function drawDuel() {
       const m = new Map(d.bars.d.map((x, j) => [x, d.bars.c[j]]));
       return { name: p.r.n, col: SLOT_COL[p.i], vals: indexTo100(dates.map((x) => m.get(x) ?? null)) };
     });
-    box.innerHTML = linesSVG({ dates, series, fmtY: (v) => v.toFixed(0), ref: 100 });
+    box.innerHTML = linesSVG({ dates, series, fmtY: (v) => v.toFixed(0), ref: 100, w: box.clientWidth });
     bindLines(box, { dates, series, fmtV: (v) => `${v.toFixed(1)}（${v >= 100 ? '+' : '−'}${Math.abs(v - 100).toFixed(1)}%）` });
   }
 }
@@ -189,7 +189,7 @@ async function drawTM() {
         { name: TM_STRATS.pause.name, col: 'var(--s2)', vals: pts.map((p) => p.v.pause) },
       ] : []),
     ];
-    box.innerHTML = linesSVG({ dates, series, fmtY: (v) => (Math.abs(v) >= 1e4 ? `${(v / 1e4).toFixed(0)}萬` : v.toFixed(0)), h: 230 });
+    box.innerHTML = linesSVG({ dates, series, fmtY: (v) => (Math.abs(v) >= 1e4 ? `${(v / 1e4).toFixed(0)}萬` : v.toFixed(0)), h: 230, w: box.clientWidth });
     bindLines(box, { dates, series, fmtV: (v) => money(v) });
   }
 }

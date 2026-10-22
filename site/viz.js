@@ -144,8 +144,10 @@ function niceStep(v) {
  * dates：[yyyymmdd]，series：[{name, col, vals, dash, width}]，fmtY：y 軸數字格式，ref：參考線（例如 100）
  * 只畫圖，互動在 bindLines()。
  */
-export function linesSVG({ dates, series, fmtY = (v) => fmt.n(v, 0), ref = null, h = 210, area = false }) {
-  const W = 360, H = h, pl = 6, pr = 58, pt = 14, pb = 22;
+/** marks：[{ i: 第幾天, t: 標籤 }]，在那一天畫一條直的虛線並在上方標字（案例教室用）。
+ *  w：畫布寬度（預設 360，手機剛好）；寬螢幕傳容器的寬度進來，字才不會被放大到糊成一團。 */
+export function linesSVG({ dates, series, fmtY = (v) => fmt.n(v, 0), ref = null, h = 210, area = false, marks = [], w = 360 }) {
+  const W = clamp(Math.round(w) || 360, 300, 1200), H = h, pl = 6, pr = 58, pt = 14, pb = 22;
   const all = series.flatMap((s) => s.vals).filter(isNum);
   if (ref != null) all.push(ref);
   if (!all.length) return '';
@@ -161,14 +163,15 @@ export function linesSVG({ dates, series, fmtY = (v) => fmt.n(v, 0), ref = null,
   let xl = '';
   const span = n > 1 ? (dates[n - 1] - dates[0]) / 10000 : 0;
   let last = null;
+  const xls = [];
   dates.forEach((d, i) => {
     const key = span > 1.6 ? Math.floor(d / 10000) : Math.floor(d / 100);
-    if (key !== last && i > 3 && i < n - 4) {
-      const t = span > 1.6 ? String(key) : `${key % 100}月`;
-      xl += `<text x="${f1(X(i))}" y="${H - 6}" text-anchor="middle" class="ax">${t}</text>`;
-    }
+    if (key !== last && i > 3 && i < n - 4) xls.push({ x: X(i), t: span > 1.6 ? String(key) : `${key % 100}月` });
     last = key;
   });
+  // 標籤太擠（一年多的月份）就隔幾個標一個
+  const every = Math.max(1, Math.ceil(xls.length / Math.max(4, Math.floor((W - pl - pr) / 34))));
+  xls.forEach((l, k) => { if (k % every === 0) xl += `<text x="${f1(l.x)}" y="${H - 6}" text-anchor="middle" class="ax">${l.t}</text>`; });
   const path = (vals) => { let d = '', pen = false; vals.forEach((v, i) => { if (!isNum(v)) { pen = false; return; } d += (pen ? 'L' : 'M') + f1(X(i)) + ' ' + f1(Y(v)); pen = true; }); return d; };
   const lines = series.map((s, i) => `<path d="${path(s.vals)}" fill="none" stroke="${s.col}" stroke-width="${s.width || 2}" ${s.dash ? `stroke-dasharray="${s.dash}"` : ''} stroke-linejoin="round" stroke-linecap="round" data-i="${i}"/>`).join('');
   const ends = series.map((s) => {
@@ -178,8 +181,20 @@ export function linesSVG({ dates, series, fmtY = (v) => fmt.n(v, 0), ref = null,
   }).filter(Boolean);
   const dots = ends.map((e) => `<circle cx="${f1(e.x)}" cy="${f1(e.y)}" r="3.5" fill="${e.s.col}" stroke="var(--hull)" stroke-width="2"/>`).join('');
   const refl = ref != null ? `<line class="ref" x1="${pl}" x2="${W - pr}" y1="${f1(Y(ref))}" y2="${f1(Y(ref))}"/>` : '';
+  // 事件標記：直線＋小標籤（靠右邊的標籤改放左邊，免得被切掉；標籤會互相擠到的往下排一列，最多三列）
+  const rowsEnd = [];
+  const mk = (marks || []).filter((m) => isNum(m.i) && m.i >= 0 && m.i < n).sort((a, b) => a.i - b.i).map((m) => {
+    const x = X(m.i);
+    const tw = String(m.t).length * 9.5 + 6;
+    const right = x + tw > W - pr;
+    const x0 = right ? x - tw : x, x1 = right ? x : x + tw;
+    let r = rowsEnd.findIndex((e) => e <= x0 - 2);
+    if (r < 0) r = Math.min(rowsEnd.length, 2);
+    rowsEnd[r] = Math.max(rowsEnd[r] || 0, x1);
+    return `<g class="mark"><line x1="${f1(x)}" x2="${f1(x)}" y1="${pt}" y2="${H - pb}"/><text x="${f1(x + (right ? -4 : 4))}" y="${pt + 9 + r * 11}" text-anchor="${right ? 'end' : 'start'}" class="mk">${esc(m.t)}</text></g>`;
+  }).join('');
   return `<svg class="lines" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(series.map((s) => s.name).join('、'))}" data-n="${n}" data-pl="${pl}" data-pr="${pr}" data-w="${W}" data-mn="${mn}" data-mx="${mx}">
-    <g class="grid">${grid}</g><g>${xl}</g>${refl}${lines}${dots}
+    <g class="grid">${grid}</g><g>${xl}</g>${refl}${mk}${lines}${dots}
     <g class="xh" opacity="0"><line class="xl" y1="${pt}" y2="${H - pb}"/>${series.map((s) => `<circle r="4" fill="${s.col}" stroke="var(--hull)" stroke-width="2"/>`).join('')}</g>
     <rect class="hit" x="${pl}" y="${pt}" width="${W - pl - pr}" height="${H - pt - pb}" fill="transparent"/>
   </svg>`;
