@@ -109,6 +109,10 @@ f50 = json.loads((tmp / 'tape' / '0050.json').read_text())
 check('quotes.json 有整股與零股', '0050' in qq['reg'] and '0050' in qq['odd'])
 check('tape/0050.json 有今天與前一天', f50['cur']['d'] == 20261023 and f50['prev']['d'] == 20261022, f50.keys())
 check('tape/0050.json：前一天一定是完成的、今天還沒', f50['prev']['done'] is True and f50['cur']['done'] is False)
+check('有 spark.json', (tmp / 'spark.json').exists())
+q0 = tape._epoch(20261022, 90000)
+sp = tape.make_spark({'d': 20261022, 'codes': {'0050': {'reg': {'t': [q0 + 400, q0 + 700, q0 + 900], 'q': [q0 + 300, None, q0 + 600], 'z': [108.1, 108.2, None]}}}})
+check('spark.json：今天每一檔的走勢線（距 09:00 的分鐘、價；優先用資料時間）', sp == {'d': 20261022, 's': {'0050': [5.0, 108.1, 11.7, 108.2]}}, sp)
 
 
 # ---- 盤後結果：after/{日期}.json、after.json 的 _days 與最近幾天、只留 ETF

@@ -9,7 +9,7 @@
   沙盤好幾天沒打開，也能用當天的逐筆快照判斷那幾天的委託（不會因為「什麼時候打開 App」而有不同結果）。
 - 收盤後：K 線（開高低收量）、交易日曆（證交所開休市日期）、盤後零股與盤後定價的成交結果。
 
-輸出（都在網站的 data/ 底下）：quotes.json、tape/{代號}.json、k/{代號}.json、cal.json、after.json、after/{日期}.json。
+輸出（都在網站的 data/ 底下）：quotes.json、tape/{代號}.json、spark.json、k/{代號}.json、cal.json、after.json、after/{日期}.json。
 """
 import datetime as dt
 import gzip
@@ -330,7 +330,32 @@ def publish(data_dir: pathlib.Path, tape=None):
     tdir.mkdir(parents=True, exist_ok=True)
     for c in codes:
         write_json(tdir / f'{c}.json', _code_file(cur, prev, c))
+    if cur and cur.get('codes'):
+        write_json(data_dir / 'spark.json', make_spark(cur))
     return True
+
+
+def make_spark(day):
+    """今天每一檔的走勢線（沙盤的自選卡片、清單用）：{d, s: {代號: [分鐘, 價, 分鐘, 價, …]}}，分鐘＝資料時間距 09:00。"""
+    base = _epoch(day['d'], 90000)
+    out = {}
+    for c, rec in (day.get('codes') or {}).items():
+        s = rec.get('reg') or {}
+        ts, qs, zs = s.get('t') or [], s.get('q') or [], s.get('z') or []
+        pts = []
+        last_m = None
+        for i, z in enumerate(zs):
+            if z is None:
+                continue
+            at = qs[i] if i < len(qs) and qs[i] is not None else ts[i]
+            m = round((at - base) / 60, 1) if base else None
+            if m is None or m < 0 or (last_m is not None and m <= last_m):
+                continue
+            pts += [m, z]
+            last_m = m
+        if pts:
+            out[c] = pts
+    return {'d': day['d'], 's': out}
 
 
 def write_k(out_dir: pathlib.Path, state, codes):
