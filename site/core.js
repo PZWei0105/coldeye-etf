@@ -1,6 +1,6 @@
 /* 冷眼 — 共用核心：狀態、設定、資料載入、格式、圖示、小元件。 */
 import * as PF from './pf.js';
-import { breadth, normPlan, planSkipKeys, normSkips } from './calc.js';
+import { breadth, normPlan, planSkipKeys, normSkips, normNoAsk } from './calc.js';
 import * as FX from './fx.js';
 
 export { PF };
@@ -46,7 +46,7 @@ function cleanPlans(rawPlans, rawSkip, rawNoAsk) {
   const seen = new Set();
   const plans = raw.slice(0, 120).map((p) => normPlan(p, PF.twToday())).filter((p) => p && !seen.has(p.id) && seen.add(p.id)).slice(0, PLAN_MAX);
   const dcaSkip = normSkips([...(Array.isArray(rawSkip) ? rawSkip : []), ...raw.flatMap(planSkipKeys)]);
-  const dcaNoAsk = normSkips(rawNoAsk);
+  const dcaNoAsk = normNoAsk(rawNoAsk);
   return { plans, dcaSkip, dcaNoAsk, changed: raw.some((p) => !p || p.v !== 3) || plans.length !== raw.length };
 }
 {

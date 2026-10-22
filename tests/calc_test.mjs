@@ -284,7 +284,7 @@ t('改了扣款日之後：核對過的那一筆算在最接近的新那一期�
   const r2 = C.dcaReconcile({ ...base, plans: [{ ...plan, days: [7] }], lots: mix });
   assert.equal(r2.add.length, r0.add.length - 2); assert.equal(r2.del.length, r0.add.length - 2);
   // 國泰那邊改了：9/1 送出 → 9/3 起新的 8 號；舊的 7 號那一期 9/7 已經核對過（其實是 9/8 那一筆）→ 9/8 不另外記
-  const old7 = { ...plan, days: [7], end: 20250902 }, new8 = { ...plan, id: 'p2', days: [8], start: 20250903 };
+  const old7 = { ...plan, days: [7], end: 20250902 }, new8 = { ...plan, id: 'p2', days: [8], start: 20250903, prev: 'p1' };
   const sept = [{ id: 's9', c: 'A', side: 'buy', d: 20250908, sh: 60, px: 50, fee: 1, at: '2025-09-09', dca: { plan: 'p1', s: 20250907, est: false } }];
   const r3 = C.dcaReconcile({ ...base, plans: [old7, new8], lots: sept });
   assert.ok(!r3.add.some((l) => l.dca.s === 20250908), 'September doubled');
@@ -302,6 +302,56 @@ t('改了扣款日之後：核對過的那一筆算在最接近的新那一期�
   const p3 = { id: 'p3', c: 'A', days: [29, 30, 31], amt: 3001, fee: 1, start: 20250101, end: null, v: 3 };
   const r6 = C.dcaReconcile({ plans: [p3], lots: [{ id: 'one', c: 'A', side: 'buy', d: 20250203, sh: 180, px: 50 }], cal: cny, upto: 20250228, skip: new Set(), noAsk: new Set(), priceOf: px });
   assert.equal(r6.ask.length, 1); assert.equal(r6.ask[0].more.length, 2); assert.equal(r6.add.length, 0);
+  // 你記的只有其中一期的股數：不一起問，只問那一期，其他兩期照記
+  const r7 = C.dcaReconcile({ plans: [p3], lots: [{ id: 'one', c: 'A', side: 'buy', d: 20250203, sh: 60, px: 50 }], cal: cny, upto: 20250228, skip: new Set(), noAsk: new Set(), priceOf: px });
+  assert.equal(r7.ask.length, 1); assert.equal(r7.ask[0].more, undefined); assert.equal(r7.add.length, 2);
+});
+
+t('不會跨計畫亂配：刪掉一個計畫留下的紀錄，不會吃掉同一檔另一個計畫的預估；扣款日差超過 15 天也不重複記', () => {
+  const cal = weekdays(20250601, 20251031);
+  const px = (c, d) => ({ st: 'ok', px: 50, pd: d });
+  const base = { cal, upto: 20251031, skip: new Set(), noAsk: new Set(), priceOf: px };
+  const p6 = { id: 'p6', c: 'A', days: [6], amt: 3001, fee: 1, start: 20250601, end: null, v: 3 };
+  const p20 = { id: 'p20', c: 'A', days: [20], amt: 3001, fee: 1, start: 20250601, end: null, v: 3 };
+  const r0 = C.dcaReconcile({ ...base, plans: [p6, p20], lots: [] });
+  const lots = r0.add.map((l, i) => ({ ...l, id: `x${i}`, at: `2025-11-0${i}`, dca: { ...l.dca, est: l.dca.plan === 'p6' ? false : true } }));
+  const r1 = C.dcaReconcile({ ...base, plans: [p20], lots });   // 刪掉 6 號的計畫（紀錄留著）
+  assert.equal(r1.del.length, 0); assert.equal(r1.add.length, 0); assert.equal(r1.moved, 0);
+  // 當初填錯：6 號改成 26 號，而且都核對過了 → 同一個月的那一期，不重複
+  const conf = r0.add.filter((l) => l.dca.plan === 'p6').map((l, i) => ({ ...l, id: `c${i}`, at: `2025-11-0${i}`, dca: { ...l.dca, est: false } }));
+  const r2 = C.dcaReconcile({ ...base, plans: [{ ...p6, days: [26] }], lots: conf });
+  assert.equal(r2.add.length, 0); assert.equal(r2.moved, conf.length);
+  // 國泰那邊改了（8/3 送出 → 8/5 起 26 號）：8/6 核對過的那一筆其實是 8/26 那一筆
+  const head = { ...p6, end: 20250804 }, tail = { ...p6, id: 'p26', days: [26], start: 20250805, prev: 'p6' };
+  const aug = [{ id: 'a8', c: 'A', side: 'buy', d: 20250806, sh: 60, px: 50, fee: 1, at: '2025-08-07', dca: { plan: 'p6', s: 20250806, est: false } }];
+  const r3 = C.dcaReconcile({ ...base, plans: [head, tail], lots: aug });
+  assert.ok(!r3.add.some((l) => l.dca.s === 20250826), 'August doubled');
+  // 國泰 8/1 改成每月 1 號（8/5 起）：舊的 5 號在 8/5 那一筆核對過，但新的設定 8 月沒有扣款 → 問你是不是多記了
+  const h5 = { id: 'p5', c: 'A', days: [5], amt: 3001, fee: 1, start: 20250601, end: 20250804, v: 3 }, t1 = { id: 'p1x', c: 'A', days: [1], amt: 3001, fee: 1, start: 20250805, prev: 'p5', v: 3 };
+  const five = [20250605, 20250707, 20250805, 20250905].map((d, i) => ({ id: `f${i}`, c: 'A', side: 'buy', d, sh: 60, px: 50, fee: 1, at: `2025-10-0${i + 1}`, dca: { plan: 'p5', s: d === 20250707 ? 20250705 : d, est: false, cal: 20250930 } }));
+  const r4 = C.dcaReconcile({ ...base, upto: 20250930, plans: [h5, t1], lots: five });
+  assert.deepEqual(r4.extras.map((x) => x.id), ['f2']); assert.equal(r4.add.length, 0); assert.equal(r4.moved, 1);
+  const r5 = C.dcaReconcile({ ...base, upto: 20250930, noAsk: new Set(['A|20250805|f2']), plans: [h5, t1], lots: five });
+  assert.equal(r5.extras.length, 0);
+});
+
+t('問你的時候挑最像的那一筆；說「不是」只算那一筆；核對過的那一期你又記了一筆，會問是不是重複', () => {
+  const cal = weekdays(20251001, 20251031);
+  const px = (c, d) => ({ st: 'ok', px: 58.75, pd: d });
+  const plan = { id: 'p', c: 'A', days: [7], amt: 3000, fee: 1, start: 20251001, end: null, v: 3 };
+  const base = { cal, upto: 20251031, skip: new Set(), noAsk: new Set(), priceOf: px };
+  const lump = { id: 'lump', c: 'A', side: 'buy', d: 20251007, sh: 1000, px: 58 };
+  const mine = { id: 'mine', c: 'A', side: 'buy', d: 20251008, sh: 51, px: 58.7 };
+  const r1 = C.dcaReconcile({ ...base, plans: [plan], lots: [lump, mine] });
+  assert.equal(r1.ask[0].cand.id, 'mine');
+  const r2 = C.dcaReconcile({ ...base, noAsk: new Set(['A|20251007|mine']), plans: [plan], lots: [lump, mine] });
+  assert.equal(r2.ask[0].cand.id, 'lump');                 // 那一筆說過不是，還會問另一筆
+  const r3 = C.dcaReconcile({ ...base, noAsk: new Set(['A|20251007|mine', 'A|20251007|lump']), plans: [plan], lots: [lump, mine] });
+  assert.equal(r3.ask.length, 0); assert.equal(r3.add.length, 1);
+  const conf = { id: 'cf', c: 'A', side: 'buy', d: 20251007, sh: 51, px: 58.75, fee: 1, dca: { plan: 'p', s: 20251007, est: false } };
+  const r4 = C.dcaReconcile({ ...base, plans: [plan], lots: [conf, mine] });
+  assert.deepEqual(r4.ask.map((a) => `${a.cand.id}:${a.dup && a.dup.id}`), ['mine:cf']);
+  assert.deepEqual(C.normNoAsk(['A|20251007', '0050|20251007|ab_1', '0050|20251007|<x>', 'bad']), ['0050|20251007|ab_1']);
 });
 
 t('和國泰庫存對齊：只改預估、每筆花的錢不變；差太多不給對齊；分割前的紀錄照倍數換算', () => {

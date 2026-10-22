@@ -1032,7 +1032,11 @@ table.caps td.on { color: var(--glacier); font-weight: 700; background: var(--gl
 .choice[aria-pressed="true"] small { color: var(--frost-2); }
 .p-why { display: grid; gap: 8px; padding: 10px 12px; background: var(--amber-wash); box-shadow: inset 3px 0 0 var(--amber); }
 .p-delw { display: grid; gap: 6px; padding-top: 6px; }
-.p-delw .m-actions { flex-wrap: wrap; }
+.p-delw .m-actions { flex-direction: column; align-items: stretch; }
+.p-delw .m-actions .btn { width: 100%; justify-content: center; }
+.p-skips summary { cursor: pointer; color: var(--frost-2); }
+.p-skips ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.p-skips li { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
 .ask-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .ask-row { display: grid; gap: 8px; padding: 10px 12px; font-size: 13.5px; line-height: 1.65; background: var(--amber-wash); box-shadow: inset 3px 0 0 var(--amber); }
 .ask-row .row-btns { display: flex; flex-wrap: wrap; gap: 6px; }

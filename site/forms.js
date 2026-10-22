@@ -86,6 +86,8 @@ export function openTradeForm(o = {}) {
   if (isPaper() && o.lot) { openPaperLot(o.lot); return; }
   const paper = isPaper();
   const lot = o.lot || null;
+  // 定期定額記的那一期（真實部位）：刪除時要問是「沒扣到」還是「記錯了」
+  const dcaLot = !paper && lot && lot.dca && typeof lot.dca === 'object' && typeof lot.dca.plan === 'string' && Number.isInteger(lot.dca.s);
   const f = {
     code: lot ? lot.c : o.code || null,
     side: lot ? lot.side : o.side || 'buy',
@@ -129,6 +131,11 @@ export function openTradeForm(o = {}) {
       ${!lot && settings.autoJ !== false ? `<div class="field" id="f-whyw"><span class="lab">理由（選填）<small>副官會把今天的交易記進決策日記，20 個交易日後對答案</small></span><div class="tag-pick small">${Object.entries(WHY_TAGS).map(([k, t]) => `<button type="button" class="tg${EMO_TAGS.includes(k) ? ' emo' : ''}" data-why="${k}" aria-pressed="false">${esc(t)}</button>`).join('')}</div></div>` : ''}
       <div class="f-sum" id="f-sum" aria-live="polite"></div>
       <div class="f-err" id="f-err" role="alert"></div>
+      ${dcaLot ? `<div class="p-delw" id="f-dcadel" hidden><p class="small">這是定期定額的一期。為什麼要刪？</p><div class="m-actions">
+        <button type="button" class="btn danger ghost" data-dcadel="skip">這期國泰沒扣到（不要再補）</button>
+        <button type="button" class="btn ghost" data-dcadel="redo">只是記錯了，讓冷眼重新估一筆</button>
+        ${lot.dca.link ? '<button type="button" class="btn ghost" data-dcadel="unlink">這筆不是定期定額（取消連結、交易留著）</button>' : ''}
+        <button type="button" class="btn ghost" data-dcadel="no">取消</button></div></div>` : ''}
       <div class="m-actions">
         ${lot ? '<button type="button" class="btn danger ghost" id="f-del">刪除</button>' : ''}
         <button type="button" class="btn ghost" data-close>取消</button>
@@ -239,18 +246,40 @@ export function openTradeForm(o = {}) {
   recalc();
 
   if (lot) {
-    $('#f-del', card).addEventListener('click', (e) => {
-      const b = e.currentTarget;
-      if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = '確定刪除？'; return; }
+    const drop = (skip) => {
       const k = book.lots.findIndex((x) => x.id === lot.id);
       if (k >= 0) book.lots.splice(k, 1);
       saveBook();
       closeModal();
       buzz();
-      toast('已刪除這筆交易');
-      bus.emit('lotdel', { id: lot.id, lot });
+      toast(dcaLot ? (skip ? '已刪除這一期（國泰沒扣到，之後不會再補回來）' : '已刪除，冷眼會重新用收盤價估一筆') : '已刪除這筆交易');
+      bus.emit('lotdel', { id: lot.id, lot, skip });
       bus.emit('book');
+      if (dcaLot && !skip) bus.emit('dcarun');   // 重新估那一期
+    };
+    $('#f-del', card).addEventListener('click', (e) => {
+      const b = e.currentTarget;
+      if (dcaLot) { $('#f-dcadel', card).hidden = false; $('#f-dcadel', card).scrollIntoView({ block: 'nearest', behavior: 'smooth' }); return; }
+      if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = '確定刪除？'; return; }
+      drop(true);
     });
+    $$('[data-dcadel]', card).forEach((b) => b.addEventListener('click', () => {
+      const v = b.dataset.dcadel;
+      if (v === 'no') { $('#f-dcadel', card).hidden = true; return; }
+      if (v === 'unlink') {
+        // 你說「就是這筆」說錯了：把連結拿掉（交易還是你的），這一期冷眼重新估，也不會再拿這一筆來問
+        const k = book.lots.findIndex((x) => x.id === lot.id);
+        if (k >= 0) { const { dca, ...rest } = book.lots[k]; book.lots[k] = rest; }
+        saveBook();
+        savePlans((st) => { const key = `${lot.c}|${lot.dca.s}|${lot.id}`; if (!st.dcaNoAsk.includes(key)) st.dcaNoAsk.push(key); });
+        closeModal();
+        toast('已取消連結：這筆交易留著，那一期冷眼會重新估');
+        bus.emit('book');
+        bus.emit('dcarun');
+        return;
+      }
+      drop(v === 'skip');
+    }));
   }
 
   $('#tf', card).addEventListener('submit', (e) => {

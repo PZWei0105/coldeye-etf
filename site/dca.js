@@ -4,7 +4,7 @@
    「每一期應該記成什麼樣子」由 calc.js 的 dcaReconcile 算（純函式）：只動還沒核對的「預估」，核對過的、你自己記的交易一律不動。 */
 import {
   $, $$, esc, isNum, S, PF, settings, saveSettings, savePlans, reloadPlans, fmt, money, sharesOf, ICON, toast, bus, today, newId,
-  ensureHist, updateRealBook, realLots, isPaper, PLAN_MAX,
+  ensureHist, updateRealBook, realLots, isPaper, PLAN_MAX, store,
 } from './core.js';
 import { openModal, closeModal, modalOpen } from './forms.js';
 import * as C from './calc.js';
@@ -19,6 +19,8 @@ const WAIT_MS = 20000;                           // 抓一個資料檔最多等 
 const nameOf = (c) => (S.rows.get(c) || {}).n || c;
 const planOf = (id) => (settings.plans || []).find((p) => p.id === id) || null;
 const daysText = (p) => `每月 ${C.planDays(p).join('、')} 號`;
+/** 國泰那邊改了設定時接在這個計畫後面的新設定（有 prev 的；舊資料沒有 prev：同一檔、在停扣後 10 天內開始的） */
+const successorOf = (p) => (settings.plans || []).find((q) => q.id !== p.id && q.c === p.c && (q.prev === p.id || (!q.prev && p.end && q.start > p.end && q.start <= PF.addDays(p.end, 10)))) || null;
 const keyOf = (l) => `${l.c}|${l.dca.s}`;
 const isoOf = (d) => (d ? `${String(d).slice(0, 4)}-${String(d).slice(4, 6)}-${String(d).slice(6, 8)}` : '');
 const dOf = (iso) => (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? Number(iso.replace(/-/g, '')) : null);
@@ -62,7 +64,7 @@ async function priceData(codes) {
 
 // ------------------------------------------------------------------ 自動入帳
 let chain = Promise.resolve();
-let last = { ask: [], wait: 0, waits: [], none: [] };
+let last = { ask: [], extras: [], wait: 0, waits: [], none: [] };
 const NOTHING = { added: [], removed: [], ask: [], moved: 0 };
 /** 最近一次自動入帳的結果：要問你的（可能已經自己記過）、等資料的期數、國泰不會扣的期數 */
 export const dcaState = () => last;
@@ -77,14 +79,15 @@ export function runPlans(o = {}) {
   return chain;
 }
 const LOCK_WAIT_MS = 30000;   // 另一個分頁拿著鎖太久（例如 iPhone 把它暫停在背景）：最多等 30 秒就自己做
+let lockOffUntil = 0;         // 等不到過一次：接下來 5 分鐘不再等（不然每一次都要等 30 秒）
 function lockDca(fn) {
   try {
-    if (navigator.locks && typeof navigator.locks.request === 'function') {
+    if (Date.now() >= lockOffUntil && navigator.locks && typeof navigator.locks.request === 'function') {
       const ac = typeof AbortController === 'function' ? new AbortController() : null;
       const t = ac ? setTimeout(() => ac.abort(), LOCK_WAIT_MS) : null;
       let ran = false;
       return navigator.locks.request('coldeye-dca', ac ? { signal: ac.signal } : {}, () => { ran = true; if (t) clearTimeout(t); return fn(); })
-        .catch((e) => { if (!ran) return fn(); throw e; });   // 等不到鎖、或這個瀏覽器的鎖不能用：直接做（不會做兩次）
+        .catch((e) => { if (!ran) { lockOffUntil = Date.now() + 5 * 60e3; return fn(); } throw e; });   // 等不到鎖、或這個瀏覽器的鎖不能用：直接做（不會做兩次）
     }
   } catch { /* 不支援：直接做（寫進去之前照樣會用最新的資料再比對一次） */ }
   return fn();
@@ -92,7 +95,7 @@ function lockDca(fn) {
 async function runOnce({ quiet = false } = {}) {
   if (!S.summary || S.offline) return NOTHING;
   reloadPlans();
-  if (!settings.plans.length) { last = { ask: [], wait: 0, waits: [], none: [] }; return NOTHING; }
+  if (!settings.plans.length) { last = { ask: [], extras: [], wait: 0, waits: [], none: [] }; return NOTHING; }
   const cal = await loadCal();
   if (!cal || S.offline) return NOTHING;
   const data = await priceData([...new Set(settings.plans.map((p) => p.c))]);
@@ -115,24 +118,27 @@ async function runOnce({ quiet = false } = {}) {
     return true;
   });
   if (!res) return NOTHING;
-  const before = new Set(last.ask.map((x) => x.key));
-  last = { ask: res.ask, wait: res.wait, waits: res.waits, none: res.none };
-  const newAsk = res.ask.filter((x) => !before.has(x.key));
+  const before = new Set([...last.ask.map((x) => `${x.key}|${x.cand.id}`), ...last.extras.map((x) => x.id)]);
+  last = { ask: res.ask, extras: res.extras, wait: res.wait, waits: res.waits, none: res.none };
+  const newAsk = [...res.ask.filter((x) => !before.has(`${x.key}|${x.cand.id}`)), ...res.extras.filter((x) => !before.has(x.id))];
   if (added.length || res.del.length || newAsk.length) bus.emit('book');
   if (!quiet && (added.length || res.del.length || newAsk.length)) {
     const parts = [];
     if (added.length === 1) parts.push(`已自動記下定期定額：${nameOf(added[0].c)} ${fmt.d(added[0].d)} ${sharesOf(added[0].sh)}（預估）`);
     else if (added.length) parts.push(`已自動記下 ${added.length} 筆定期定額（預估）`);
     if (res.del.length) parts.push(`整理掉 ${res.del.length} 筆重複或和計畫不符的預估`);
-    if (newAsk.length) parts.push(`有 ${newAsk.length} 期你好像已經自己記過了，到「核對」確認一下（確認前不會重複記）`);
+    if (newAsk.length) parts.push(`有 ${newAsk.length} 件事要你確認（可能重複記了），到「核對」看一下（確認前不會重複記）`);
     FX.cue('ok');
     toast(`${parts.join('；')}${isPaper() && (added.length || res.del.length) ? '（記在真實部位）' : ''}`, null);
   }
   return { added, removed: res.del, ask: res.ask, moved: res.moved };
 }
-/** 定期定額記的那一筆被刪掉了（「部位」或核對時刪的）：這一期記在 dcaSkip，之後不再自動補回來 */
-export function onDcaLotDel({ lot } = {}) {
-  if (!C.isDcaLot(lot)) return;
+/**
+ * 定期定額記的那一筆被刪掉了（「部位」或核對時刪的）：這一期記在 dcaSkip，之後不再自動補回來。
+ * skip === false：你說「只是記錯了」→ 不記成「沒扣到」，冷眼會重新用收盤價估一筆。
+ */
+export function onDcaLotDel({ lot, skip } = {}) {
+  if (!C.isDcaLot(lot) || skip === false) return;
   const key = keyOf(lot);
   savePlans((st) => { if (!st.dcaSkip.includes(key)) st.dcaSkip.push(key); });
   failWarn(lot);
@@ -154,10 +160,26 @@ export function dcaAfterWipe() {
   savePlans((st) => {
     st.plans = st.plans.filter((p) => !(p.end && p.end < tm)).map((p) => ({ ...p, start: Math.max(p.start, tm) }));
   });
-  last = { ask: [], wait: 0, waits: [], none: [] };
+  last = { ask: [], extras: [], wait: 0, waits: [], none: [] };
 }
 
 // ------------------------------------------------------------------ 今日行動
+/** 這支手機看到過「今天休市」的日子（後台開盤後有跑、證交所的資料卻停在之前）：用來判斷扣款有沒有順延到今天 */
+const closedDays = () => { const xs = store.get('closed', []); return Array.isArray(xs) ? xs.filter((x) => Number.isInteger(x)) : []; };
+function noteClosed(td) { const xs = closedDays(); if (!xs.includes(td)) store.set('closed', [...xs, td].slice(-40)); }
+const weekdayOf = (d) => new Date(Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100)).getUTCDay();
+/** 原本的扣款日到昨天的每一個平日都確定休市，國泰才會順延到今天（資料只是晚到的時候不亂說） */
+function rolledKnown(p, td, asof) {
+  const closed = new Set(closedDays());
+  const days = new Set(C.planDays(p));
+  for (let x = PF.addDays(asof, 1); x < td; x = PF.addDays(x, 1)) {
+    if (!days.has(x % 100)) continue;
+    let ok = true;
+    for (let y = x; y < td; y = PF.addDays(y, 1)) { const w = weekdayOf(y); if (w >= 1 && w <= 5 && !closed.has(y)) { ok = false; break; } }
+    if (ok) return true;
+  }
+  return false;
+}
 /** 今天扣款的計畫、待核對的筆數（給指揮台的「今日行動」） */
 export function dcaActions(chip) {
   const out = [];
@@ -168,10 +190,11 @@ export function dcaActions(chip) {
   // 後台今天開盤後跑過、證交所的即時資料卻停在之前的日期＝今天休市（和頂端狀態列同一個判斷）
   const ranToday = !!(L && L.at && +String(L.at).slice(0, 10).replace(/-/g, '') === td && +String(L.at).slice(11, 13) * 100 + +String(L.at).slice(14, 16) >= 905);
   const closedToday = ranToday && L.date != null && L.date < td;
+  if (closedToday) noteClosed(td);
   const asof = S.summary ? S.summary.asof : null;
   for (const p of settings.plans || []) {
     const due = C.dcaDueToday(p, td);
-    const rolled = !due && openToday && asof && asof < td && C.dcaRolledToday(p, td, asof);
+    const rolled = !due && openToday && asof && asof < td && C.dcaRolledToday(p, td, asof) && rolledKnown(p, td, asof);
     if (!due && !rolled) continue;
     const r = S.rows.get(p.c);
     if (!r) continue;
@@ -184,17 +207,17 @@ export function dcaActions(chip) {
         : closedToday
           ? `今天是扣款日，但今天休市：國泰會順延到下一個交易日扣 <b class="num">${money(p.amt)}</b> 元，冷眼會照實際成交那天自動記。`
           : rolled
-            ? `前幾天有扣款日；那天如果休市，國泰會順延到今天扣 <b class="num">${money(p.amt)}</b> 元。收盤資料出來後，冷眼會照實際成交那天自動記${rule}。`
+            ? `前幾天的扣款日遇到休市，國泰順延到今天扣 <b class="num">${money(p.amt)}</b> 元。收盤資料出來後，冷眼會照實際成交那天自動記${rule}。`
             : `今天是扣款日：國泰扣 <b class="num">${money(p.amt)}</b> 元（遇到休市就順延到下一個交易日）。收盤資料出來後，冷眼會自動記一筆預估。定期定額照紀律扣，不看短期訊號${rule}。`,
     });
   }
   const n = pendingLots().length;
-  const q = last.ask.length;
+  const q = last.ask.length + last.extras.length;
   if (n || q) {
     out.push({
       pri: 2, act: 'dca', chip: chip('待核對', 'go2'), title: '定期定額',
       text: q
-        ? `有 <b class="num">${q}</b> 期你好像已經自己記過了，確認一下是不是同一筆（確認前不會重複記）${n ? `；另外 <b class="num">${n}</b> 筆預估等你核對` : ''}。`
+        ? `有 <b class="num">${q}</b> 件事要你確認（你自己也記了一筆、或改了設定之後多出來的紀錄），確認前不會重複記${n ? `；另外 <b class="num">${n}</b> 筆預估等你核對` : ''}。`
         : `有 <b class="num">${n}</b> 筆自動記的是預估，對照國泰 App 的成交回報核對一下，或一次和庫存對齊。`,
     });
   }
@@ -219,7 +242,7 @@ function statusOf(p) {
   const waiting = last.waits.filter((x) => x.plan === p.id).length;
   const bits = [];
   // 國泰改了設定：舊的設定留著（到變更生效的前一天），新的設定是另一個計畫
-  const succ = p.end && (settings.plans || []).some((q) => q.id !== p.id && q.c === p.c && q.start > p.end && q.start <= PF.addDays(p.end, 10));
+  const succ = !!(p.end && successorOf(p));
   if (ended) bits.push(succ ? `已換新設定（${fmt.d(p.end)} 以前成交的照這個）` : `已停扣（${fmt.d(p.end)} 以前成交的才算）`);
   else if (next) bits.push(`下一期 ${fmt.d(next)}`);
   if (mine.length) bits.push(`已記 ${mine.length} 期`);
@@ -238,7 +261,7 @@ const noticeHTML = () => ((settings.plans || []).length && settings.dcaNotice !=
 /** 設定頁的「定期定額」那一列 */
 export function plansHTML() {
   const ps = sortPlans(settings.plans || []);
-  const n = pendingLots().length + last.ask.length;
+  const n = pendingLots().length + last.ask.length + last.extras.length;
   return `<div class="srow col"><div><div class="h" data-term="dca">定期定額（國泰證券）</div><div class="d">每到扣款日，等官方收盤資料出來，冷眼自動幫你記一筆「預估」，你再對照國泰 App 的成交回報核對。以前扣過的可以補記，再一次和國泰庫存對齊。只記在這支手機的真實部位。</div></div>
     ${noticeHTML()}${ps.length ? planRows(ps) : ''}
     <div class="row-btns"><button type="button" class="btn small" data-dca="add">${ICON.plus}新增定期定額</button>${n ? `<button type="button" class="btn small ghost" data-dca="pend">核對（${n}）</button>` : ''}</div></div>`;
@@ -247,7 +270,7 @@ export function plansHTML() {
 export function dcaStripHTML() {
   if (isPaper()) return '';
   const ps = sortPlans(settings.plans || []);
-  const n = pendingLots().length + last.ask.length;
+  const n = pendingLots().length + last.ask.length + last.extras.length;
   if (!ps.length) {
     return `<section class="panel pad dca-strip invite"><div><b>有在國泰定期定額嗎？</b><span class="small muted">設定一次，每期扣款後冷眼自動記進部位；以前扣過的也能補記。</span></div><button type="button" class="btn small" data-dca="add">${ICON.plus}設定定期定額</button></section>`;
   }
@@ -294,7 +317,10 @@ export function openPlanForm(id, after) {
     why: null,                        // 編輯時改了扣款設定：cathay（國泰那邊改了）、fix（當初填錯）
   };
   const recorded = old ? realLots().filter((l) => C.isDcaLot(l) && l.dca.plan === old.id).length : 0;
-  const skipped = old ? (settings.dcaSkip || []).filter((k) => k.startsWith(`${old.c}|`)).length : 0;
+  const skips = old ? (settings.dcaSkip || []).filter((k) => k.startsWith(`${old.c}|`)).map((k) => +k.split('|')[1]).sort((a, b) => b - a) : [];
+  const skipped = skips.length;
+  // 國泰那邊改過設定：這是舊的那一段，後面接著新設定的計畫（不是真的停扣，不能在這裡改回「還在扣」）
+  const successor = old && old.end ? successorOf(old) : null;
   const card = openModal(`<div class="form dca">
       <h2 class="m-title">${old ? '編輯定期定額' : '新增定期定額'}</h2>
       <p class="m-desc">照國泰證券的規則：每月可以選好幾天；遇到休市順延到下一個交易日；那個月沒有的日期（例如 2/30）那一期不買；分割等停止交易的日子不扣也不補。</p>
@@ -307,7 +333,9 @@ export function openPlanForm(id, after) {
       <p class="small muted">國泰定期定額以百元為單位、每筆最低 100 元；2026/12/31 前每筆手續費 1 元。有開「智慧加減碼」的話每期金額會變，核對時照國泰的成交回報改就好。</p>
       ${old ? `<div class="field"><label class="field inline"><span class="lab">從哪一天開始記（成交日）</span><input class="input num" type="date" id="p-start" min="${isoOf(HIST_FROM)}" value="${isoOf(old.start)}"></label>
         <p class="small muted">改早一點會補記；改晚一點，之前還沒核對的預估會刪掉（核對過的不動）。</p>
-        ${skipped ? `<p class="small muted">這檔你刪掉過 <b class="num">${skipped}</b> 期（例如按了「這期沒扣到」），冷眼不會自動補回來。<button type="button" class="link small" id="p-unskip">刪錯了？恢復這 ${skipped} 期</button></p>` : ''}</div>`
+        ${skipped ? `<details class="p-skips"><summary class="small">這檔你刪掉過 <b class="num">${skipped}</b> 期（例如按了「這期沒扣到」），冷眼不會自動補回來。刪錯了可以恢復</summary>
+          <ul>${skips.slice(0, 12).map((x) => `<li><span class="num">${fmt.d(x)}</span> 那一期<button type="button" class="link small" data-unskip="${x}">恢復</button></li>`).join('')}</ul>
+          ${skipped > 1 ? `<button type="button" class="link small" data-unskip="all">全部 ${skipped} 期都恢復</button>` : ''}</details>` : ''}</div>`
       : `<div class="field"><span class="lab">從什麼時候開始記</span>
         <div class="choices" role="radiogroup" aria-label="從什麼時候開始記">
           ${choice('from', 'back', false, '已經在扣了，補記以前的', '從你選的那天起，每一期用那天的官方收盤價補記成「預估」')}
@@ -318,8 +346,9 @@ export function openPlanForm(id, after) {
           <p class="small muted">選第一次扣款那天，或你想開始記的那天。官方歷史資料從 2020 年 1 月開始；補完可以一次和國泰 App 的庫存對齊。</p>
           <p class="small k-warn" id="p-dup" hidden></p></div>
       </div>`}
-      <button type="button" class="switch-row" id="p-ended" aria-pressed="${f.ended}"><span class="switch" role="switch" aria-checked="${f.ended}"></span><span>已經停扣了<small>（之後不再自動記）</small></span></button>
-      <div class="p-from" id="p-endw"${f.ended ? '' : ' hidden'}><label class="field inline"><span class="lab">哪天在國泰按停扣</span><input class="input num" type="date" id="p-stop" min="${isoOf(HIST_FROM)}" max="${isoOf(td)}" value="${isoOf(old && old.end ? old.stop || old.end : td)}"></label>
+      ${successor ? `<p class="est-box small">已換新設定：這一段設定記到 <b class="num">${fmt.d(old.end)}</b>（含）成交的那幾期，之後照「${esc(daysText(successor))}・${money(successor.amt)} 元」那個計畫。要改新的設定，請到那個計畫。</p>` : ''}
+      <button type="button" class="switch-row" id="p-ended" aria-pressed="${f.ended}"${successor ? ' hidden' : ''}><span class="switch" role="switch" aria-checked="${f.ended}"></span><span>已經停扣了<small>（之後不再自動記）</small></span></button>
+      <div class="p-from" id="p-endw"${f.ended && !successor ? '' : ' hidden'}><label class="field inline"><span class="lab">哪天在國泰按停扣</span><input class="input num" type="date" id="p-stop" min="${isoOf(HIST_FROM)}" max="${isoOf(td)}" value="${isoOf(old && old.end ? old.stop || old.end : td)}"></label>
         <p class="small muted" id="p-stoptxt"></p></div>
       ${old ? `<div class="p-why" id="p-why" hidden><span class="lab">這次改了扣款的設定，是…</span>
         <div class="choices" role="radiogroup" aria-label="修改的原因">
@@ -411,18 +440,18 @@ export function openPlanForm(id, after) {
     err.textContent = '';
   }));
 
-  // 刪錯的那幾期：從 dcaSkip 拿掉，讓冷眼重新補記
-  const unskip = $('#p-unskip', card);
-  if (unskip) unskip.addEventListener('click', async () => {
-    unskip.disabled = true;
-    savePlans((st) => { st.dcaSkip = st.dcaSkip.filter((k) => !k.startsWith(`${old.c}|`)); });
+  // 刪錯的那幾期：一期一期恢復（或全部），從 dcaSkip 拿掉，讓冷眼重新補記
+  $$('[data-unskip]', card).forEach((btn) => btn.addEventListener('click', async () => {
+    const v = btn.dataset.unskip;
+    btn.disabled = true;
+    savePlans((st) => { st.dcaSkip = st.dcaSkip.filter((k) => !(k.startsWith(`${old.c}|`) && (v === 'all' || k === `${old.c}|${v}`))); });
     const r = await runPlans({ quiet: true });
     if (card.isConnected) closeModal();
     FX.cue('ok');
-    toast(`已恢復：重新補記 ${r.added.length} 期（預估）`, null);
+    toast(`已恢復：重新補記 ${r.added.length} 期（預估）${r.ask.length ? `，${r.ask.length} 期要你確認` : ''}`, null);
     bus.emit('book');
     if (after) after();
-  });
+  }));
   // 刪除：問要不要連同還沒核對的預估一起刪
   const del = $('#p-del', card);
   if (del) del.addEventListener('click', () => {
@@ -459,7 +488,14 @@ export function openPlanForm(id, after) {
     if (!(fee >= 0 && fee <= 1000)) return fail('手續費請填 0 到 1,000 元');
     const r = S.rows.get(f.code);
     if (r && isNum(r.p) && amt - fee < r.p) return fail(`每期金額扣掉手續費，連 1 股都買不到（最新收盤 ${fmt.px(r.p)} 元）`);
-    if (!cal) useCal(await timed(loadCal(), 6000).catch(() => null));
+    if (!cal) {
+      // 生效日要用官方交易日算：先等資料（最多 6 秒），這段時間不能再按，按了取消就不存
+      const sb = $('#p-save', card);
+      sb.disabled = true;
+      useCal(await timed(loadCal(), 6000).catch(() => null));
+      if (!card.isConnected) return false;
+      sb.disabled = false;
+    }
     // 從哪天開始記（看成交日）
     let start;
     if (old) {
@@ -499,7 +535,7 @@ export function openPlanForm(id, after) {
           // 舊的設定到變更生效的前一天；新的設定從生效那天開始（另外一個計畫）
           parts = [
             { ...old, start, end: PF.addDays(cut, -1), stop: sent, sb: false },
-            { ...next, id: newId(), start: cut },
+            { ...next, id: newId(), start: cut, prev: old.id },
           ];
         }
       }
@@ -510,6 +546,9 @@ export function openPlanForm(id, after) {
     const others = (settings.plans || []).filter((p) => !old || p.id !== old.id);
     const clash = others.find((o) => normed.some((p) => C.plansOverlap(p, o)));
     if (clash) return fail(`${nameOf(clash.c)} 已經有一個 ${daysText(clash)} 的計畫和這個重疊（同一天會記兩次）。國泰一張申購單就能選好幾天，請直接編輯原本那個計畫。`);
+    // 同一檔、期間重疊、扣款日不同的另一個計畫：國泰一張申購單就能選好幾天，多半是重複設定 → 確定是兩張申購單才存（按兩次）
+    const conc = others.find((o) => o.c === f.code && !(old && (o.prev === old.id || old.prev === o.id)) && normed.some((p) => p.start <= (o.end || 99991231) && o.start <= (p.end || 99991231)));
+    if (conc && !f.concOk) { f.concOk = true; return fail(`${nameOf(conc.c)} 已經有一個「${daysText(conc)}」的計畫同時在扣。國泰一張申購單就能選好幾天，多半直接編輯原本那個就好；如果真的是兩張不同的申購單，再按一次「儲存」。`); }
     if (!savePlans((st) => { st.plans = st.plans.filter((p) => !old || p.id !== old.id).concat(normed); })) return fail('這個瀏覽器不允許儲存資料（可能是私密瀏覽模式）');
     const btn = $('#p-save', card);
     btn.disabled = true;
@@ -605,10 +644,10 @@ export function openConfirm(lotId) {
 // ------------------------------------------------------------------ 待核對：可能已經自己記過的、預估
 /**
  * 「就是這筆」：把你自己記的那一筆連到這一期（算核對過），冷眼就不另外記；這一期如果已經有預估，預估刪掉。
- * 同一天成交的好幾期一起問的（more）：你記的那一筆就是這幾期加起來的，其他幾期記成「不再補」。
- * 你自己記的那一筆如果進了決策日記、還沒定案，日記拿掉（定期定額不是在猜漲跌，不算命中率）。
+ * all：同一天成交的好幾期一起問、你說「就是這幾期加起來」→ 其他幾期記成「不再補」。
+ * 你自己記的那一筆如果進了決策日記、還沒定案，日記拿掉（定期定額不是在猜漲跌，不算命中率）。回傳有沒有成功。
  */
-function linkManual(a) {
+function linkManual(a, all = true) {
   const ok = updateRealBook((b) => {
     const l = b.lots.find((x) => x.id === a.cand.id);
     if (!l || C.isDcaLot(l)) return false;
@@ -617,27 +656,46 @@ function linkManual(a) {
     b.lots = b.lots.filter((x) => !(C.isDcaLot(x) && x.dca.est === true && `${x.c}|${x.dca.s}` === a.key));
     return true;
   });
-  if (ok && a.more && a.more.length) savePlans((st) => { for (const m of a.more) if (!st.dcaSkip.includes(m.key)) st.dcaSkip.push(m.key); });
+  if (ok && all && a.more && a.more.length) savePlans((st) => { for (const m of a.more) if (!st.dcaSkip.includes(m.key)) st.dcaSkip.push(m.key); });
   if (ok) bus.emit('dcalink', { id: a.cand.id });
+  return ok;
+}
+/** 「是，重複了」：這一期已經核對過，你自己又記了一筆 → 刪掉你記的那一筆（照一般刪交易的流程，決策日記跟著處理） */
+function dropDup(a) {
+  let gone = null;
+  const ok = updateRealBook((b) => {
+    const l = b.lots.find((x) => x.id === a.cand.id);
+    if (!l || C.isDcaLot(l)) return false;
+    if (!b.lots.some((x) => C.isDcaLot(x) && `${x.c}|${x.dca.s}` === a.key && x.dca.est !== true)) return false;
+    gone = l;
+    b.lots = b.lots.filter((x) => x.id !== l.id);
+    return true;
+  });
+  if (ok && gone) bus.emit('lotdel', { id: gone.id, lot: gone });
   return ok;
 }
 const askText = (a) => {
   const head = `<b>${esc(nameOf(a.c))}</b> <span class="num muted">${esc(a.c)}</span>・`;
   const mine = `你在 <b class="num">${fmt.d(a.cand.d)}</b> 自己記了 <b class="num">${sharesOf(a.cand.sh)}</b> × <span class="num">${fmt.px(a.cand.px)}</span>`;
+  if (a.dup) return `${head}${fmt.d(a.s)} 那一期已經核對過了（${sharesOf(a.dup.sh)} × ${fmt.px(a.dup.px)}），${mine}。是不是同一筆記了兩次？`;
   if (a.est) return `${head}${fmt.d(a.s)} 那一期冷眼已經用收盤價記了一筆預估（${sharesOf(a.sh)}），${mine}。這兩筆是同一筆嗎？`;
-  if (a.more && a.more.length) return `${head}${[a, ...a.more].map((x) => fmt.d(x.s)).join('、')} 這 ${a.more.length + 1} 期都順延到 ${fmt.d(a.d)} 成交。${mine}。這筆就是這幾期加起來的嗎？`;
+  if (a.more && a.more.length) return `${head}${[a, ...a.more].map((x) => fmt.d(x.s)).join('、')} 這 ${a.more.length + 1} 期都順延到 ${fmt.d(a.d)} 成交，冷眼估這幾期加起來 ${sharesOf(a.gsh)}。${mine}。這筆是這幾期加起來的嗎？`;
   return `${head}${fmt.d(a.s)} 那一期（${fmt.d(a.d)} 成交，冷眼估 ${sharesOf(a.sh)}）。${mine}。這筆就是這一期定期定額嗎？`;
 };
-const askYes = (a) => (a.est ? '是，留我記的、刪預估' : a.more && a.more.length ? '是，就是這幾期' : '是，就是這筆');
-const askNo = (a) => (a.est ? '不是，兩筆都留著' : '不是，另外記');
+/** 每一題的按鈕：[答案代號, 文字, 主要按鈕] */
+const askBtns = (a) => (a.dup ? [['dup', '是，刪掉我記的那筆', true], ['no', '不是，兩筆都留著']]
+  : a.est ? [['yes', '是，留我記的、刪預估', true], ['no', '不是，兩筆都留著']]
+    : a.more && a.more.length ? [['yes', '是，這幾期加起來', true], ['one', '只是其中一期'], ['no', '都不是，冷眼照估']]
+      : [['yes', '是，就是這筆', true], ['no', '不是，冷眼照估一筆']]);
 export function openPending(after) {
   const card = openModal('<div class="form dca" id="pend"></div>', { label: '核對定期定額' });
   const root = $('#pend', card);
   let busy = false;
-  const refresh = async (fn, msg) => {
+  const refresh = async (fn) => {
     if (busy) return;
     busy = true;
-    try { fn(); await runPlans({ quiet: true }); } finally { busy = false; }
+    let msg = '';
+    try { msg = fn(); await runPlans({ quiet: true }); } finally { busy = false; }
     if (msg) toast(msg, null);
     FX.cue('lock');
     bus.emit('book');
@@ -646,33 +704,62 @@ export function openPending(after) {
   };
   const draw = () => {
     const asks = dcaState().ask;
+    const extras = dcaState().extras;
     const ls = pendingLots().slice().sort((a, b) => a.c.localeCompare(b.c) || b.d - a.d);
     const codes = [...new Set(ls.map((l) => l.c))];
-    if (!asks.length && !ls.length) {
+    if (!asks.length && !extras.length && !ls.length) {
       root.innerHTML = `<h2 class="m-title">核對定期定額</h2><p class="m-desc">都核對好了。</p><div class="m-actions"><button type="button" class="btn primary" data-close>完成</button></div>`;
       bindClose(root);
       return;
     }
+    const plain = asks.filter((a) => !a.dup && !a.est && !(a.more && a.more.length));
     root.innerHTML = `<h2 class="m-title">核對定期定額</h2>
-      ${asks.length ? `<p class="m-desc">這幾期的扣款日附近，你也自己記了一筆同一檔的買進。是同一筆的話，冷眼就不另外記（避免記兩次）。</p>
-        ${asks.length > 1 ? '<div class="row-btns"><button type="button" class="btn small" data-askall="yes">全部都是同一筆</button><button type="button" class="btn small ghost" data-askall="no">全部都不是</button></div>' : ''}
+      ${asks.length ? `<p class="m-desc">這幾期的扣款日附近，你也自己記了一筆同一檔的買進。是同一筆的話，冷眼就不重複算。</p>
+        ${asks.length > 1 && plain.length === asks.length ? '<div class="row-btns"><button type="button" class="btn small" data-askall="yes">全部都是同一筆</button><button type="button" class="btn small ghost" data-askall="no">全部都不是</button></div>' : ''}
         <ul class="ask-list">${asks.map((a, i) => `<li class="ask-row"><div>${askText(a)}</div>
-          <div class="row-btns"><button type="button" class="btn small" data-ask="${i}" data-ans="yes">${askYes(a)}</button><button type="button" class="btn small ghost" data-ask="${i}" data-ans="no">${askNo(a)}</button></div></li>`).join('')}</ul>` : ''}
+          <div class="row-btns">${askBtns(a).map(([v, t, main]) => `<button type="button" class="btn small${main ? '' : ' ghost'}" data-ask="${i}" data-ans="${v}">${t}</button>`).join('')}</div></li>`).join('')}</ul>` : ''}
+      ${extras.length ? `<p class="m-desc">改了設定之後，這幾筆核對過的紀錄照現在的設定，那段時間沒有對應的扣款。是多記的就刪掉，不是就留著。</p>
+        <ul class="ask-list">${extras.map((x, i) => `<li class="ask-row"><div><b>${esc(nameOf(x.c))}</b> <span class="num muted">${esc(x.c)}</span>・<b class="num">${fmt.d(x.d)}</b> ${sharesOf(x.sh)} × <span class="num">${fmt.px(x.px)}</span>（原本 ${fmt.d(x.s)} 那一期，已經核對過）。這筆是不是多記了？</div>
+          <div class="row-btns"><button type="button" class="btn small" data-ex="${i}" data-ans="del">是，刪掉這筆</button><button type="button" class="btn small ghost" data-ex="${i}" data-ans="keep">不是，留著</button></div></li>`).join('')}</ul>` : ''}
       ${ls.length ? `<p class="m-desc">這些是冷眼用官方收盤價預估的。可以一筆一筆對照國泰 App 的成交回報，或每一檔一次和國泰的庫存股數對齊。</p>
       ${codes.map((c) => { const xs = ls.filter((l) => l.c === c); return `<div class="pend-g"><div class="pend-h"><b>${esc(nameOf(c))}</b> <span class="num muted">${esc(c)}</span><span class="small muted">${xs.length} 筆</span><button type="button" class="btn small" data-cal="${esc(c)}">和庫存對齊</button></div>
         <ul class="pend-list">${xs.slice(0, 24).map((l) => `<li><button type="button" class="pend-row" data-cf="${esc(l.id)}"><span class="num">${fmt.dy(l.d)}</span><span class="num">${sharesOf(l.sh)} × ${fmt.px(l.px)}</span><span class="chev">${ICON.chev}</span></button></li>`).join('')}${xs.length > 24 ? `<li class="small muted">還有 ${xs.length - 24} 筆（對齊會一起處理）</li>` : ''}</ul></div>`; }).join('')}` : ''}
       <div class="m-actions"><button type="button" class="btn primary" data-close>完成</button></div>`;
     bindClose(root);
-    const answer = (list, yes) => refresh(() => {
-      if (yes) for (const a of list) linkManual(a);
-      else savePlans((st) => { for (const a of list) for (const k of [a.key, ...(a.more || []).map((m) => m.key)]) if (!st.dcaNoAsk.includes(k)) st.dcaNoAsk.push(k); });
-    }, yes ? `已連起來：${list.length} 筆用你自己記的（算核對過）` : `已另外記：照收盤價記成預估（你記的那筆也留著）`);
-    $$('[data-ask]', root).forEach((b) => b.addEventListener('click', () => { const a = asks[+b.dataset.ask]; if (a) answer([a], b.dataset.ans === 'yes'); }));
-    $$('[data-askall]', root).forEach((b) => b.addEventListener('click', () => answer(asks.slice(), b.dataset.askall === 'yes')));
+    const answer = (list, ans) => refresh(() => {
+      let ok = 0, stale = 0;
+      if (ans === 'no') {
+        // 只記「這一筆不是」：同一期如果還有你記的別筆，之後還會問那一筆
+        savePlans((st) => { for (const a of list) for (const k of [a.key, ...(a.more || []).map((m) => m.key)]) { const v = `${k}|${a.cand.id}`; if (!st.dcaNoAsk.includes(v)) st.dcaNoAsk.push(v); } });
+        return list.some((a) => a.dup || a.est) ? '好，兩筆都留著' : '好，這幾期冷眼照收盤價記一筆預估（你記的那筆也留著）';
+      }
+      for (const a of list) { const r = ans === 'dup' ? dropDup(a) : linkManual(a, ans === 'yes'); if (r) ok++; else stale++; }
+      if (stale && !ok) return '這一題已經不適用了（那一期剛剛核對過或改過），已經重新整理';
+      if (ans === 'dup') return `已刪掉你重複記的 ${ok} 筆`;
+      return `已連起來：${ok} 期用你自己記的那筆（算核對過）${stale ? `；${stale} 題已經不適用、重新整理了` : ''}`;
+    });
+    $$('[data-ask]', root).forEach((b) => b.addEventListener('click', () => { const a = asks[+b.dataset.ask]; if (a) answer([a], b.dataset.ans); }));
+    $$('[data-ex]', root).forEach((b) => b.addEventListener('click', () => {
+      const x = extras[+b.dataset.ex];
+      if (!x) return;
+      refresh(() => {
+        if (b.dataset.ans === 'keep') {
+          savePlans((st) => { const k = `${x.c}|${x.s}|${x.id}`; if (!st.dcaNoAsk.includes(k)) st.dcaNoAsk.push(k); });
+          return '好，這筆留著';
+        }
+        let gone = null;
+        const ok = updateRealBook((bk) => { gone = bk.lots.find((l) => l.id === x.id) || null; if (!gone) return false; bk.lots = bk.lots.filter((l) => l.id !== x.id); return true; });
+        if (ok && gone) bus.emit('lotdel', { id: gone.id, lot: gone, skip: false });
+        return ok ? '已刪掉多記的那一筆' : '這一筆已經不在了，已經重新整理';
+      });
+    }));
+    $$('[data-askall]', root).forEach((b) => b.addEventListener('click', () => answer(plain.slice(), b.dataset.askall)));
     $$('[data-cf]', root).forEach((b) => b.addEventListener('click', () => { closeModal(); openConfirm(b.dataset.cf); }));
     $$('[data-cal]', root).forEach((b) => b.addEventListener('click', () => { closeModal(); openCalibrate(b.dataset.cal); }));
   };
   draw();
+  // 先用最新的資料重新比對一次（上一次的題目可能已經不適用，例如剛剛核對過）
+  runPlans({ quiet: true }).then(() => { if (root.isConnected && !busy) draw(); });
 }
 
 // ------------------------------------------------------------------ 和國泰庫存對齊（可以復原）

@@ -1368,6 +1368,7 @@ bus.on((what, data) => {
   }
   // 你說「自己記的那筆就是定期定額」：那筆如果進了決策日記、還沒定案，就拿掉（定期定額不是在猜漲跌）
   if (what === 'dcalink') { onLotDel(data); return; }
+  if (what === 'dcarun') { runPlans(); return; }
   if (what === 'lotdel') { onLotDel(data); onDcaLotDel(data); return; }
   if (what === 'lotedit') { onLotEdit(data); return; }
   if (what === 'book' || what === 'watch' || what === 'alerts') {
