@@ -19,12 +19,14 @@ FILES = {
     'news': 'news.json',            # 最近的公告與新聞
     'status': 'status.json',        # 各來源最後成功／失敗時間
     'backfill': 'backfill.json',    # 歷史回補進度
+    'cal': 'cal.json',              # 證交所市場開休市日期（給沙盤）{年: {at, rows:[[日期, 名稱]]}}
+    'after': 'after.json',          # 盤後零股成交價／股數、盤後定價成交量（給沙盤）{日期: {代號: [價, 股, 定價股]}}
 }
 
 DEFAULTS = {
     'meta': {}, 'daily': {}, 'flows': {}, 'margin': {}, 'nav': {}, 'units': {}, 'divs': {},
     'holders': {}, 'taiex': {'d': [], 'c': [], 'val': []}, 'mflows': {}, 'yields': {}, 'views': {}, 'news': [],
-    'status': {}, 'backfill': {},
+    'status': {}, 'backfill': {}, 'cal': {}, 'after': {},
 }
 
 

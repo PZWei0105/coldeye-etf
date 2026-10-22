@@ -11,7 +11,7 @@ import threading
 import time
 import traceback
 
-from . import backtest, engine, gitstate, narrative
+from . import backtest, engine, gitstate, narrative, tape
 from . import sources as src
 from .series import CATEGORY_NAMES, Series, d2i, i2d
 from .state import State
@@ -319,6 +319,9 @@ def eod(state, log, weekly=False):
                     lst.append([hd, n, units])
                     del lst[:-60]
             state.mark('tdcc', when=when)
+    # 沙盤用：交易日曆、盤後零股與盤後定價結果
+    step(log, 'sandtable_cal', tape.update_cal, state, log, http_tw)
+    step(log, 'sandtable_after', tape.update_after, state, log, http_tw)
     state['_extra'] = {'mis': mis, 'pre': pre, 'risk': risk, 'news': news}
     store_news(state, news)
 
@@ -426,7 +429,9 @@ def intraday(state, log):
             news.extend(items)
     store_news(state, news)
     fresh = {x['url'] for x in state['news']} - before
-    state['_extra'] = {'mis': mis, 'taiex_live': tx.get('t00'), 'news_changed': bool(fresh)}
+    # 沙盤用的五檔與 tape（失敗也不影響冷眼）
+    tp = step(log, 'sandtable_tape', tape.intraday, state, log)
+    state['_extra'] = {'mis': mis, 'taiex_live': tx.get('t00'), 'news_changed': bool(fresh), 'tape': tp}
 
 
 # ================================================================== 計算與輸出
@@ -508,6 +513,7 @@ def publish(state, log, mode):
         shutil.rmtree(PUBLIC)
     shutil.copytree(SITE, PUBLIC)
     shutil.copytree(out_dir, PUBLIC / 'data', dirs_exist_ok=True)
+    step(log, 'sandtable_publish', tape.publish, PUBLIC / 'data', extra.get('tape'))
     live = make_live(state, extra, now, mode)
     write_json(PUBLIC / 'data' / 'live.json', live)
     write_json(PUBLIC / 'data' / 'version.json', {'built': now.isoformat(timespec='seconds'), 'mode': mode})
@@ -675,6 +681,11 @@ def compute(state, extra, out_dir, now):
     write_json(out_dir / 'summary.json', summary)
     write_json(out_dir / 'news.json', make_news(state, pre, risk, series, now))
     write_json(out_dir / 'rules.json', rules_doc())
+    # 沙盤用：K 線、交易日曆、盤後結果（失敗不影響冷眼）
+    try:
+        tape.write_outputs(out_dir, state, sorted(series.keys()))
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
 
 
 def mis_ok(m, d):
