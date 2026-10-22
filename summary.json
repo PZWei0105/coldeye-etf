@@ -1,0 +1,138 @@
+{
+ "started": "2026-10-22T01:11:11.848198Z",
+ "python": "3.12.15",
+ "results": [
+  {
+   "name": "mis_q_tse_a",
+   "url": "https://mis.twse.com.tw/stock/api/getStockInfo.jsp?json=1&delay=0&ex_ch=tse_00400A.tw|tse_00401A.tw|tse_00402A.tw|tse_00403A.tw|tse_00404A.tw|tse_00405A.tw|tse_00406A.tw|tse_00407A.tw|tse_00408A.tw|tse_00409A.tw|tse_00410A.tw|tse_00412A.tw|tse_00415A.tw|tse_0050.tw|tse_0051.tw|tse_0052.tw|tse_0053.tw|tse_0055.tw|tse_0056.tw|tse_0057.tw|tse_0061.tw|tse_006203.tw|tse_006204.tw|tse_006205.tw|tse_006206.tw|tse_006207.tw|tse_006208.tw|tse_00625K.tw|tse_00631L.tw|tse_00632R.tw|tse_00633L.tw|tse_00634R.tw|tse_00635U.tw|tse_00636.tw|tse_00636K.tw|tse_00637L.tw|tse_00638R.tw|tse_00639.tw|tse_00640L.tw|tse_00641R.tw|tse_00642U.tw|tse_00643.tw|tse_00643K.tw|tse_00645.tw|tse_00646.tw|tse_00647L.tw|tse_00648R.tw|tse_00650L.tw|tse_00651R.tw|tse_00652.tw|tse_00653L.tw|tse_00654R.tw|tse_00655L.tw|tse_00656R.tw|tse_00657.tw|tse_00657K.tw|tse_00660.tw|tse_00661.tw|tse_00662.tw|tse_00663L.tw|tse_00664R.tw|tse_00665L.tw|tse_00666R.tw|tse_00668.tw|tse_00668K.tw|tse_00669R.tw|tse_00670L.tw|tse_00671R.tw|tse_00673R.tw|tse_00674R.tw|tse_00675L.tw|tse_00676R.tw|tse_00678.tw|tse_00680L.tw|tse_00681R.tw|tse_00682U.tw|tse_00683L.tw|tse_00684R.tw|tse_00685L.tw|tse_00686R.tw|tse_00688L.tw|tse_00689R.tw|tse_00690.tw|tse_00692.tw|tse_00693U.tw|tse_00700.tw|tse_00701.tw|tse_00702.tw|tse_00703.tw|tse_00706L.tw|tse_00707R.tw|tse_00708L.tw|tse_00709.tw|tse_00710B.tw|tse_00711B.tw|tse_00712.tw|tse_00713.tw|tse_00714.tw|tse_00715L.tw|tse_00717.tw|tse_00728.tw|tse_00730.tw|tse_00731.tw|tse_00733.tw|tse_00735.tw|tse_00736.tw|tse_00737.tw|tse_00738U.tw|tse_00739.tw|tse_00752.tw|tse_00753L.tw|tse_00757.tw|tse_00762.tw|tse_00763U.tw|tse_00770.tw|tse_00771.tw|tse_00775B.tw|tse_00783.tw|tse_00830.tw|tse_00850.tw|tse_00851.tw",
+   "status": 200,
+   "final_url": "https://mis.twse.com.tw/stock/api/getStockInfo.jsp?json=1&delay=0&ex_ch=tse_00400A.tw%7Ctse_00401A.tw%7Ctse_00402A.tw%7Ctse_00403A.tw%7Ctse_00404A.tw%7Ctse_00405A.tw%7Ctse_00406A.tw%7Ctse_00407A.tw%7Ctse_00408A.tw%7Ctse_00409A.tw%7Ctse_00410A.tw%7Ctse_00412A.tw%7Ctse_00415A.tw%7Ctse_0050.tw%7Ctse_0051.tw%7Ctse_0052.tw%7Ctse_0053.tw%7Ctse_0055.tw%7Ctse_0056.tw%7Ctse_0057.tw%7Ctse_0061.tw%7Ctse_006203.tw%7Ctse_006204.tw%7Ctse_006205.tw%7Ctse_006206.tw%7Ctse_006207.tw%7Ctse_006208.tw%7Ctse_00625K.tw%7Ctse_00631L.tw%7Ctse_00632R.tw%7Ctse_00633L.tw%7Ctse_00634R.tw%7Ctse_00635U.tw%7Ctse_00636.tw%7Ctse_00636K.tw%7Ctse_00637L.tw%7Ctse_00638R.tw%7Ctse_00639.tw%7Ctse_00640L.tw%7Ctse_00641R.tw%7Ctse_00642U.tw%7Ctse_00643.tw%7Ctse_00643K.tw%7Ctse_00645.tw%7Ctse_00646.tw%7Ctse_00647L.tw%7Ctse_00648R.tw%7Ctse_00650L.tw%7Ctse_00651R.tw%7Ctse_00652.tw%7Ctse_00653L.tw%7Ctse_00654R.tw%7Ctse_00655L.tw%7Ctse_00656R.tw%7Ctse_00657.tw%7Ctse_00657K.tw%7Ctse_00660.tw%7Ctse_00661.tw%7Ctse_00662.tw%7Ctse_00663L.tw%7Ctse_00664R.tw%7Ctse_00665L.tw%7Ctse_00666R.tw%7Ctse_00668.tw%7Ctse_00668K.tw%7Ctse_00669R.tw%7Ctse_00670L.tw%7Ctse_00671R.tw%7Ctse_00673R.tw%7Ctse_00674R.tw%7Ctse_00675L.tw%7Ctse_00676R.tw%7Ctse_00678.tw%7Ctse_00680L.tw%7Ctse_00681R.tw%7Ctse_00682U.tw%7Ctse_00683L.tw%7Ctse_00684R.tw%7Ctse_00685L.tw%7Ctse_00686R.tw%7Ctse_00688L.tw%7Ctse_00689R.tw%7Ctse_00690.tw%7Ctse_00692.tw%7Ctse_00693U.tw%7Ctse_00700.tw%7Ctse_00701.tw%7Ctse_00702.tw%7Ctse_00703.tw%7Ctse_00706L.tw%7Ctse_00707R.tw%7Ctse_00708L.tw%7Ctse_00709.tw%7Ctse_00710B.tw%7Ctse_00711B.tw%7Ctse_00712.tw%7Ctse_00713.tw%7Ctse_00714.tw%7Ctse_00715L.tw%7Ctse_00717.tw%7Ctse_00728.tw%7Ctse_00730.tw%7Ctse_00731.tw%7Ctse_00733.tw%7Ctse_00735.tw%7Ctse_00736.tw%7Ctse_00737.tw%7Ctse_00738U.tw%7Ctse_00739.tw%7Ctse_00752.tw%7Ctse_00753L.tw%7Ctse_00757.tw%7Ctse_00762.tw%7Ctse_00763U.tw%7Ctse_00770.tw%7Ctse_00771.tw%7Ctse_00775B.tw%7Ctse_00783.tw%7Ctse_00830.tw%7Ctse_00850.tw%7Ctse_00851.tw",
+   "size": 92839,
+   "content_type": "text/html;charset=UTF-8",
+   "headers": {
+    "Server": "nginx",
+    "Date": "Thu, 22 Oct 2026 01:11:17 GMT",
+    "Content-Type": "text/html;charset=UTF-8",
+    "Set-Cookie": "JSESSIONID=B495E6E2EAF0ADF368A9A51E6ADF9919; Path=/; Secure; HttpOnly;stock; Secure; HttpOnly",
+    "Cache-Control": "no-cache, no-store, no-cache, must-revalidate"
+   },
+   "verify": true,
+   "elapsed": 6.03
+  },
+  {
+   "name": "mis_q_tse_b",
+   "url": "https://mis.twse.com.tw/stock/api/getStockInfo.jsp?json=1&delay=0&ex_ch=tse_00852L.tw|tse_00861.tw|tse_00865B.tw|tse_00875.tw|tse_00876.tw|tse_00878.tw|tse_00881.tw|tse_00882.tw|tse_00885.tw|tse_00891.tw|tse_00892.tw|tse_00893.tw|tse_00894.tw|tse_00895.tw|tse_00896.tw|tse_00897.tw|tse_00898.tw|tse_00899.tw|tse_00900.tw|tse_00901.tw|tse_00902.tw|tse_00903.tw|tse_00904.tw|tse_00905.tw|tse_00907.tw|tse_00908.tw|tse_00909.tw|tse_00910.tw|tse_00911.tw|tse_00912.tw|tse_00913.tw|tse_00915.tw|tse_00916.tw|tse_00917.tw|tse_00918.tw|tse_00919.tw|tse_00920.tw|tse_00921.tw|tse_00922.tw|tse_00923.tw|tse_00924.tw|tse_00926.tw|tse_00927.tw|tse_00929.tw|tse_00930.tw|tse_00932.tw|tse_00934.tw|tse_00935.tw|tse_00936.tw|tse_00938.tw|tse_00939.tw|tse_00940.tw|tse_00941.tw|tse_00943.tw|tse_00944.tw|tse_00945B.tw|tse_00946.tw|tse_00947.tw|tse_00949.tw|tse_00951.tw|tse_00952.tw|tse_00953B.tw|tse_00954.tw|tse_00956.tw|tse_00960.tw|tse_00961.tw|tse_00962.tw|tse_00963.tw|tse_00964.tw|tse_00965.tw|tse_00971.tw|tse_00972.tw|tse_009800.tw|tse_009801.tw|tse_009802.tw|tse_009803.tw|tse_009804.tw|tse_009805.tw|tse_009808.tw|tse_009809.tw|tse_00980A.tw|tse_009810.tw|tse_009811.tw|tse_009812.tw|tse_009813.tw|tse_009816.tw|tse_009817.tw|tse_009818.tw|tse_009819.tw|tse_00981A.tw|tse_00981T.tw|tse_009820.tw|tse_009821.tw|tse_009824.tw|tse_009826.tw|tse_009827.tw|tse_009828.tw|tse_009829.tw|tse_00982A.tw|tse_00982D.tw|tse_00982T.tw|tse_00983A.tw|tse_00983D.tw|tse_00984A.tw|tse_00984D.tw|tse_00985A.tw|tse_00985B.tw|tse_00986A.tw|tse_00987A.tw|tse_00988A.tw|tse_00989A.tw|tse_00990A.tw|tse_00991A.tw|tse_00991B.tw|tse_00992A.tw|tse_00993A.tw|tse_00994A.tw|tse_00995A.tw|tse_00996A.tw|tse_00997A.tw|tse_00999A.tw",
+   "status": 200,
+   "final_url": "https://mis.twse.com.tw/stock/api/getStockInfo.jsp?json=1&delay=0&ex_ch=tse_00852L.tw%7Ctse_00861.tw%7Ctse_00865B.tw%7Ctse_00875.tw%7Ctse_00876.tw%7Ctse_00878.tw%7Ctse_00881.tw%7Ctse_00882.tw%7Ctse_00885.tw%7Ctse_00891.tw%7Ctse_00892.tw%7Ctse_00893.tw%7Ctse_00894.tw%7Ctse_00895.tw%7Ctse_00896.tw%7Ctse_00897.tw%7Ctse_00898.tw%7Ctse_00899.tw%7Ctse_00900.tw%7Ctse_00901.tw%7Ctse_00902.tw%7Ctse_00903.tw%7Ctse_00904.tw%7Ctse_00905.tw%7Ctse_00907.tw%7Ctse_00908.tw%7Ctse_00909.tw%7Ctse_00910.tw%7Ctse_00911.tw%7Ctse_00912.tw%7Ctse_00913.tw%7Ctse_00915.tw%7Ctse_00916.tw%7Ctse_00917.tw%7Ctse_00918.tw%7Ctse_00919.tw%7Ctse_00920.tw%7Ctse_00921.tw%7Ctse_00922.tw%7Ctse_00923.tw%7Ctse_00924.tw%7Ctse_00926.tw%7Ctse_00927.tw%7Ctse_00929.tw%7Ctse_00930.tw%7Ctse_00932.tw%7Ctse_00934.tw%7Ctse_00935.tw%7Ctse_00936.tw%7Ctse_00938.tw%7Ctse_00939.tw%7Ctse_00940.tw%7Ctse_00941.tw%7Ctse_00943.tw%7Ctse_00944.tw%7Ctse_00945B.tw%7Ctse_00946.tw%7Ctse_00947.tw%7Ctse_00949.tw%7Ctse_00951.tw%7Ctse_00952.tw%7Ctse_00953B.tw%7Ctse_00954.tw%7Ctse_00956.tw%7Ctse_00960.tw%7Ctse_00961.tw%7Ctse_00962.tw%7Ctse_00963.tw%7Ctse_00964.tw%7Ctse_00965.tw%7Ctse_00971.tw%7Ctse_00972.tw%7Ctse_009800.tw%7Ctse_009801.tw%7Ctse_009802.tw%7Ctse_009803.tw%7Ctse_009804.tw%7Ctse_009805.tw%7Ctse_009808.tw%7Ctse_009809.tw%7Ctse_00980A.tw%7Ctse_009810.tw%7Ctse_009811.tw%7Ctse_009812.tw%7Ctse_009813.tw%7Ctse_009816.tw%7Ctse_009817.tw%7Ctse_009818.tw%7Ctse_009819.tw%7Ctse_00981A.tw%7Ctse_00981T.tw%7Ctse_009820.tw%7Ctse_009821.tw%7Ctse_009824.tw%7Ctse_009826.tw%7Ctse_009827.tw%7Ctse_009828.tw%7Ctse_009829.tw%7Ctse_00982A.tw%7Ctse_00982D.tw%7Ctse_00982T.tw%7Ctse_00983A.tw%7Ctse_00983D.tw%7Ctse_00984A.tw%7Ctse_00984D.tw%7Ctse_00985A.tw%7Ctse_00985B.tw%7Ctse_00986A.tw%7Ctse_00987A.tw%7Ctse_00988A.tw%7Ctse_00989A.tw%7Ctse_00990A.tw%7Ctse_00991A.tw%7Ctse_00991B.tw%7Ctse_00992A.tw%7Ctse_00993A.tw%7Ctse_00994A.tw%7Ctse_00995A.tw%7Ctse_00996A.tw%7Ctse_00997A.tw%7Ctse_00999A.tw",
+   "size": 93981,
+   "content_type": "text/html;charset=UTF-8",
+   "headers": {
+    "Server": "nginx",
+    "Date": "Thu, 22 Oct 2026 01:11:26 GMT",
+    "Content-Type": "text/html;charset=UTF-8",
+    "Cache-Control": "no-cache, no-store, no-cache, must-revalidate"
+   },
+   "verify": true,
+   "elapsed": 6.21
+  },
+  {
+   "name": "mis_odd_tse_a",
+   "url": "https://mis.twse.com.tw/stock/api/getOddInfo.jsp?json=1&delay=0&ex_ch=tse_00400A.tw|tse_00401A.tw|tse_00402A.tw|tse_00403A.tw|tse_00404A.tw|tse_00405A.tw|tse_00406A.tw|tse_00407A.tw|tse_00408A.tw|tse_00409A.tw|tse_00410A.tw|tse_00412A.tw|tse_00415A.tw|tse_0050.tw|tse_0051.tw|tse_0052.tw|tse_0053.tw|tse_0055.tw|tse_0056.tw|tse_0057.tw|tse_0061.tw|tse_006203.tw|tse_006204.tw|tse_006205.tw|tse_006206.tw|tse_006207.tw|tse_006208.tw|tse_00625K.tw|tse_00631L.tw|tse_00632R.tw|tse_00633L.tw|tse_00634R.tw|tse_00635U.tw|tse_00636.tw|tse_00636K.tw|tse_00637L.tw|tse_00638R.tw|tse_00639.tw|tse_00640L.tw|tse_00641R.tw|tse_00642U.tw|tse_00643.tw|tse_00643K.tw|tse_00645.tw|tse_00646.tw|tse_00647L.tw|tse_00648R.tw|tse_00650L.tw|tse_00651R.tw|tse_00652.tw|tse_00653L.tw|tse_00654R.tw|tse_00655L.tw|tse_00656R.tw|tse_00657.tw|tse_00657K.tw|tse_00660.tw|tse_00661.tw|tse_00662.tw|tse_00663L.tw|tse_00664R.tw|tse_00665L.tw|tse_00666R.tw|tse_00668.tw|tse_00668K.tw|tse_00669R.tw|tse_00670L.tw|tse_00671R.tw|tse_00673R.tw|tse_00674R.tw|tse_00675L.tw|tse_00676R.tw|tse_00678.tw|tse_00680L.tw|tse_00681R.tw|tse_00682U.tw|tse_00683L.tw|tse_00684R.tw|tse_00685L.tw|tse_00686R.tw|tse_00688L.tw|tse_00689R.tw|tse_00690.tw|tse_00692.tw|tse_00693U.tw|tse_00700.tw|tse_00701.tw|tse_00702.tw|tse_00703.tw|tse_00706L.tw|tse_00707R.tw|tse_00708L.tw|tse_00709.tw|tse_00710B.tw|tse_00711B.tw|tse_00712.tw|tse_00713.tw|tse_00714.tw|tse_00715L.tw|tse_00717.tw|tse_00728.tw|tse_00730.tw|tse_00731.tw|tse_00733.tw|tse_00735.tw|tse_00736.tw|tse_00737.tw|tse_00738U.tw|tse_00739.tw|tse_00752.tw|tse_00753L.tw|tse_00757.tw|tse_00762.tw|tse_00763U.tw|tse_00770.tw|tse_00771.tw|tse_00775B.tw|tse_00783.tw|tse_00830.tw|tse_00850.tw|tse_00851.tw",
+   "status": 200,
+   "final_url": "https://mis.twse.com.tw/stock/api/getOddInfo.jsp?json=1&delay=0&ex_ch=tse_00400A.tw%7Ctse_00401A.tw%7Ctse_00402A.tw%7Ctse_00403A.tw%7Ctse_00404A.tw%7Ctse_00405A.tw%7Ctse_00406A.tw%7Ctse_00407A.tw%7Ctse_00408A.tw%7Ctse_00409A.tw%7Ctse_00410A.tw%7Ctse_00412A.tw%7Ctse_00415A.tw%7Ctse_0050.tw%7Ctse_0051.tw%7Ctse_0052.tw%7Ctse_0053.tw%7Ctse_0055.tw%7Ctse_0056.tw%7Ctse_0057.tw%7Ctse_0061.tw%7Ctse_006203.tw%7Ctse_006204.tw%7Ctse_006205.tw%7Ctse_006206.tw%7Ctse_006207.tw%7Ctse_006208.tw%7Ctse_00625K.tw%7Ctse_00631L.tw%7Ctse_00632R.tw%7Ctse_00633L.tw%7Ctse_00634R.tw%7Ctse_00635U.tw%7Ctse_00636.tw%7Ctse_00636K.tw%7Ctse_00637L.tw%7Ctse_00638R.tw%7Ctse_00639.tw%7Ctse_00640L.tw%7Ctse_00641R.tw%7Ctse_00642U.tw%7Ctse_00643.tw%7Ctse_00643K.tw%7Ctse_00645.tw%7Ctse_00646.tw%7Ctse_00647L.tw%7Ctse_00648R.tw%7Ctse_00650L.tw%7Ctse_00651R.tw%7Ctse_00652.tw%7Ctse_00653L.tw%7Ctse_00654R.tw%7Ctse_00655L.tw%7Ctse_00656R.tw%7Ctse_00657.tw%7Ctse_00657K.tw%7Ctse_00660.tw%7Ctse_00661.tw%7Ctse_00662.tw%7Ctse_00663L.tw%7Ctse_00664R.tw%7Ctse_00665L.tw%7Ctse_00666R.tw%7Ctse_00668.tw%7Ctse_00668K.tw%7Ctse_00669R.tw%7Ctse_00670L.tw%7Ctse_00671R.tw%7Ctse_00673R.tw%7Ctse_00674R.tw%7Ctse_00675L.tw%7Ctse_00676R.tw%7Ctse_00678.tw%7Ctse_00680L.tw%7Ctse_00681R.tw%7Ctse_00682U.tw%7Ctse_00683L.tw%7Ctse_00684R.tw%7Ctse_00685L.tw%7Ctse_00686R.tw%7Ctse_00688L.tw%7Ctse_00689R.tw%7Ctse_00690.tw%7Ctse_00692.tw%7Ctse_00693U.tw%7Ctse_00700.tw%7Ctse_00701.tw%7Ctse_00702.tw%7Ctse_00703.tw%7Ctse_00706L.tw%7Ctse_00707R.tw%7Ctse_00708L.tw%7Ctse_00709.tw%7Ctse_00710B.tw%7Ctse_00711B.tw%7Ctse_00712.tw%7Ctse_00713.tw%7Ctse_00714.tw%7Ctse_00715L.tw%7Ctse_00717.tw%7Ctse_00728.tw%7Ctse_00730.tw%7Ctse_00731.tw%7Ctse_00733.tw%7Ctse_00735.tw%7Ctse_00736.tw%7Ctse_00737.tw%7Ctse_00738U.tw%7Ctse_00739.tw%7Ctse_00752.tw%7Ctse_00753L.tw%7Ctse_00757.tw%7Ctse_00762.tw%7Ctse_00763U.tw%7Ctse_00770.tw%7Ctse_00771.tw%7Ctse_00775B.tw%7Ctse_00783.tw%7Ctse_00830.tw%7Ctse_00850.tw%7Ctse_00851.tw",
+   "size": 99707,
+   "content_type": "text/html;charset=UTF-8",
+   "headers": {
+    "Server": "nginx",
+    "Date": "Thu, 22 Oct 2026 01:11:39 GMT",
+    "Content-Type": "text/html;charset=UTF-8",
+    "Cache-Control": "no-cache, no-store, no-cache, must-revalidate",
+    "Set-Cookie": "JSESSIONID=0AB21E30F1BBD4ABB00F525AA1302BA4; Path=/; Secure; HttpOnly;stock; Secure; HttpOnly"
+   },
+   "verify": true,
+   "elapsed": 11.51
+  },
+  {
+   "name": "mis_odd_otc",
+   "url": "https://mis.twse.com.tw/stock/api/getOddInfo.jsp?json=1&delay=0&ex_ch=otc_00411A.tw|otc_006201.tw|otc_00679B.tw|otc_00687B.tw|otc_00687C.tw|otc_00694B.tw|otc_00695B.tw|otc_00696B.tw|otc_00697B.tw|otc_00719B.tw|otc_00720B.tw|otc_00722B.tw|otc_00723B.tw|otc_00724B.tw|otc_00725B.tw|otc_00726B.tw|otc_00727B.tw|otc_00734B.tw|otc_00740B.tw|otc_00741B.tw|otc_00746B.tw|otc_00749B.tw|otc_00750B.tw|otc_00751B.tw|otc_00754B.tw|otc_00755B.tw|otc_00756B.tw|otc_00758B.tw|otc_00759B.tw|otc_00760B.tw|otc_00761B.tw|otc_00764B.tw|otc_00768B.tw|otc_00772B.tw|otc_00773B.tw|otc_00777B.tw|otc_00778B.tw|otc_00779B.tw|otc_00780B.tw|otc_00781B.tw|otc_00782B.tw|otc_00785B.tw|otc_00786B.tw|otc_00787B.tw|otc_00788B.tw|otc_00789B.tw|otc_00791B.tw|otc_00792B.tw|otc_00795B.tw|otc_00799B.tw|otc_00834B.tw|otc_00836B.tw|otc_00840B.tw|otc_00841B.tw|otc_00842B.tw|otc_00844B.tw|otc_00845B.tw|otc_00846B.tw|otc_00848B.tw|otc_00849B.tw|otc_00853B.tw|otc_00856B.tw|otc_00857B.tw|otc_00858.tw|otc_00859B.tw|otc_00860B.tw|otc_00862B.tw|otc_00863B.tw|otc_00864B.tw|otc_00867B.tw|otc_00870B.tw|otc_00877.tw|otc_00884B.tw|otc_00886.tw|otc_00887.tw|otc_00888.tw|otc_00890B.tw|otc_00928.tw|otc_00931B.tw|otc_00933B.tw|otc_00937B.tw|otc_00942B.tw|otc_00948B.tw|otc_00950B.tw|otc_00955.tw|otc_00957B.tw|otc_00958B.tw|otc_00959B.tw|otc_00966B.tw|otc_00967B.tw|otc_00968B.tw|otc_00969B.tw|otc_00970B.tw|otc_009806.tw|otc_009807.tw|otc_00980B.tw|otc_00980D.tw|otc_00980T.tw|otc_009814.tw|otc_009815.tw|otc_00981B.tw|otc_00981D.tw|otc_009822.tw|otc_009823.tw|otc_009825.tw|otc_00982B.tw|otc_00983B.tw|otc_00984B.tw|otc_00985D.tw|otc_00986B.tw|otc_00986D.tw|otc_00987B.tw|otc_00987D.tw|otc_00988B.tw|otc_00989B.tw|otc_00990B.tw|otc_00992B.tw|otc_00998A.tw",
+   "status": 200,
+   "final_url": "https://mis.twse.com.tw/stock/api/getOddInfo.jsp?json=1&delay=0&ex_ch=otc_00411A.tw%7Cotc_006201.tw%7Cotc_00679B.tw%7Cotc_00687B.tw%7Cotc_00687C.tw%7Cotc_00694B.tw%7Cotc_00695B.tw%7Cotc_00696B.tw%7Cotc_00697B.tw%7Cotc_00719B.tw%7Cotc_00720B.tw%7Cotc_00722B.tw%7Cotc_00723B.tw%7Cotc_00724B.tw%7Cotc_00725B.tw%7Cotc_00726B.tw%7Cotc_00727B.tw%7Cotc_00734B.tw%7Cotc_00740B.tw%7Cotc_00741B.tw%7Cotc_00746B.tw%7Cotc_00749B.tw%7Cotc_00750B.tw%7Cotc_00751B.tw%7Cotc_00754B.tw%7Cotc_00755B.tw%7Cotc_00756B.tw%7Cotc_00758B.tw%7Cotc_00759B.tw%7Cotc_00760B.tw%7Cotc_00761B.tw%7Cotc_00764B.tw%7Cotc_00768B.tw%7Cotc_00772B.tw%7Cotc_00773B.tw%7Cotc_00777B.tw%7Cotc_00778B.tw%7Cotc_00779B.tw%7Cotc_00780B.tw%7Cotc_00781B.tw%7Cotc_00782B.tw%7Cotc_00785B.tw%7Cotc_00786B.tw%7Cotc_00787B.tw%7Cotc_00788B.tw%7Cotc_00789B.tw%7Cotc_00791B.tw%7Cotc_00792B.tw%7Cotc_00795B.tw%7Cotc_00799B.tw%7Cotc_00834B.tw%7Cotc_00836B.tw%7Cotc_00840B.tw%7Cotc_00841B.tw%7Cotc_00842B.tw%7Cotc_00844B.tw%7Cotc_00845B.tw%7Cotc_00846B.tw%7Cotc_00848B.tw%7Cotc_00849B.tw%7Cotc_00853B.tw%7Cotc_00856B.tw%7Cotc_00857B.tw%7Cotc_00858.tw%7Cotc_00859B.tw%7Cotc_00860B.tw%7Cotc_00862B.tw%7Cotc_00863B.tw%7Cotc_00864B.tw%7Cotc_00867B.tw%7Cotc_00870B.tw%7Cotc_00877.tw%7Cotc_00884B.tw%7Cotc_00886.tw%7Cotc_00887.tw%7Cotc_00888.tw%7Cotc_00890B.tw%7Cotc_00928.tw%7Cotc_00931B.tw%7Cotc_00933B.tw%7Cotc_00937B.tw%7Cotc_00942B.tw%7Cotc_00948B.tw%7Cotc_00950B.tw%7Cotc_00955.tw%7Cotc_00957B.tw%7Cotc_00958B.tw%7Cotc_00959B.tw%7Cotc_00966B.tw%7Cotc_00967B.tw%7Cotc_00968B.tw%7Cotc_00969B.tw%7Cotc_00970B.tw%7Cotc_009806.tw%7Cotc_009807.tw%7Cotc_00980B.tw%7Cotc_00980D.tw%7Cotc_00980T.tw%7Cotc_009814.tw%7Cotc_009815.tw%7Cotc_00981B.tw%7Cotc_00981D.tw%7Cotc_009822.tw%7Cotc_009823.tw%7Cotc_009825.tw%7Cotc_00982B.tw%7Cotc_00983B.tw%7Cotc_00984B.tw%7Cotc_00985D.tw%7Cotc_00986B.tw%7Cotc_00986D.tw%7Cotc_00987B.tw%7Cotc_00987D.tw%7Cotc_00988B.tw%7Cotc_00989B.tw%7Cotc_00990B.tw%7Cotc_00992B.tw%7Cotc_00998A.tw",
+   "size": 91881,
+   "content_type": "text/html;charset=UTF-8",
+   "headers": {
+    "Server": "nginx",
+    "Date": "Thu, 22 Oct 2026 01:11:53 GMT",
+    "Content-Type": "text/html;charset=UTF-8",
+    "Cache-Control": "no-cache, no-store, no-cache, must-revalidate",
+    "Set-Cookie": "JSESSIONID=06D4F7B2D02F90897CCC99BA83486F50; Path=/; Secure; HttpOnly;stock; Secure; HttpOnly"
+   },
+   "verify": true,
+   "elapsed": 8.02
+  },
+  {
+   "name": "twse_holiday",
+   "url": "https://www.twse.com.tw/rwd/zh/holidaySchedule/holidaySchedule?response=json",
+   "status": 200,
+   "final_url": "https://www.twse.com.tw/rwd/zh/holidaySchedule/holidaySchedule?response=json",
+   "size": 2783,
+   "content_type": "application/json;charset=UTF-8",
+   "headers": {
+    "Server": "HiNetCDN",
+    "Date": "Thu, 22 Oct 2026 01:11:58 GMT",
+    "Content-Type": "application/json;charset=UTF-8",
+    "Access-Control-Allow-Origin": "*"
+   },
+   "verify": true,
+   "elapsed": 1.34
+  },
+  {
+   "name": "twse_holiday_openapi",
+   "url": "https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule",
+   "status": 200,
+   "final_url": "https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule",
+   "size": 3774,
+   "content_type": "application/json",
+   "headers": {
+    "Server": "HiNetCDN",
+    "Date": "Thu, 22 Oct 2026 01:12:03 GMT",
+    "Content-Type": "application/json",
+    "Last-Modified": "Wed, 21 Oct 2026 21:23:52 GMT"
+   },
+   "verify": true,
+   "elapsed": 1.93
+  },
+  {
+   "name": "twse_odd_after_1021",
+   "url": "https://www.twse.com.tw/rwd/zh/afterTrading/TWT53U?date=20261021&selectType=ALL&response=json",
+   "status": 200,
+   "final_url": "https://www.twse.com.tw/rwd/zh/afterTrading/TWT53U?date=20261021&selectType=ALL&response=json",
+   "size": 108138,
+   "content_type": "application/json;charset=UTF-8",
+   "headers": {
+    "Server": "HiNetCDN",
+    "Date": "Thu, 22 Oct 2026 01:12:07 GMT",
+    "Content-Type": "application/json;charset=UTF-8",
+    "Access-Control-Allow-Origin": "*"
+   },
+   "verify": true,
+   "elapsed": 1.67
+  },
+  {
+   "name": "twse_fixed_1021",
+   "url": "https://www.twse.com.tw/rwd/zh/afterTrading/BFT41U?date=20261021&selectType=ALL&response=json",
+   "status": 200,
+   "final_url": "https://www.twse.com.tw/rwd/zh/afterTrading/BFT41U?date=20261021&selectType=ALL&response=json",
+   "size": 1256406,
+   "content_type": "application/json;charset=UTF-8",
+   "headers": {
+    "Server": "HiNetCDN",
+    "Date": "Thu, 22 Oct 2026 01:12:12 GMT",
+    "Content-Type": "application/json;charset=UTF-8",
+    "Access-Control-Allow-Origin": "*"
+   },
+   "verify": true,
+   "elapsed": 4.89
+  }
+ ],
+ "finished": "2026-10-22T01:12:19.462666Z"
+}
