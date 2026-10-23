@@ -323,7 +323,9 @@ def eod(state, log, weekly=False):
     step(log, 'sandtable_cal', tape.update_cal, state, log, http_tw)
     step(log, 'sandtable_after', tape.update_after, state, log, http_tw)
     step(log, 'sandtable_finish', tape.finish_day, state, log)
-    state['_extra'] = {'mis': mis, 'pre': pre, 'risk': risk, 'news': news}
+    # 證交所即時資料的日期（判斷今天有沒有開市用，颱風假也一樣；失敗就當作不知道）
+    tx = step(log, 'mis_taiex', src.mis_quotes, http_x, ['tse_t00.tw']) or {}
+    state['_extra'] = {'mis': mis, 'pre': pre, 'risk': risk, 'news': news, 'taiex_live': tx.get('t00')}
     store_news(state, news)
 
 
@@ -537,19 +539,37 @@ def site_fingerprint():
     return h.hexdigest()[:12]
 
 
+def market_day(extra):
+    """證交所即時成交資料本身的日期（加權指數 t00、沙盤 tape 那一輪多數 ETF 的 d），取比較早的那個。
+    投信的預估淨值檔（all_etf.txt）在颱風假也會標「今天」的日期，價格卻是前一個交易日的，不能拿來判斷今天有沒有開市。"""
+    days = []
+    tx = extra.get('taiex_live') or {}
+    if str(tx.get('d') or '').isdigit():
+        days.append(int(tx['d']))
+    reg = ((extra.get('tape') or {}).get('last') or {}).get('reg') or {}
+    ds = [q.get('d') for q in reg.values() if isinstance(q, dict) and q.get('d')]
+    if ds:
+        days.append(max(set(ds), key=ds.count))
+    return min(days) if days else None
+
+
 def make_live(state, extra, now, mode):
     mis = extra.get('mis') or {}
+    mday = market_day(extra)
     etfs = {}
     for code, m in mis.items():
         if not m.get('px') or not m.get('est_nav'):
             continue
-        etfs[code] = [m.get('px'), m.get('est_nav'), m.get('premium'), m.get('time'), m.get('units_chg'),
-                      int(m['date']) if str(m.get('date', '')).isdigit() else None]
+        d = int(m['date']) if str(m.get('date', '')).isdigit() else None
+        if d and mday and d > mday:
+            d = mday          # 價格不可能比市場最新的成交日還新（颱風假時投信檔的日期是今天）
+        etfs[code] = [m.get('px'), m.get('est_nav'), m.get('premium'), m.get('time'), m.get('units_chg'), d]
     tx = extra.get('taiex_live')
     hm = now.hour * 100 + now.minute
     open_now = now.weekday() < 5 and 900 <= hm <= 1335
+    mis_day = max((int(m['date']) for m in mis.values() if str(m.get('date', '')).isdigit()), default=None)
     return {'at': now.isoformat(timespec='seconds'), 'mode': mode, 'open': open_now,
-            'date': max((int(m['date']) for m in mis.values() if str(m.get('date', '')).isdigit()), default=None),
+            'date': mday or mis_day,
             'etfs': etfs,
             'taiex': {'z': tx.get('z'), 'y': tx.get('y'), 't': tx.get('t')} if tx else None}
 

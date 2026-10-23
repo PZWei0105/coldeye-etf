@@ -54,6 +54,7 @@
 - 雲端 Claude 工作環境連不到台灣官方網站，資料一律由 GitHub Actions 抓；要實測新端點就把 job 設成 `probe` 並編輯 `control/probe.json`，結果會推到 `probe-results` 分支。
 - 手動執行：`gh workflow run` 在這個環境不能用，改用 REST：`gh api -X POST repos/PZWei0105/coldeye-etf/actions/workflows/coldeye.yml/dispatches -f ref=main -f 'inputs[mode]=backfill'`（mode：auto / intraday / eod / backfill / probe / deploy）。
 - 盤中更新是「接力」：每一輪結束前由 `next` 工作等到約 5 分鐘後自己發出下一輪（`pipeline/dispatch.py` 的 `next_tick`），13:36 後或偵測到休市就停；08:37–08:53 的排程只負責暖身，09:00 準時發出第一輪；每 10 分鐘的排程是接力斷掉時的備援。已有排隊中的執行時不會再發，避免把推送或備援擠掉。
+- `live.json` 的 `date`（App 判斷「今天有沒有開市」、盤中接力判斷休市都看它）來自證交所即時成交資料本身的日期（`build.py` 的 `market_day`：加權指數 t00 的 `d` 與 tape 那一輪多數 ETF 的 `d`，取比較早的），每一檔的日期也不會比它新。不要改回用投信預估淨值檔 `all_etf.txt` 的日期：2026/10/23 颱風休市那天它有 45 檔標了「今天」，價格卻是前一天的。測試：`python3 tests/live_test.py`。
 - 執行紀錄在 `state` 分支的 `status.json` 的 `_runs`；盤中那幾輪沒有新聞變動時不寫 state（看 Actions 的執行列表）。
 - 歷史資料從 2020-01 起（`build.py` 的 `HISTORY_START`），回測包含 2022 年大跌，也包含已下市的 ETF（避免只看活下來的）。每檔的原始收盤、規則訊號取樣、分割與配息輸出在 `out/hist/{代號}.json`，給存股時光機用。
 - 本機測試：`python3 tests/local_pipeline.py`、`python3 tests/local_build.py <輸出資料夾>`（需要先有 probe 的原始回應）；部位計算：`node tests/pf_test.mjs [summary.json divs.json track.json]`、`node tests/pf_regress.mjs`；時光機、對決、熱力圖、資產走勢：`node tests/calc_test.mjs [hist/0050.json]`；副官：`node tests/aide_test.mjs [hist 資料夾] [track.json]`。今日一課與案例教室：`node tests/lessons_test.mjs [hist 資料夾]`。
