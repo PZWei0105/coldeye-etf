@@ -162,42 +162,97 @@ export function cue(name) { sfx(name); if (HAPTIC[name] != null) haptic(name); }
 // ------------------------------------------------------------------ 語音播報（只用裝置內建的語音，不連網）
 let voices = [];
 const canSpeak = () => typeof window !== 'undefined' && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
-function loadVoices() { try { voices = window.speechSynthesis.getVoices() || []; } catch { voices = []; } }
+const voiceSubs = new Set();
+/** 語音清單載入或改變時通知（設定頁的語音選單用；iPhone、Android 常常晚一點才給清單） */
+export function onVoices(fn) { voiceSubs.add(fn); return () => voiceSubs.delete(fn); }
+function loadVoices() {
+  try { voices = window.speechSynthesis.getVoices() || []; } catch { voices = []; }
+  for (const fn of voiceSubs) { try { fn(); } catch { /* 不影響播報 */ } }
+}
 if (canSpeak()) {
   loadVoices();
   try { window.speechSynthesis.addEventListener('voiceschanged', loadVoices); } catch { /* 舊瀏覽器 */ }
 }
-const isZh = (v) => /^zh|cmn/i.test(v.lang) || /中文|國語|國語|普通話|Chinese/i.test(v.name);
-/**
- * 只用裝置內建（離線）的語音。網路語音（例如桌機 Chrome 的「Google 國語（臺灣）」、Edge 的 Online 語音）
- * 會把要念的文字送到語音服務，而晨報裡有你的持股和戰績，不能送出去。
+/*
+ * 中文語音分三種：台灣（國語）、其他普通話（中國大陸、新加坡）、粵語（香港、澳門）。
+ * 粵語一律不用（冷眼的稿子是台灣國語）；有台灣的就用台灣的，沒有才用其他普通話，並在設定頁提醒安裝台灣語音。
+ * 以前用「Hant（繁體）」判斷台灣，結果「粵語（繁體，香港）」也被當成台灣——繁體字不等於台灣口音。
  */
-function pickVoice() {
-  const zh = voices.filter((v) => v.localService !== false && !/Online/i.test(v.name) && isZh(v));
-  const tw = zh.filter((v) => /TW|Hant|臺灣|台灣|Taiwan/i.test(`${v.lang} ${v.name}`));
-  return tw.find((v) => /Mei-?Jia|美佳|Yating|Hanhan|HsiaoChen|HsiaoYu|Zhiwei/i.test(v.name)) || tw[0]
-    || zh.find((v) => !/HK|yue|粵|Cantonese/i.test(`${v.lang} ${v.name}`)) || null;
+const ZH = /^(zh|cmn|yue)([-_]|$)/i;
+const ZH_NAME = /中文|國語|國語|普通話|普通话|粵語|粤语|Chinese|Mandarin|Cantonese/i;
+const CANTO = /(^|[^a-z])(yue|zh[-_](hant[-_])?(hk|mo))([^a-z]|$)|香港|澳門|澳门|粵|粤|廣東|广东|Cantonese|Hong\s?Kong|Macau|Sinji|善怡|Tracy|HiuGaai|HiuMaan|WanLung/i;
+const TWV = /(^|[^a-z])(zh|cmn)([-_]hant)?[-_]tw([^a-z]|$)|臺灣|台灣|Taiwan|國語|Mei-?Jia|美佳|Hanhan|Yating|Zhiwei|HsiaoChen|HsiaoYu/i;
+const isZh = (v) => !!v && (ZH.test(v.lang || '') || ZH_NAME.test(v.name || ''));
+/** 一個語音是哪一種：'tw' 台灣國語、'cn' 其他普通話、'yue' 粵語、null 不是中文 */
+export function classifyVoice(v) {
+  if (!isZh(v)) return null;
+  const t = `${v.lang || ''} ${v.name || ''}`;
+  if (CANTO.test(t)) return 'yue';
+  return TWV.test(t) ? 'tw' : 'cn';
 }
-/** none：瀏覽器不支援；ok：有內建中文語音；remote：只有網路語音（不使用）；nozh：沒有中文語音；unknown：語音清單還沒載入 */
+/**
+ * 從語音清單挑一個（純函式，tests/voice_test.mjs 有測）：只用裝置內建（離線）的語音，網路語音（桌機 Chrome 的「Google 國語」、
+ * Edge 的 Online 語音）會把要念的文字送出去，而晨報裡有你的持股和戰績。want：設定頁選的語音名稱（找不到就自動挑）。
+ */
+export function chooseVoice(list, want = '') {
+  const L = (list || []).filter((v) => v && v.localService !== false && !/Online/i.test(v.name || '') && classifyVoice(v) && classifyVoice(v) !== 'yue');
+  if (want) { const v = L.find((x) => x.name === want); if (v) return v; }
+  const tw = L.filter((v) => classifyVoice(v) === 'tw');
+  return tw.find((v) => /Mei-?Jia|美佳|Yating|Hanhan|HsiaoChen|HsiaoYu|Zhiwei/i.test(v.name || ''))
+    || tw.find((v) => /^(zh|cmn)[-_]TW$/i.test(v.lang || '')) || tw[0] || L[0] || null;
+}
+function pickVoice() { return chooseVoice(voices, prefs().voiceName || ''); }
+/** 設定頁的語音選單：可以用的中文語音（台灣的在前；粵語、網路語音不列） */
+export function voiceList() {
+  if (canSpeak() && !voices.length) loadVoices();
+  return voices.filter((v) => v.localService !== false && !/Online/i.test(v.name || '') && ['tw', 'cn'].includes(classifyVoice(v)))
+    .map((v) => ({ name: v.name, lang: v.lang, tw: classifyVoice(v) === 'tw' }))
+    .sort((a, b) => b.tw - a.tw || a.name.localeCompare(b.name));
+}
+/** 現在會用哪一個語音（設定頁顯示）：{ name, lang, tw } 或 null */
+export function voiceInfo() { const v = pickVoice(); return v ? { name: v.name, lang: v.lang, tw: classifyVoice(v) === 'tw' } : null; }
+/** none：瀏覽器不支援；ok：有內建的國語語音；yue：只有粵語；remote：只有網路語音（不使用）；nozh：沒有中文語音；unknown：語音清單還沒載入 */
 export function voiceStatus() {
   if (!canSpeak()) return 'none';
   if (!voices.length) loadVoices();
   if (!voices.length) return 'unknown';
   if (pickVoice()) return 'ok';
+  const local = voices.filter((v) => v.localService !== false && !/Online/i.test(v.name || ''));
+  if (local.some((v) => classifyVoice(v) === 'yue')) return 'yue';
   return voices.some(isZh) ? 'remote' : 'nozh';
 }
 export const hasVoice = () => ['ok', 'unknown'].includes(voiceStatus());
+/** 這台裝置在哪裡安裝「中文（台灣）」語音 */
+export function voiceInstallHint() {
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent || '' : '';
+  if (/iPhone|iPad|iPod/i.test(ua)) return 'iPhone：設定 → 輔助使用 → 朗讀內容 → 聲音 → 中文（台灣）→ 下載「美佳」';
+  if (/Android/i.test(ua)) return 'Android：設定 → 系統 → 語言 → 文字轉語音輸出 → Google 語音服務的設定 → 安裝語音資料 → 中文（台灣）';
+  if (/Windows/i.test(ua)) return 'Windows：設定 → 時間與語言 → 語音 → 新增語音 → 中文（台灣）';
+  if (/Mac OS/i.test(ua)) return 'Mac：系統設定 → 輔助使用 → 朗讀內容 → 系統聲音 → 管理聲音 → 中文（台灣）';
+  return '在系統設定的「文字轉語音」安裝「中文（台灣）」語音';
+}
 /** 沒辦法念的時候，給使用者看的一句話 */
 export function voiceWhy() {
   const s = voiceStatus();
-  if (s === 'remote') return '這台裝置只有「網路語音」：要念的內容會送到語音服務，為了不把你的持股送出去，冷眼不用它。可以在系統設定安裝「中文（台灣）」語音';
-  if (s === 'nozh' || s === 'unknown') return '這台裝置沒有內建的中文語音，可以在系統設定安裝「中文（台灣）」語音';
+  if (s === 'yue') return `這台裝置只有粵語（香港）的中文語音，冷眼不用它念。${voiceInstallHint()}`;
+  if (s === 'remote') return `這台裝置只有「網路語音」：要念的內容會送到語音服務，為了不把你的持股送出去，冷眼不用它。${voiceInstallHint()}`;
+  if (s === 'nozh' || s === 'unknown') return `這台裝置沒有內建的中文語音。${voiceInstallHint()}`;
   return '這個瀏覽器不支援語音播報';
 }
-/** 把畫面上的文字改成好念的句子：+0.84% → 上漲百分之 0.84、10/24 → 10 月 24 日、去掉千分位 */
+/** 用的不是台灣口音時的提醒（設定頁顯示）；是台灣的就回空字串 */
+export function voiceHint() {
+  const v = voiceInfo();
+  if (!v || v.tw) return '';
+  return `這台裝置沒有台灣的中文語音，現在用的是其他地區的普通話（${v.name}）。${voiceInstallHint()}，裝好之後冷眼會自動改用台灣口音。`;
+}
+/** 念的時候用的語言標籤：台灣的語音一律標 zh-TW（Android 的 Chrome 常常只看這個標籤挑語音） */
+const langOf = (v) => (classifyVoice(v) === 'tw' ? 'zh-TW' : v.lang);
+/** 把畫面上的文字改成好念的句子：+0.84% → 上漲百分之 0.84、10/24 → 10 月 24 日、去掉千分位、
+ *  ETF 代號一個字一個字念（0050 念「零零五零」，不是「五十」；00679B 念「零零六七九 B」，和台灣的念法一樣） */
 export function speechText(s) {
   return String(s || '')
     .replace(/\*\*/g, '')
+    .replace(/(^|[^\d.,])(00\d{2,4})([A-Z]{0,2})(?![\d.])/g, (m, a, d, x) => `${a}${d.split('').join(' ')}${x ? ` ${x.split('').join(' ')}` : ''} `)
     .replace(/([+＋])\s?(\d+(?:\.\d+)?)\s?%/g, '上漲百分之$2')
     .replace(/([−\-－])\s?(\d+(?:\.\d+)?)\s?%/g, '下跌百分之$2')
     .replace(/(\d+(?:\.\d+)?)\s?%/g, '百分之$1')
@@ -231,7 +286,7 @@ export function speak(text, { force = false } = {}) {
   setSpeaking(true);
   parts.forEach((p, i) => {
     const u = new SpeechSynthesisUtterance(p);
-    u.lang = v.lang;
+    u.lang = langOf(v);
     u.voice = v;
     u.rate = 1.04;
     u.pitch = 1;
@@ -255,7 +310,7 @@ export function primeSpeech() {
   try {
     const u = new SpeechSynthesisUtterance(' ');
     u.volume = 0;
-    u.lang = v ? v.lang : 'zh-TW';
+    u.lang = v ? langOf(v) : 'zh-TW';
     if (v) u.voice = v;
     window.speechSynthesis.speak(u);
   } catch { /* 不支援 */ }

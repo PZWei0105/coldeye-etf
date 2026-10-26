@@ -1167,6 +1167,32 @@ function openSettings(push = true) {
   drawSettings();
   sh.scrollTop = 0;
 }
+/** 設定頁：用哪一個語音（台灣口音優先；粵語、網路語音不列）。語音清單晚一點才載入時，載入後會重畫這一列 */
+function voiceRowHTML() {
+  const list = FX.voiceList();
+  if (!list.length) {
+    const st = FX.voiceStatus();
+    if (st === 'none') return '';
+    return `<div class="srow col" id="s-vrow"><div><div class="h">語音</div><div class="d">${esc(st === 'unknown' ? '語音清單還在載入，等一下會出現。' : FX.voiceWhy())}</div></div></div>`;
+  }
+  const info = FX.voiceInfo();
+  const hint = FX.voiceHint();
+  const cur = settings.voiceName && list.some((v) => v.name === settings.voiceName) ? settings.voiceName : '';
+  return `<div class="srow col" id="s-vrow"><div><div class="h">語音</div><div class="d">${info ? `現在用：<b>${esc(info.name)}</b>（${info.tw ? '台灣國語' : '其他地區的普通話'}）` : ''}${hint ? `<br><span class="v-warn">${esc(hint)}</span>` : ''}</div></div>
+    <select class="input" id="s-vname" aria-label="語音"><option value="">自動（台灣口音優先）</option>${list.map((v) => `<option value="${esc(v.name)}"${v.name === cur ? ' selected' : ''}>${esc(v.name)}（${v.tw ? '台灣' : '普通話'}）</option>`).join('')}</select></div>`;
+}
+function bindVoiceRow(sh) {
+  const sel = $('#s-vname', sh);
+  if (!sel) return;
+  sel.addEventListener('change', () => {
+    settings.voiceName = sel.value || '';
+    saveSettings();
+    const row = $('#s-vrow', sh);
+    if (row) { row.outerHTML = voiceRowHTML(); bindVoiceRow(sh); }
+    const v = FX.voiceInfo();
+    FX.speak(`這是冷眼的語音播報，現在用的是${v && v.tw ? '台灣國語' : '普通話'}。`, { force: true });
+  });
+}
 function drawSettings() {
   const sh = $('#sheet');
   const prof = PF.PROFILES[settings.risk];
@@ -1197,7 +1223,8 @@ function drawSettings() {
     <section class="panel set">
       <div class="srow"><div><div class="h">音效</div><div class="d">點按、切換、檢查、上鎖、到價警報都有聲音（iPhone 側邊靜音開關打開時不出聲）</div></div><button class="switch" role="switch" id="s-sfx" aria-checked="${settings.sfx !== false}" aria-label="音效"></button></div>
       <div class="srow"><div><div class="h">音量</div></div><div class="seg mini">${[[1, '小'], [2, '中'], [3, '大']].map(([k, t]) => `<button data-vol="${k}" aria-pressed="${settings.vol === k}">${t}</button>`).join('')}</div></div>
-      <div class="srow"><div><div class="h">語音播報</div><div class="d">${FX.hasVoice() ? '每天開機時，副官把晨報念給你聽（只用裝置內建的中文語音，不連網；只有網路語音的裝置不會念）' : FX.voiceWhy()}</div></div><span class="row-btns"><button class="btn small ghost" id="s-say"${FX.hasVoice() ? '' : ' disabled'}>${ICON.speaker}試聽</button><button class="switch" role="switch" id="s-voice" aria-checked="${settings.voice !== false}" aria-label="語音播報"></button></span></div>
+      <div class="srow"><div><div class="h">語音播報</div><div class="d">${FX.hasVoice() ? '每天開機時，副官把晨報念給你聽（只用裝置內建的國語語音，台灣口音優先、不用粵語；不連網，只有網路語音的裝置不會念）' : esc(FX.voiceWhy())}</div></div><span class="row-btns"><button class="btn small ghost" id="s-say"${FX.hasVoice() ? '' : ' disabled'}>${ICON.speaker}試聽</button><button class="switch" role="switch" id="s-voice" aria-checked="${settings.voice !== false}" aria-label="語音播報"></button></span></div>
+      ${voiceRowHTML()}
       <div class="srow"><div><div class="h">開機要點一下啟動</div><div class="d">手機規定要先點一下才能出聲。打開：每天第一次開啟時按「啟動」，有完整的點火音效和語音；關掉：自動開機、不出聲</div></div><button class="switch" role="switch" id="s-ignite" aria-checked="${settings.ignite !== false}" aria-label="開機要點一下啟動"></button></div>
       <div class="srow"><div><div class="h">畫面特效</div><div class="d">切換分頁的掃描、副官檢查的逐條鎖定、蓋章與結果揭曉（手機設定「減少動態效果」時自動關閉）</div></div><button class="switch" role="switch" id="s-fx" aria-checked="${settings.fx !== false}" aria-label="畫面特效"></button></div>
       <div class="srow"><div><div class="h">震動回饋</div><div class="d">Android 手機有效（iPhone 的網頁不支援震動）</div></div><button class="switch" role="switch" id="s-haptic" aria-checked="${settings.haptic !== false}" aria-label="震動回饋"></button></div>
@@ -1335,6 +1362,7 @@ function bindSettings() {
     FX.sfx('comms');
     if (!FX.speak(briefSpeech(true), { force: true })) toast(FX.voiceWhy());
   });
+  bindVoiceRow(sh);
   $('#s-proj', sh).addEventListener('click', async () => {
     const t = projectText();
     try { await navigator.clipboard.writeText(t); FX.cue('ok'); toast('已複製專案指示，到 Claude 的專案「指示」貼上', null); } catch {
@@ -1667,6 +1695,12 @@ async function refreshNews(v) {
 async function boot() {
   applyTheme();
   FX.bind(() => settings);
+  FX.onVoices(() => {
+    if (S.openCode !== '__prefs') return;
+    const sh = $('#sheet');
+    const row = sh && $('#s-vrow', sh);
+    if (row) { row.outerHTML = voiceRowHTML(); bindVoiceRow(sh); }
+  });
   renderShell();
   installExplain();
   speakPill();
