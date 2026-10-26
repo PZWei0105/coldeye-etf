@@ -587,8 +587,9 @@ def _upgrade(rec, st):
     rec = list(rec or [])
     if len(rec) == 10:
         mkt = rec[1]
-        rec = [rec[0], mkt, rec[2], rec[3], rec[4], st.get('d_otc' if mkt == 'otc' else 'd'), rec[5], rec[6], rec[7],
-               None, rec[8], rec[9], st.get('rev')]
+        d = st.get('d_otc' if mkt == 'otc' else 'd')   # 舊版收盤和本益比是同一次、同一天的 OpenAPI 資料
+        rec = [rec[0], mkt, rec[2], rec[3], rec[4], d if rec[3] else None, rec[5], rec[6], rec[7],
+               d if any(x is not None for x in rec[5:8]) else None, rec[8], rec[9], st.get('rev') if rec[8] is not None or rec[9] is not None else None]
     return (rec + [None] * NF)[:NF]
 
 

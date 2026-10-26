@@ -373,7 +373,9 @@ def _():
     st['stocks'].update({'d': 20261021, 'd_otc': 20261021, 'rev': '202608', 'checked': '20261021',
                          's': {'2330': ['台積電', 'tse', '半導體業', 2300.0, 1.0, 27.0, 0.9, 9.5, 50.0, 40.0]}})
     up = H._upgrade(st['stocks']['s']['2330'], st['stocks'])
-    assert up == ['台積電', 'tse', '半導體業', 2300.0, 1.0, 20261021, 27.0, 0.9, 9.5, None, 50.0, 40.0, '202608'], up
+    assert up == ['台積電', 'tse', '半導體業', 2300.0, 1.0, 20261021, 27.0, 0.9, 9.5, 20261021, 50.0, 40.0, '202608'], up
+    assert H._upgrade(['某檔', 'otc', '', None, None, None, None, None, None, None], {'d': 1, 'd_otc': 2, 'rev': '202608'}) == \
+        ['某檔', 'otc', '', None, None, None, None, None, None, None, None, None, None]   # 沒有的值不配日期
     # 10 月營收：台積電公布了，信驊還沒（OpenAPI 裡沒有它）
     tp = FakeOpen(rev_ym='11510')
     tp_json = tp.json
