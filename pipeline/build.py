@@ -11,7 +11,7 @@ import threading
 import time
 import traceback
 
-from . import backtest, engine, gitstate, narrative, tape
+from . import backtest, engine, gitstate, holdings, narrative, tape
 from . import sources as src
 from .series import CATEGORY_NAMES, Series, d2i, i2d
 from .state import State
@@ -319,6 +319,14 @@ def eod(state, log, weekly=False):
                     lst.append([hd, n, units])
                     del lst[:-60]
             state.mark('tdcc', when=when)
+    # ETF 成分股（投信投顧公會每月前十大、每季明細）與成分股的官方個股資料：17:00 以後那幾輪才做（不拖慢 14:25 的收盤計算）
+    if weekly or now.hour >= 17 or not state['hold'].get('m'):
+        got = step(log, 'sitca_holdings', holdings.update, state, Http(2.3), today)
+        if got and got != 'skip':
+            state.mark('sitca', when=when)
+        sk = step(log, 'stocks', holdings.update_stocks, state, Http(1.5), Http(1.5), today)
+        if sk and sk not in ('skip', 'no-holdings'):
+            state.mark('stocks', when=when)
     # 沙盤用：交易日曆、盤後零股與盤後定價結果、今天的 tape 收尾並封存
     step(log, 'sandtable_cal', tape.update_cal, state, log, http_tw)
     step(log, 'sandtable_after', tape.update_after, state, log, http_tw)
@@ -705,6 +713,11 @@ def compute(state, extra, out_dir, now):
     # 沙盤用：K 線、交易日曆、盤後結果（失敗不影響冷眼）
     try:
         tape.write_outputs(out_dir, state, sorted(series.keys()))
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+    # ETF 透視：成分股與個股資料（失敗不影響其他輸出）
+    try:
+        holdings.write_out(state, out_dir)
     except Exception:  # noqa: BLE001
         traceback.print_exc()
 

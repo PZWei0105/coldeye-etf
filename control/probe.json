@@ -1,14 +1,4 @@
 [
- {"name": "sitca_holdings", "py": "holdings:probe", "gap": 2.3},
- {"name": "sitca_zone_q", "url": "https://www.sitca.org.tw/ROC/SITCA_ETF/etf_statement.aspx", "sleep": 2.5},
- {"name": "sitca_in2629", "url": "https://www.sitca.org.tw/ROC/Industry/IN2629.aspx", "sleep": 2.5},
- {"name": "twse_bwibbu_all", "url": "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL", "sleep": 2.5},
- {"name": "twse_stock_day_all", "url": "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", "sleep": 2.5},
- {"name": "twse_co_basic", "url": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L", "sleep": 2.5},
- {"name": "twse_revenue", "url": "https://openapi.twse.com.tw/v1/opendata/t187ap05_L", "sleep": 2.5},
- {"name": "twse_bwibbu_d", "url": "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d?date=20261022&selectType=ALL&response=json", "sleep": 3},
- {"name": "tpex_close", "url": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes", "sleep": 2.5},
- {"name": "tpex_pe", "url": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis", "sleep": 2.5},
- {"name": "tpex_co_basic", "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O", "sleep": 2.5},
- {"name": "tpex_revenue", "url": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O", "sleep": 2.5}
+ {"name": "holdings_full", "py": "holdings:probe_full", "gap": 2.3},
+ {"name": "tpex_close", "url": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes", "sleep": 2.5}
 ]

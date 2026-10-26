@@ -16,7 +16,7 @@ import datetime as dt
 import html as htmllib
 import re
 
-from .util import num
+from .util import num, write_json
 
 SITCA = 'https://www.sitca.org.tw/ROC'
 ZONE_Q = f'{SITCA}/SITCA_ETF/etf_statement.aspx'
@@ -25,7 +25,7 @@ PAGES = {'m': f'{SITCA}/Industry/IN2629.aspx', 'q': f'{SITCA}/Industry/IN2630.as
 SRC_PAGE = {'m': 'https://www.sitca.org.tw/ROC/Industry/IN2629.aspx', 'q': 'https://www.sitca.org.tw/ROC/Industry/IN2630.aspx'}
 GRID_ID = 'ctl00_ContentPlaceHolder1_GridView1'
 FP = 'ctl00$ContentPlaceHolder1$'
-KEEP = {'m': 3, 'q': 2}          # 每月前十大留 3 期、每季明細留 2 期（算「最近換了哪些」）
+KEEP = {'m': 2, 'q': 2}          # 每月前十大、每季明細各留 2 期（算「最近換了哪些」）
 
 _TAG = re.compile(r'<[^>]+>')
 _ROW = re.compile(r'<tr[^>]*>(.*?)</tr>', re.S | re.I)
@@ -120,7 +120,7 @@ def parse_holdings(page: str):
 
 
 KIND = (('上市', 'tse'), ('上櫃', 'otc'), ('興櫃', 'emg'), ('國外', 'f'), ('海外', 'f'), ('債', 'b'),
-        ('受益憑證', 'fund'), ('基金', 'fund'), ('期貨', 'fut'), ('存託憑證', 'dr'))
+        ('受益憑證', 'fund'), ('基金', 'fund'), ('ETF', 'fund'), ('期貨', 'fut'), ('存託憑證', 'f'))
 
 
 def kind_of(text: str) -> str:
@@ -132,7 +132,7 @@ def kind_of(text: str) -> str:
 
 
 def holding_rows(header, rows):
-    """明細列 → [[代號, 名稱, 種類, 占淨值%, 金額(元)]]，依比例大到小。"""
+    """明細列 → [[代號, 名稱, 種類, 占淨值%]]，依比例大到小。種類：tse 上市、otc 上櫃、f 國外、b 債券、fund 基金、o 其他。"""
     cols = header[1:]
 
     def col(*names):
@@ -160,7 +160,7 @@ def holding_rows(header, rows):
         if code in ('-', '--'):
             code = ''
         kind = kind_of(r[ik] if ik is not None else '')
-        out.append([code, r[iname].strip(), kind, round(pct, 3), num(r[iamt]) if iamt is not None else None])
+        out.append([code, r[iname].strip(), kind, round(pct, 3)])
     out.sort(key=lambda x: -x[3])
     return out
 
@@ -206,7 +206,7 @@ def _post(http, url, form):
 
 
 def by_classes(http, kind: str, ym: str, classes, first_page=None, raw=None):
-    """某一期、好幾個類型代號的明細：{基金名稱: [[代號, 名稱, 種類, %, 金額]]}。
+    """某一期、好幾個類型代號的明細：{基金名稱: [[代號, 名稱, 種類, %]]}。
     要先送「換期間」的 postback（不然伺服器會默默回第一家投信的資料），再用它回來的 VIEWSTATE 查每一類。"""
     url = PAGES[kind]
     page = first_page or _decode(http.get(url, timeout=60))
@@ -301,6 +301,8 @@ def update(state, http, today: dt.date, force=False):
     hold['zone'] = {c: [z['n'], z['cls']] for c, z in latest.items()}
     hold['zone_ym'] = zm[0]
     hold['checked'] = day
+    if got:
+        hold['at'] = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).isoformat(timespec='minutes')
     return got or 'no-new'
 
 
@@ -308,6 +310,197 @@ def update(state, http, today: dt.date, force=False):
 
 TWSE_OPEN = 'https://openapi.twse.com.tw/v1'
 TPEX_OPEN = 'https://www.tpex.org.tw/openapi/v1'
+TPEX_RWD = 'https://www.tpex.org.tw/www/zh-tw'
+
+
+def _roc(d):
+    """'1151022' → 20261022；'11509' → '202609'。"""
+    t = str(d or '').strip()
+    if len(t) == 7 and t.isdigit():
+        return (int(t[:3]) + 1911) * 10000 + int(t[3:])
+    if len(t) == 5 and t.isdigit():
+        return f'{int(t[:3]) + 1911}{t[3:]}'
+    return None
+
+
+def _f(v):
+    x = num(v)
+    return None if x is None else round(x, 4)
+
+
+def domestic_codes(state):
+    """成分股裡出現過的國內股票：{代號: 'tse' 或 'otc'}（最新一期的每月與每季明細）。"""
+    hold = state['hold']
+    out = {}
+    for kind in ('m', 'q'):
+        per = hold.get(kind) or {}
+        for ym in sorted(per, reverse=True)[:1]:
+            for rows in per[ym].values():
+                for r in rows:
+                    if r[2] in ('tse', 'otc') and r[0]:
+                        out[r[0]] = r[2]
+    return out
+
+
+def _tpex_close(http, d_hint):
+    """上櫃收盤：先用 OpenAPI，抓不到改用櫃買的每日收盤行情（和 ETF 用的同一份）。回傳 {代號: (收盤, 漲跌)}、日期。"""
+    try:
+        js = http.json(f'{TPEX_OPEN}/tpex_mainboard_daily_close_quotes', timeout=90)
+        out, day = {}, None
+        for r in js or []:
+            code = str(r.get('SecuritiesCompanyCode') or '').strip()
+            c, ch = _f(r.get('Close')), _f(r.get('Change'))
+            if code and c:
+                out[code] = (c, ch)
+                day = day or _roc(r.get('Date'))
+        if out:
+            return out, day
+    except Exception:  # noqa: BLE001 — 換另一個官方來源
+        pass
+    if not d_hint:
+        return {}, None
+    from .util import tables_of, find_col
+    y, m, dd = d_hint // 10000, d_hint // 100 % 100, d_hint % 100
+    js = http.json(f'{TPEX_RWD}/afterTrading/otc?date={y}%2F{m:02d}%2F{dd:02d}&type=EW&id=&response=json')
+    out = {}
+    for t in tables_of(js):
+        f = t['fields']
+        ic, icl, ich = find_col(f, '代號'), find_col(f, '收盤'), find_col(f, '漲跌')
+        if ic is None or icl is None:
+            continue
+        for row in t['data']:
+            c = _f(row[icl])
+            if c:
+                out[str(row[ic]).strip()] = (c, _f(row[ich]) if ich is not None else None)
+    return out, d_hint if out else None
+
+
+def update_stocks(state, http_tw, http_tp, today: dt.date, force=False):
+    """成分股（國內上市、上櫃）的官方資料：收盤、漲跌、本益比、殖利率、股價淨值比、產業別、最新月營收年增率。
+    證交所、櫃買的 OpenAPI 是「最新一天」的資料；一天檢查一次，存進 state['stocks']。"""
+    st = state['stocks']
+    want = domestic_codes(state)
+    if not want:
+        return 'no-holdings'
+    day = today.strftime('%Y%m%d')
+    if st.get('checked') == day and not force:
+        return 'skip'
+    s = {}
+    # 上市
+    px, d_tw = {}, None
+    for r in http_tw.json(f'{TWSE_OPEN}/exchangeReport/STOCK_DAY_ALL', timeout=90) or []:
+        code = str(r.get('Code') or '').strip()
+        c, ch = _f(r.get('ClosingPrice')), _f(r.get('Change'))
+        if code in want and c:
+            px[code] = (c, ch)
+        d_tw = d_tw or _roc(r.get('Date'))
+    ratio = {}
+    for r in http_tw.json(f'{TWSE_OPEN}/exchangeReport/BWIBBU_ALL', timeout=90) or []:
+        code = str(r.get('Code') or '').strip()
+        if code in want:
+            ratio[code] = (_f(r.get('PEratio')), _f(r.get('DividendYield')), _f(r.get('PBratio')))
+    rev, ym = {}, None
+
+    def take_rev(rows):
+        nonlocal ym
+        for r in rows or []:
+            code = str(r.get('公司代號') or '').strip()
+            if code in want:
+                rev[code] = (str(r.get('產業別') or '').strip(), _f(r.get('營業收入-去年同月增減(%)')),
+                             _f(r.get('累計營業收入-前期比較增減(%)')), str(r.get('公司名稱') or '').strip())
+                ym = ym or _roc(r.get('資料年月'))
+    take_rev(http_tw.json(f'{TWSE_OPEN}/opendata/t187ap05_L', timeout=90))
+    # 上櫃
+    tpx, d_tp = _tpex_close(http_tp, d_tw)
+    for code, v in tpx.items():
+        if code in want:
+            px[code] = v
+    for r in http_tp.json(f'{TPEX_OPEN}/tpex_mainboard_peratio_analysis', timeout=90) or []:
+        code = str(r.get('SecuritiesCompanyCode') or '').strip()
+        if code in want:
+            ratio[code] = (_f(r.get('PriceEarningRatio')), _f(r.get('YieldRatio')), _f(r.get('PriceBookRatio')))
+    try:
+        take_rev(http_tp.json(f'{TPEX_OPEN}/mopsfin_t187ap05_O', timeout=90))
+    except Exception:  # noqa: BLE001 — 月營收少了上櫃的也沒關係
+        pass
+    names = {}
+    for kind in ('m', 'q'):
+        per = state['hold'].get(kind) or {}
+        for ym_ in sorted(per, reverse=True)[:1]:
+            for rows in per[ym_].values():
+                for r in rows:
+                    if r[0] in want:
+                        names.setdefault(r[0], r[1])
+    for code, mkt in want.items():
+        c, ch = px.get(code, (None, None))
+        pct = round(ch / (c - ch) * 100, 2) if c and ch is not None and c - ch else None
+        pe, dy, pb = ratio.get(code, (None, None, None))
+        ind, yoy, cum, _n = rev.get(code, ('', None, None, ''))
+        s[code] = [names.get(code, ''), mkt, ind, c, pct, pe, dy, pb, round(yoy, 2) if yoy is not None else None,
+                   round(cum, 2) if cum is not None else None]
+    st.clear()
+    st.update({'d': d_tw, 'd_otc': d_tp, 'rev': ym, 'checked': day, 's': s})
+    return f'{len(s)} 檔（上市 {sum(1 for v in s.values() if v[1] == "tse")}、收盤 {sum(1 for v in s.values() if v[3])}）'
+
+
+def _months_between(a: str, b: str) -> int:
+    return (int(a[:4]) - int(b[:4])) * 12 + int(a[4:]) - int(b[4:])
+
+
+def best_list(obj):
+    """透視用的清單：每季明細（1% 以上、比較完整）不比每月前十大舊 2 個月以上就用它，不然用每月前十大。"""
+    m, q = obj.get('m'), obj.get('q')
+    if q and (not m or _months_between(m['p'], q['p']) <= 2):
+        return q
+    return m
+
+
+BY_TOP = 15   # 每一檔股票列出持有它最多的 15 檔 ETF
+
+
+def write_out(state, out_dir):
+    """輸出 App 用的檔案：hold/{ETF}.json（每月前十大、每季明細，各含上一期）、hold.json（索引）、stocks.json（成分股資料＋反查）。"""
+    hold = state['hold']
+    M, Q = hold.get('m') or {}, hold.get('q') or {}
+    pm, pq = sorted(M, reverse=True), sorted(Q, reverse=True)
+    if not pm and not pq:
+        return 0
+    zone = hold.get('zone') or {}
+    codes = set()
+    for per in (M, Q):
+        for rows in per.values():
+            codes.update(rows.keys())
+    idx, by, fnames = {}, {}, {}
+    for c in sorted(codes):
+        obj = {'c': c}
+        for key, per, ps in (('m', M, pm), ('q', Q, pq)):
+            if ps and c in per[ps[0]]:
+                obj[key] = {'p': ps[0], 'h': per[ps[0]][c]}
+            if len(ps) > 1 and c in per[ps[1]]:
+                obj['p' + key] = {'p': ps[1], 'h': per[ps[1]][c]}
+        if 'm' not in obj and 'q' not in obj:
+            continue   # 只剩上一期的資料（例如已下市）：不輸出
+        write_json(out_dir / 'hold' / f'{c}.json', obj)
+        b = best_list(obj)
+        cov = round(sum(r[3] for r in b['h']), 2)
+        kinds = {}
+        for r in b['h']:
+            kinds[r[2]] = round(kinds.get(r[2], 0) + r[3], 2)
+        idx[c] = {'p': b['p'], 'k': 'q' if b is obj.get('q') else 'm', 'n': len(b['h']), 'cov': cov, 'mix': kinds,
+                  'top': [[r[0] or r[1], r[3]] for r in b['h'][:3]]}
+        for r in b['h']:
+            if r[2] in ('tse', 'otc', 'f') and r[0]:
+                by.setdefault(r[0], []).append([c, r[3]])
+                if r[2] == 'f':
+                    fnames.setdefault(r[0], r[1])
+    stocks = state['stocks'] or {}
+    nby = {k: len(v) for k, v in by.items()}
+    by = {k: sorted(v, key=lambda x: -x[1])[:BY_TOP] for k, v in by.items()}
+    write_json(out_dir / 'hold.json', {'m': pm[0] if pm else None, 'q': pq[0] if pq else None, 'at': hold.get('at'),
+                                       'zone': hold.get('zone_ym'), 'etf': idx})
+    write_json(out_dir / 'stocks.json', {'d': stocks.get('d'), 'd_otc': stocks.get('d_otc'), 'rev': stocks.get('rev'),
+                                         's': stocks.get('s') or {}, 'f': fnames, 'by': by, 'nby': nby})
+    return len(idx)
 
 
 def probe(http):
@@ -336,3 +529,47 @@ def probe(http):
                 kinds[r[2]] = kinds.get(r[2], 0) + 1
         out[f'{kind}_kinds'] = kinds
     return out
+
+
+def probe_full(http):
+    """開發用：用空的 state 跑一次完整流程（明細＋個股資料＋輸出），回傳大小與樣本。"""
+    import json
+    import pathlib
+    import tempfile
+    import time
+    from .util import Http
+
+    class St(dict):
+        def __getitem__(self, k):
+            return self.setdefault(k, {})
+    st = St()
+    t0 = time.time()
+    today = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).date()
+    got = update(st, http, today, force=True)
+    t1 = time.time()
+    try:
+        stocks = update_stocks(st, Http(1.2), Http(1.5), today, force=True)
+    except Exception as e:  # noqa: BLE001
+        stocks = 'ERR ' + repr(e)[:300]
+    t2 = time.time()
+    out = pathlib.Path(tempfile.mkdtemp())
+    n = write_out(st, out)
+    size = lambda p: (out / p).stat().st_size if (out / p).exists() else None
+    sj = json.loads((out / 'stocks.json').read_text(encoding='utf-8')) if (out / 'stocks.json').exists() else {}
+    hj = json.loads((out / 'hold.json').read_text(encoding='utf-8')) if (out / 'hold.json').exists() else {}
+    files = sorted(x.name for x in (out / 'hold').iterdir()) if (out / 'hold').exists() else []
+    return {
+        'got': got, 'stocks': stocks, 'n': n, 'secs': [round(t1 - t0), round(t2 - t1)],
+        'size': {'hold.json': size('hold.json'), 'stocks.json': size('stocks.json'),
+                 'hold_total': sum((out / 'hold' / f).stat().st_size for f in files)},
+        'files': len(files), 'hold_meta': {k: v for k, v in hj.items() if k != 'etf'},
+        'idx_sample': {c: hj.get('etf', {}).get(c) for c in ('0050', '0056', '00878', '00662', '00679B', '00981A', '00919', '00631L')},
+        'h0050': json.loads((out / 'hold' / '0050.json').read_text(encoding='utf-8')) if (out / 'hold' / '0050.json').exists() else None,
+        's_meta': {k: v for k, v in sj.items() if k not in ('s', 'f', 'by', 'nby')},
+        's_sample': {c: sj.get('s', {}).get(c) for c in ('2330', '2454', '2317', '2891', '6488', '3037', '5274', '1303')},
+        's_n': len(sj.get('s', {})), 's_missing_px': [c for c, v in sj.get('s', {}).items() if not v[3]][:40],
+        's_missing_ind': [c for c, v in sj.get('s', {}).items() if not v[2]][:40],
+        'by_2330': sj.get('by', {}).get('2330'), 'nby_top': sorted(sj.get('nby', {}).items(), key=lambda x: -x[1])[:12],
+        'f_sample': list(sj.get('f', {}).items())[:8],
+        'state_size': len(json.dumps(dict(st), ensure_ascii=False)),
+    }

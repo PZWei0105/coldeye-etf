@@ -5,6 +5,7 @@
 - 證交所基本市況報導網站（MIS）：ETF 盤中預估淨值與折溢價、即時行情
 - 證券櫃檯買賣中心（櫃買）：上櫃 ETF（多為債券 ETF）的行情、法人、融資融券、除權息、注意／處置
 - 臺灣集中保管結算所（集保）：集保戶股權分散表（受益人數）
+- 中華民國證券投資信託暨顧問商業同業公會（投信投顧公會，金管會監理）：各投信申報的 ETF 成分股（基金投資明細）
 - 美國財政部：公債殖利率
 - 中央社、金管會、中央銀行：新聞與新聞稿
 """
@@ -38,6 +39,8 @@ SOURCE_INFO = {
     'twse_risk': ('證交所 注意／處置股票', 'https://www.twse.com.tw/zh/announcement/punish.html'),
     'tpex_risk': ('櫃買中心 注意／處置股票', 'https://www.tpex.org.tw/zh-tw/announce/market/disposal.html'),
     'tdcc': ('集保結算所 集保戶股權分散表', 'https://www.tdcc.com.tw/portal/zh/smWeb/qryStock'),
+    'sitca': ('投信投顧公會 基金投資明細（ETF 成分股）', 'https://www.sitca.org.tw/ROC/Industry/IN2629.aspx'),
+    'stocks': ('證交所、櫃買中心 個股收盤、本益比、殖利率、月營收', 'https://openapi.twse.com.tw/'),
     'ust': ('美國財政部 公債殖利率', 'https://home.treasury.gov/resource-center/data-chart-center/interest-rates/TextView?type=daily_treasury_yield_curve'),
     'twse_news': ('證交所 最新消息', 'https://www.twse.com.tw/zh/about/news/news/list.html'),
     'cna': ('中央社 財經新聞', 'https://www.cna.com.tw/list/aie.aspx'),
