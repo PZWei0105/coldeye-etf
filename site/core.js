@@ -171,7 +171,8 @@ export const isJournalKey = (k) => k === 'coldeye.journal';
 
 // ------------------------------------------------------------------ 全域狀態與事件
 export const S = {
-  summary: null, live: null, offline: false, news: null, track: null, divs: null, detail: {}, hist: {}, histMeta: {}, breadth: null, pxSeen: new Map(),
+  summary: null, live: null, offline: false, news: null, newsAt: 0, track: null, divs: null, detail: {}, hist: {}, histMeta: {}, breadth: null, pxSeen: new Map(),
+  verOffline: false, summaryNet: false, stockq: null, stockqAt: 0,
   tab: store.get('tab', 'home'), all: { q: '', cat: '*', sig: '*', sort: 'score' }, newsTab: 'official',
   range: 120, rows: new Map(), deferredInstall: null, P: null, adv: new Map(), openCode: null,
   firstPaint: true, changes: [],
@@ -230,6 +231,32 @@ export function sharesOf(sh) {
 export const dirCls = (x) => (isNum(x) ? (x > 0 ? 'up' : x < 0 ? 'down' : 'flat') : 'flat');
 export const arrow = (x) => (isNum(x) && Math.abs(x) > 1e-12 ? (x > 0 ? '▲' : '▼') : '');
 export const today = () => PF.twToday();
+/** 漲跌的標籤：報價是今天的才叫「今日」；休市、週末、開盤前看到的是上一個交易日的漲跌，就寫那一天（例如 10/22） */
+/**
+ * 報價的時間說法（全 App 一致）：13:30 以前的盤中價寫「盤中 HH:MM」；13:30 那一筆（收盤）寫「今日收盤」（不是今天就寫那天）；
+ * 不是盤中價就寫「M/D 收盤」（d 沒給就用報價的日期）。
+ */
+export function quoteWhen(q, d) {
+  const t = q ? String(q.time || '').slice(0, 5) : '';
+  if (q && q.live) {
+    if (t && t < '13:30') return `盤中 ${t}`;
+    if (t) return q.date && q.date !== today() ? `${fmt.d(q.date)} 收盤` : '今日收盤';
+    return '盤中';
+  }
+  return `${fmt.d(d || (q && q.date))} 收盤`;
+}
+/** HTML → 純文字（帶去問 Claude、語音用）：拿掉標籤、把 &amp; 這類字元換回來（不然「S&P500」會變成「S&amp;P500」） */
+export function plainText(h, br = '；') {
+  return String(h ?? '').replace(/<br\s*\/?>/g, br).replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ').trim();
+}
+export function dayTag(dates) {
+  const list = (Array.isArray(dates) ? dates : [dates]).filter((d) => isNum(d) && d > 0);
+  if (!list.length) return '今日';
+  const d = Math.max(...list);
+  return d === today() ? '今日' : fmt.d(d);
+}
 export function twParts() {
   const d = new Date(Date.now() + 8 * 3600e3);
   return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, day: d.getUTCDate(), wd: d.getUTCDay(), h: d.getUTCHours(), min: d.getUTCMinutes() };
@@ -286,16 +313,68 @@ export const ICON = {
 };
 
 // ------------------------------------------------------------------ 資料
-export async function getJSON(path) {
-  const t = Math.floor(Date.now() / 60000);
-  const r = await fetch(`data/${path}?t=${t}`, { cache: 'no-store' });
-  if (!r.ok) throw new Error(`${path} ${r.status}`);
-  // service worker 在連不上網路時會改給上次存下的資料，並加上這個標記
-  if (path === 'summary.json' || path === 'live.json') S.offline = r.headers.get('X-ColdEye-Offline') === '1';
-  return r.json();
+/**
+ * 抓 data/ 底下的檔案。網址後面帶一個鍵，讓網站的快取（CDN）一定給新的：
+ * - o.v：版本檔裡那一份的時間戳（知道要的是哪一版時用，保證拿到那一版）
+ * - o.batch：收盤資料那一批（summary 的 generated）——單檔分析、歷史、戰績、配息都是那一批算出來的
+ * - 其他：每分鐘換一次
+ * 30 秒沒回應就放棄（不然同步會卡住，下一分鐘再試）。
+ */
+const FETCH_MS = 30000;
+function dataUrl(path, o = {}) {
+  const k = o.v ? `v=${encodeURIComponent(o.v)}`
+    : o.batch && S.summary && S.summary.generated && S.summaryNet ? `b=${encodeURIComponent(S.summary.generated)}`
+      : `t=${Math.floor(Date.now() / 60000)}`;
+  return `data/${path}?${k}`;
 }
-export async function loadCore() {
-  const [summary, live] = await Promise.all([getJSON('summary.json'), getJSON('live.json').catch(() => null)]);
+async function fetchData(path, o = {}, read = (r) => r.json()) {
+  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), FETCH_MS) : null;
+  try {
+    const r = await fetch(dataUrl(path, o), { cache: 'no-store', ...(ctl ? { signal: ctl.signal } : {}) });
+    return await read(r);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+export async function getJSON(path, o = {}) {
+  return fetchData(path, o, async (r) => {
+    if (!r.ok) throw new Error(`${path} ${r.status}`);
+    // service worker 在連不上網路時會改給上次存下的資料，並加上這個標記
+    const off = r.headers.get('X-ColdEye-Offline') === '1';
+    if (path === 'summary.json' || path === 'live.json') S.offline = off;
+    if (path === 'version.json') S.verOffline = off;
+    const js = await r.json();
+    if (path === 'summary.json') S.summaryNet = !off;
+    return js;
+  });
+}
+/** 新聞：超過 maxAge（預設 5 分鐘）就重抓；同時好幾個地方要，只抓一次。抓不到就用手上的。 */
+export const NEWS_MAX_AGE = 5 * 60000;
+let newsP = null;
+export function ensureNews(maxAge = NEWS_MAX_AGE) {
+  if (S.news && Date.now() - S.newsAt < maxAge) return Promise.resolve(S.news);
+  if (!newsP) {
+    newsP = getJSON('news.json').then((n) => { S.news = n; S.newsAt = Date.now(); return n; })
+      .catch(() => S.news).finally(() => { newsP = null; });
+  }
+  return newsP;
+}
+/**
+ * 收盤資料換了一批（summary 的 generated 變了）：單檔分析、歷史檔、成分股的快取全部作廢，下次要用時重抓，
+ * 不會一頁用新的、一頁用舊的。用到它們的模組（例如 xray.js）聽 'batch' 事件自己清。
+ */
+let batchGen = 0;
+export function invalidateBatch() {
+  batchGen += 1;
+  S.detail = {};
+  S.hist = {};
+  S.histMeta = {};
+  bus.emit('batch');
+}
+/** o.v／o.lv：版本檔裡 summary、live 的時間戳（資料同步知道要哪一版時帶上） */
+export async function loadCore(o = {}) {
+  const [summary, live] = await Promise.all([getJSON('summary.json', { v: o.v }), getJSON('live.json', { v: o.lv }).catch(() => null)]);
   S.summary = summary;
   if (live) S.live = live;   // 盤中資料這次沒抓到，就保留上一份，不要退回昨天的收盤價
   S.rows = new Map(summary.etfs.map((r) => [r.c, r]));
@@ -315,12 +394,12 @@ export function useCache() {
 }
 export async function ensureTrack() {
   if (S.track) return S.track;
-  try { S.track = await getJSON('track.json'); } catch { S.track = null; }
+  try { S.track = await getJSON('track.json', { batch: true }); } catch { S.track = null; }
   return S.track;
 }
 export async function ensureDivs(force = false) {
   if (S.divs && !force) return S.divs;
-  try { S.divs = await getJSON('divs.json'); store.set('cache.divs', S.divs); } catch { /* 用快取 */ }
+  try { S.divs = await getJSON('divs.json', { batch: true }); store.set('cache.divs', S.divs); } catch { /* 用快取 */ }
   return S.divs;
 }
 /**
@@ -333,19 +412,27 @@ export async function ensureHist(code, o = {}) {
   if (S.hist[code] && !(o.fresh && (!m || m.offline || m.asof !== cur))) return S.hist[code];
   // 同一批資料已經確定沒有這個檔（404，例如上市未滿 70 個交易日）：不用每次都再問一次
   if (m && m.status === 404 && m.asof === cur) return null;
+  const g = batchGen;
+  let res;
   try {
-    const r = await fetch(`data/hist/${code}.json?t=${Math.floor(Date.now() / 60000)}`, { cache: 'no-store' });
-    if (!r.ok) { S.histMeta[code] = { asof: cur, status: r.status }; return o.fresh ? null : S.hist[code] || null; }
-    const h = await r.json();
-    S.hist[code] = h;
-    S.histMeta[code] = { asof: cur, status: r.status, offline: r.headers.get('X-ColdEye-Offline') === '1' };
+    res = await fetchData(`hist/${code}.json`, { batch: true }, async (r) => (r.ok
+      ? { h: await r.json(), status: r.status, offline: r.headers.get('X-ColdEye-Offline') === '1' }
+      : { h: null, status: r.status }));
   } catch { return o.fresh ? null : S.hist[code] || null; }
-  return o.fresh && S.histMeta[code].offline ? null : S.hist[code];
+  // 換批（invalidateBatch）之前就發出去、之後才回來的：不寫進快取（不然新的一批又混進舊的歷史）
+  if (g !== batchGen) return o.fresh ? null : res.h;
+  if (!res.h) { S.histMeta[code] = { asof: cur, status: res.status }; return o.fresh ? null : S.hist[code] || null; }
+  S.hist[code] = res.h;
+  S.histMeta[code] = { asof: cur, status: res.status, offline: res.offline };
+  return o.fresh && res.offline ? null : res.h;
 }
 export async function ensureDetail(code) {
   if (S.detail[code]) return S.detail[code];
-  try { S.detail[code] = await getJSON(`etf/${code}.json`); } catch { return null; }
-  return S.detail[code];
+  const g = batchGen;
+  let d;
+  try { d = await getJSON(`etf/${code}.json`, { batch: true }); } catch { return null; }
+  if (g === batchGen) S.detail[code] = d;
+  return d;
 }
 
 export function liveOf(code) {
@@ -500,10 +587,14 @@ export function buzz(kind = 'ok') {
 export function taiexNow() {
   const m = S.summary && S.summary.market;
   if (!m) return null;
-  const tx = S.live && S.live.taiex && S.live.open && S.live.date === today() && isNum(S.live.taiex.z) ? S.live.taiex : null;
+  // 證交所即時資料是今天的、而且比收盤資料新：用它（收盤後到完整計算跑完之前，也是今天的收盤，和 ETF 價格一致）
+  const L = S.live;
+  const tx = L && L.taiex && L.date === today() && (!m.d || L.date > m.d) && isNum(L.taiex.z) && L.taiex.z > 0 && isNum(L.taiex.y) && L.taiex.y > 0 ? L.taiex : null;
+  const t = tx ? String(tx.t || '').slice(0, 5) : '';
+  const done = !!tx && (!L.open || t >= '13:30');
   return {
     px: tx ? tx.z : m.close, ch: tx ? tx.z - tx.y : m.chg, pc: tx ? (tx.z / tx.y - 1) * 100 : m.pct,
-    when: tx ? `盤中 ${String(tx.t || '').slice(0, 5)}` : `${fmt.d(m.d)} 收盤`, ma60: m.ma60, insti: m.insti, spark: m.spark, live: !!tx,
+    when: tx ? (done ? '今日收盤' : `盤中 ${t}`) : `${fmt.d(m.d)} 收盤`, ma60: m.ma60, insti: m.insti, spark: m.spark, live: !!tx && !done, d: tx ? L.date : m.d,
   };
 }
 

@@ -119,8 +119,9 @@ def parse_holdings(page: str):
     return header, funds
 
 
-KIND = (('上市', 'tse'), ('上櫃', 'otc'), ('興櫃', 'emg'), ('國外', 'f'), ('海外', 'f'), ('債', 'b'),
-        ('受益憑證', 'fund'), ('基金', 'fund'), ('ETF', 'fund'), ('期貨', 'fut'), ('存託憑證', 'f'))
+# 順序有意義：「國外掛牌交易之ETF」是基金（不是一家公司），要在「國外」之前先認出 ETF
+KIND = (('上市', 'tse'), ('上櫃', 'otc'), ('興櫃', 'emg'), ('ETF', 'fund'), ('國外', 'f'), ('海外', 'f'), ('債', 'b'),
+        ('受益憑證', 'fund'), ('基金', 'fund'), ('期貨', 'fut'), ('存託憑證', 'f'))
 
 
 def kind_of(text: str) -> str:
@@ -326,8 +327,10 @@ def update(state, http, today: dt.date, force=False):
                 got.append(f'{kind}{ym}:{len(rows)}/{n_funds}' + (f'（合併後 {len(merged)}）' if old else ''))
             store[ym] = merged
             seen.setdefault(key, day)
+        # 留存著的最新 KEEP 期（新的一期還沒收、或不完整時，上一期不會被擠掉，「和上一期比」才比得出來）
+        keep = sorted((p for p in store if p in months), reverse=True)[:KEEP[kind]]
         for ym in list(store):
-            if ym not in want:
+            if ym not in keep:
                 del store[ym]
     for key in list(seen):
         if key[1:] not in (hold.get(key[0]) or {}):
@@ -408,16 +411,17 @@ def _chg_txt(v):
 
 
 def domestic_codes(state):
-    """成分股裡出現過的國內股票：{代號: 'tse' 或 'otc'}（每月與每季明細各自最新的一期）。"""
+    """成分股裡出現過的國內股票：{代號: 'tse' 或 'otc'}。每月、每季明細存著的每一期都算
+    （App 會顯示每檔 ETF 自己最新的一期、也會列出「和上一期比退出了誰」，點下去都要有資料）。"""
     hold = state['hold']
     out = {}
     for kind in ('m', 'q'):
         per = hold.get(kind) or {}
-        for ym in sorted(per, reverse=True)[:1]:
+        for ym in sorted(per, reverse=True):
             for rows in per[ym].values():
                 for r in rows:
                     if r[2] in ('tse', 'otc') and r[0]:
-                        out[r[0]] = r[2]
+                        out.setdefault(r[0], r[2])
     return out
 
 
@@ -672,14 +676,14 @@ def update_stocks(state, http_tw, http_tp, today: dt.date, target=None, force=Fa
     names = {}
     for kind in ('m', 'q'):
         per = state['hold'].get(kind) or {}
-        for ym_ in sorted(per, reverse=True)[:1]:
+        for ym_ in sorted(per, reverse=True):
             for rows in per[ym_].values():
                 for r in rows:
                     if r[0] in want:
                         names.setdefault(r[0], r[1])
     s = {}
     for code, mkt in want.items():
-        rec = old.get(code) or [None] * NF
+        rec = list(old.get(code) or [None] * NF)   # 複製一份：下面要拿新舊比較有沒有變
         rec[0], rec[1] = names.get(code) or rec[0] or '', mkt
         if code in px:
             (c, ch), d = px[code]
@@ -701,9 +705,11 @@ def update_stocks(state, http_tw, http_tp, today: dt.date, target=None, force=Fa
     if not px and not pe and not rev and errs:
         raise RuntimeError('; '.join(errs)[:400])
     rev_checked = day if rev_ok else st.get('rev_checked')
+    # 'at' 只在資料真的變了才換（App 看到 at 變了會重抓成分股資料；沒變就不要讓它白抓）
+    same = s == old and dd == (st.get('dd') or {}) and st.get('at')
+    at = st.get('at') if same else dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).isoformat(timespec='minutes')
     st.clear()
-    st.update({'s': s, 'dd': dd, 'checked': day, 'rev_checked': rev_checked,
-               'at': dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).isoformat(timespec='minutes')})
+    st.update({'s': s, 'dd': dd, 'checked': day, 'rev_checked': rev_checked, 'at': at})
     return (f'{len(s)} 檔：收盤 上市 {dd.get("tse")}、上櫃 {dd.get("otc")}；本益比 {dd.get("pe_tse")}／{dd.get("pe_otc")}'
             f'{"；" + "；".join(errs) if errs else ""}')[:300]
 

@@ -47,6 +47,24 @@ t('移動平均成本與已實現損益', () => {
   assert.ok(Math.abs(h.cost - (46064 - avg * 600)) < 1e-6);
 });
 
+t('今日損益：某一檔在最新交易日沒有新價格（沒成交），那天的漲跌算 0，不把前一天的漲跌算進今天', () => {
+  const rows = new Map([['A', { c: 'A', k: 'broad', n: 'A' }], ['B', { c: 'B', k: 'div', n: 'B' }]]);
+  const lots = [
+    { c: 'A', side: 'buy', d: 20260101, sh: 1000, px: 10, fee: 20 },
+    { c: 'B', side: 'buy', d: 20260101, sh: 1000, px: 20, fee: 20 },
+    { c: 'B', side: 'buy', d: 20261027, sh: 100, px: 19.5, fee: 20 },   // 今天買的那一筆：用買進價和現價的差
+  ];
+  const qs = { A: { px: 11, ch: 0.5, date: 20261027 }, B: { px: 19, ch: -1, date: 20261026 } };   // B 今天還沒成交
+  const P = pf.buildPortfolio({ cash: 0, lots }, rows, (r) => qs[r.c], {}, pf.DEFAULT_FEE, 20261027);
+  const A = P.holdings.find((x) => x.code === 'A'), B = P.holdings.find((x) => x.code === 'B');
+  assert.ok(Math.abs(A.day - 500) < 1e-9, A.day);
+  assert.ok(Math.abs(B.day - (19 - 19.5) * 100) < 1e-9, B.day);       // 不是 1000 × (−1)
+  assert.ok(Math.abs(P.totals.day - (500 - 50)) < 1e-9, P.totals.day);
+  // 全部都是同一天的報價（例如開盤前）：照常是那一天的漲跌
+  const P2 = pf.buildPortfolio({ cash: 0, lots: lots.slice(0, 2) }, rows, (r) => ({ ...qs[r.c], date: 20261026 }), {}, pf.DEFAULT_FEE, 20261027);
+  assert.ok(Math.abs(P2.totals.day - (500 - 1000)) < 1e-9, P2.totals.day);
+});
+
 t('賣超過持股會被擋下並提醒', () => {
   const h = pf.holdingFromLots([
     { c: 'X', side: 'buy', d: 20250101, sh: 100, px: 10, fee: 1 },

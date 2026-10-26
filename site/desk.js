@@ -5,11 +5,12 @@
 import {
   $, $$, esc, isNum, clamp, S, PF, settings, saveSettings, book, isPaper, store, journal, saveJournal, alerts, saveAlerts, newId,
   fmt, money, sharesOf, dirCls, catName, ICON, quote, ensureHist, ensureDetail, ensureTrack, heldOf, adviceFor, today, twParts,
-  toast, bus, taiexNow,
+  toast, bus, taiexNow, quoteWhen,
 } from './core.js';
 import { openModal, closeModal } from './forms.js';
 import * as A from './aide.js';
 import * as FX from './fx.js';
+import { coachStripHTML, bindCoachStrip } from './coach.js';
 import { benchValue } from './calc.js';
 
 const STI = { bull: ICON.up, bear: ICON.down, wait: ICON.flat, swap: ICON.swap };
@@ -80,8 +81,9 @@ const bookName = () => (isPaper() ? '模擬倉' : '真實部位');
 function whenText() {
   const { y, m, day, h, min } = twParts();
   const L = S.live;
-  const live = L && L.open && L.date === today();
-  return `${y}/${pad(m)}/${pad(day)} ${pad(h)}:${pad(min)}；價格是${live ? `盤中 ${hhmm(L.at)}` : `${fmt.d(S.summary.asof)} 收盤`}`;
+  // 價格和畫面一樣：證交所即時資料是今天的、比收盤資料新就用它（盤中，或收盤後完整計算跑完之前的今天收盤）
+  const live = L && L.date === today() && (!S.summary.asof || L.date > S.summary.asof);
+  return `${y}/${pad(m)}/${pad(day)} ${pad(h)}:${pad(min)}；價格是${live ? (L.open && hhmm(L.at) < '13:30' ? `盤中 ${hhmm(L.at)}` : `今日收盤（${hhmm(L.at)} 的資料）`) : `${fmt.d(S.summary.asof)} 收盤`}`;
 }
 
 // ------------------------------------------------------------------ 決策日記：讀寫
@@ -315,6 +317,7 @@ export function renderAide(v) {
   v.innerHTML = `<div class="aide">
     <div class="col a1">
       ${heroHTML()}
+      ${coachStripHTML()}
       ${pendingHTML(p)}
       ${auditHTML(audit)}
       ${weekHTML()}
@@ -447,6 +450,7 @@ function statsHTML() {
   </section>`;
 }
 function bindAide(v) {
+  bindCoachStrip(v);
   $('#a-idea', v).addEventListener('click', () => openIdea({}));
   $('#a-ask', v).addEventListener('click', () => openAsk('market'));
   $$('[data-quick]', v).forEach((b) => b.addEventListener('click', () => openIdea({ stance: b.dataset.quick })));
@@ -760,7 +764,7 @@ export function openEntry(id) {
       ${outcome}
       ${coolBox}
       <div class="kv en-kv">
-        <div><div class="k">當時價格</div><div class="v num">${fmt.px(e.snap.px)}${e.snap2 ? ` / ${fmt.px(e.snap2.px)}` : ''}<small> ${e.snap.live ? `盤中 ${esc(String(e.snap.t || '').slice(0, 5))}` : fmt.d(e.snap.d)}</small></div></div>
+        <div><div class="k">當時價格</div><div class="v num">${fmt.px(e.snap.px)}${e.snap2 ? ` / ${fmt.px(e.snap2.px)}` : ''}<small> ${e.snap.live ? esc(quoteWhen({ live: true, time: e.snap.t, date: e.snap.d }, e.snap.d)) : fmt.d(e.snap.d)}</small></div></div>
         <div><div class="k" data-term="st">當時冷眼規則</div><div class="v">${e.snap.st == null ? '<small>資料不足</small>' : `${['偏空', '中性', '偏多'][e.snap.st + 1]}${e.snap.ps ? `／${({ add: '可加碼', wait: '漲多分批', hold: '續抱', caution: '先不加碼', trim: '減碼' })[e.snap.ps]}` : ''}`}</div></div>
       </div>
       ${ck ? `<details class="en-ck"><summary>${ICON.aide}副官當時說：${esc(ck.verdict)}<small class="num">✓ ${ck.ok}　⚠ ${ck.warn}${ck.stop ? `　⛔ ${ck.stop}` : ''}</small></summary>${checksListHTML(ck.items || [])}</details>` : ''}
@@ -870,10 +874,10 @@ export function openAsk(kind, o = {}) {
   let det2 = kind === 'idea' && e && e.c2 ? S.detail[e.c2] || null : null;
   // 打包裡可能出現金額或股數（持股、換過去那檔的持股、副官檢查算的成本或最多買多少）時，才顯示「附上金額」開關
   const amtIn = (it) => it.tp || /約 [\d,]+ 元|\d+ 張|\d+ 股/.test(it.t || '');
-  const hasHold = kind === 'pf' || ((kind === 'etf' || kind === 'idea') && !!code
+  const hasHold = kind === 'pf' || (kind === 'coach' && !!(S.P && (S.P.holdings.length || S.P.totals.cash > 0 || S.P.totals.T > 0))) || ((kind === 'etf' || kind === 'idea') && !!code
     && (!!holdInfo(code) || !!(e && e.c2 && holdInfo(e.c2)) || !!(e && e.checks && (e.checks.items || []).some(amtIn))));
-  const titles = { idea: '帶這個想法去問 Claude', etf: '帶這檔去問 Claude', pf: '帶我的配置去問 Claude', market: '帶今天的市場去問 Claude', review: '帶這筆決定去復盤', week: '帶這週去問 Claude', duel: '帶這場對決去問 Claude' };
-  const ph = { idea: '例如：我這樣想合理嗎？有什麼沒想到的？', etf: '例如：現在適合開始定期定額嗎？', pf: '例如：我的配置會不會太集中？', market: '例如：今天大跌，我需要做什麼嗎？', review: '例如：這次是運氣還是判斷？', week: '例如：我這週有沒有太衝動？', duel: '例如：我想存退休金，哪一檔比較適合我？' };
+  const titles = { idea: '帶這個想法去問 Claude', etf: '帶這檔去問 Claude', pf: '帶我的配置去問 Claude', market: '帶今天的市場去問 Claude', review: '帶這筆決定去復盤', week: '帶這週去問 Claude', duel: '帶這場對決去問 Claude', coach: '帶這個狀況去問 Claude' };
+  const ph = { idea: '例如：我這樣想合理嗎？有什麼沒想到的？', etf: '例如：現在適合開始定期定額嗎？', pf: '例如：我的配置會不會太集中？', market: '例如：今天大跌，我需要做什麼嗎？', review: '例如：這次是運氣還是判斷？', week: '例如：我這週有沒有太衝動？', duel: '例如：我想存退休金，哪一檔比較適合我？', coach: '例如：我現在需要做任何事嗎？' };
   const st = { q: o.question || '', amt: !!settings.askAmt, short: !!settings.askShort };
   const build = () => {
     const P = S.P;
@@ -932,6 +936,10 @@ export function openAsk(kind, o = {}) {
     if (kind === 'duel') {
       const rows = (o.codes || []).map((c) => S.rows.get(c)).filter(Boolean).map((row) => ({ row, q: quote(row) }));
       return A.packDuel({ short: st.short, when: whenText(), rows, market: marketNow(), question: st.q.trim() });
+    }
+    if (kind === 'coach' && o.coach) {
+      const c = o.coach(st.amt);   // 關掉「附上金額」時，教練用隱藏金額的方式重算一次
+      return A.packCoach({ short: st.short, when: whenText(), title: c.title, subject: c.subject, lines: c.lines, market: marketNow(), question: st.q.trim() });
     }
     return '';
   };

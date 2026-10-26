@@ -682,6 +682,7 @@ const ASKS = {
   review: ['請陪我復盤這一筆決定：', '① 結果好不代表決策好，結果差也不代表決策差。請分開評估「當時的理由合不合理」和「結果」。', '② 當時有沒有應該注意卻沒注意的訊號？', '③ 這次是判斷還是運氣？用「同類 ETF 任何一天」的基準幫我看。', '④ 下次遇到類似的情況，我可以用什麼固定規則提醒自己？'],
   duel: ['不要直接叫我選哪一檔。請幫我比較這幾檔 ETF：', '① 它們本質上的差別（追蹤的東西、配息方式、風險）。', '② 各自適合什麼樣的人、什麼樣的目標。', '③ 過去一年的數字裡，哪些是運氣、哪些是本質？', '④ 問我 1～3 個問題，幫我想清楚哪個比較符合我的需要。'],
   week: ['請陪我做這週的復盤：', '① 這週的決定裡，哪些理由站得住、哪些偏情緒？', '② 已經對答案的決定，是判斷還是運氣？用基準幫我看。', '③ 下週我需要注意什麼（除息、訊號變化、冷靜期）？', '④ 給我一個下週可以練習的小紀律。'],
+  coach: ['不要直接叫我買或賣。冷眼的「判斷教練」剛帶我看完下面這個狀況，請幫我：', '① 用白話說明這幾步的數字代表什麼，哪一步最關鍵。', '② 這種狀況下散戶最常犯的錯是什麼？我有沒有正在犯。', '③ 還有什麼該去官方網站查的？告訴我去哪裡查。', '④ 問我 1～3 個問題，幫我想清楚要不要做任何事。'],
 };
 const CONCLUDE = ['最後，用下面的格式總結我們討論後「我自己的決定」（我會貼回冷眼的決策日記，20 個交易日後自動對答案）：', '【冷眼結論】', '立場：想買／加碼、想賣／減碼、先觀望、想換股（四選一）', '信心：1～5', '理由：', '風險：', '復盤條件：（具體的價位或事件，例如：收盤跌破 105.2 就重新評估）'];
 
@@ -689,7 +690,7 @@ const CONCLUDE = ['最後，用下面的格式總結我們討論後「我自己�
 export function askHeader(kind, short = false) {
   const asks = ASKS[kind] || ASKS.etf;
   const conclude = kind === 'idea' || kind === 'etf' || kind === 'duel';
-  if (short) return `【冷眼參謀・${{ idea: '檢查我的想法', etf: '單檔討論', pf: '配置健檢', market: '今日市場', review: '決策復盤', duel: 'ETF 比較', week: '每週復盤' }[kind] || '討論'}】照專案指示回答。${conclude ? '最後請給【冷眼結論】。' : ''}`;
+  if (short) return `【冷眼參謀・${{ idea: '檢查我的想法', etf: '單檔討論', pf: '配置健檢', market: '今日市場', review: '決策復盤', duel: 'ETF 比較', week: '每週復盤', coach: '判斷教練' }[kind] || '討論'}】照專案指示回答。${conclude ? '最後請給【冷眼結論】。' : ''}`;
   const lines = ['【冷眼參謀】你是我的投資討論夥伴，請遵守：'];
   RULES_BASE.forEach((r, i) => lines.push(`${i + 1}. ${r}`));
   lines.push(`${RULES_BASE.length + 1}. ${asks[0]}`);
@@ -712,7 +713,8 @@ const SEP = (t) => `━━ ${t} ━━`;
 function etfLines(r, q, det, stats, today) {
   const L = [];
   L.push(`ETF：${r.n}（${r.c}）｜${catN(r.k)}｜${r.m === 'otc' ? '上櫃' : '上市'}`);
-  L.push(`價格：${pxS(q.px)}（${q.live ? `盤中 ${String(q.time || '').slice(0, 5)}` : `${md(q.date)} 收盤`}，今日 ${pcS(q.pc)}）${isNum(q.prem) ? `｜相對淨值${q.prem >= 0 ? '溢價' : '折價'} ${Math.abs(q.prem).toFixed(2)}%（警戒 ${premBand(r)[0]}%）` : ''}`);
+  const qt = String(q.time || '').slice(0, 5);
+  L.push(`價格：${pxS(q.px)}（${q.live && qt && qt < '13:30' ? `盤中 ${qt}` : `${md(q.date)} 收盤`}，漲跌 ${pcS(q.pc)}）${isNum(q.prem) ? `｜相對淨值${q.prem >= 0 ? '溢價' : '折價'} ${Math.abs(q.prem).toFixed(2)}%（警戒 ${premBand(r)[0]}%）` : ''}`);
   const perf = [];
   if (isNum(r.r1y)) perf.push(`含息報酬 ${pctS(r.r1y)}`);
   if (isNum(r.vol)) perf.push(`年化波動 ${pctU(r.vol, 1)}`);
@@ -847,6 +849,16 @@ export function packDuel(p) {
   for (const { row: r, q } of p.rows) {
     L.push(`・${r.n}（${r.c}）｜${catN(r.k)}｜現價 ${pxS(q.px)}｜近一年含息 ${pctS(r.r1y)}｜年化波動 ${pctU(r.vol, 1)}｜最大回檔 ${isNum(r.mdd) ? `−${pctU(r.mdd, 1)}` : '—'}｜殖利率 ${isNum(r.y) ? r.y.toFixed(2) + '%' : '—'}｜規模 ${bigS(r.aum)}元｜受益人 ${ntS(r.hd)} 人｜規則 ${r.st == null ? '資料不足' : `${ST_T[String(r.st)]}／${PS_T[r.ps] || '—'}`}｜${isNum(q.prem) ? `${q.prem >= 0 ? '溢價' : '折價'} ${Math.abs(q.prem).toFixed(2)}%` : ''}`);
   }
+  L.push(...marketLines(p.market));
+  if (p.question) L.push('', SEP('我想問'), p.question);
+  return L.join('\n');
+}
+/** 判斷教練看完的狀況。p：{ when, title, subject, lines:[文字], market, question, short } */
+export function packCoach(p) {
+  const L = [askHeader('coach', p.short), ''];
+  L.push(SEP(`冷眼判斷教練：${p.title}（${p.when}）`));
+  if (p.subject) L.push(`狀況：${p.subject}`);
+  L.push(...(p.lines || []));
   L.push(...marketLines(p.market));
   if (p.question) L.push('', SEP('我想問'), p.question);
   return L.join('\n');

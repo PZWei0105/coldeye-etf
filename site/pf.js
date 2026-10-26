@@ -282,6 +282,11 @@ export function buildPortfolio(pf, rows, quoteOf, divsData, cfg, today) {
   let realizedAll = 0;
   let divAll = 0;
   let undatedAll = 0;
+  const quotes = new Map();
+  for (const code of byCode.keys()) { const row = rows.get(code) || null; quotes.set(code, row ? quoteOf(row) : null); }
+  // 最新的交易日（各檔報價日期裡最新的）。某一檔在那天沒有新的成交價（冷門、還沒成交），它那天的漲跌是 0：
+  // 不能把它前一個交易日的漲跌算進「今日損益」（不然一部分是今天、一部分是昨天）
+  const mkt = Math.max(0, ...[...quotes.values()].map((q) => (q && q.date) || 0));
   for (const [code, lots] of byCode) {
     const row = rows.get(code) || null;
     const dv = (divsData && divsData[code]) || { d: [], s: [] };
@@ -289,7 +294,8 @@ export function buildPortfolio(pf, rows, quoteOf, divsData, cfg, today) {
     const h = holdingFromLots(lots, splits);
     const cat = row ? row.k : null;
     const tcat = taxCat(row);
-    const q = row ? quoteOf(row) : null;
+    const q = quotes.get(code);
+    const stale = !!(q && q.date && mkt && q.date < mkt);
     // 配息只算到「畫面上價格的日期」為止：除息日開盤前（價格還是昨收）、或除息後還沒有新成交的冷門 ETF，
     // 價格裡還含著那次配息，這時候先不算，不然股息會被算兩次（價格裡一次、已領配息一次）
     const divAsOf = q && q.date ? Math.min(q.date, today) : today;
@@ -301,14 +307,14 @@ export function buildPortfolio(pf, rows, quoteOf, divsData, cfg, today) {
     if (!(h.sh > 0)) {
       let dayC = null;
       if (q && isNum(q.ch) && px != null) {
-        const qd = q.date || today;
+        const qd = stale ? mkt : q.date || today;
         let before = 0;
         let tp = 0;
         for (const l of sortLots(lots).map((x) => normLot(x, splits))) {
           if (l.d && l.d >= qd) tp += (l.side === 'sell' ? l.npx - px : px - l.npx) * l.nsh;
           else before += (l.side === 'sell' ? -1 : 1) * l.nsh;
         }
-        dayC = Math.max(0, before) * q.ch + tp;
+        dayC = (stale ? 0 : Math.max(0, before) * q.ch) + tp;
         if (!(Math.abs(dayC) > 1e-9) || !lots.some((l) => l.d && l.d >= qd)) dayC = null;   // 只算今天清掉的
       }
       closed.push({ code, row, name: row ? row.n : code, h, divRecv: rec.total, day: dayC });
@@ -321,14 +327,14 @@ export function buildPortfolio(pf, rows, quoteOf, divsData, cfg, today) {
     // 今日損益：報價日以前就持有的股數 × 今日漲跌；報價日當天的買賣，用成交價和現價的差計算
     let day = null;
     if (q && isNum(q.ch) && px != null) {
-      const qd = q.date || today;
+      const qd = stale ? mkt : q.date || today;
       let before = 0;
       let todayPart = 0;
       for (const l of sortLots(lots).map((x) => normLot(x, splits))) {
         if (l.d && l.d >= qd) todayPart += (l.side === 'sell' ? l.npx - px : px - l.npx) * l.nsh;
         else before += (l.side === 'sell' ? -1 : 1) * l.nsh;
       }
-      day = Math.max(0, before) * q.ch + todayPart;
+      day = (stale ? 0 : Math.max(0, before) * q.ch) + todayPart;
     }
     const tr = trailingDividends(dv.d, splits, today);
     const nd = row && row.dv && row.dv.d >= today ? row.dv : null;

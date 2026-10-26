@@ -38,7 +38,7 @@ t('每一課：id 不重複、類別合法、有標題、重點、內文、官�
     for (const p of [...x.b, ...(x.do || [])]) assert.ok(typeof p === 'string' && p.length > 10 && !bad(p), `${x.id}：${p}`);
     for (const k of x.terms || []) assert.ok(TERMS[k], `${x.id} 名詞 ${k} 不在小辭典`);
     for (const c of x.cases || []) assert.ok(C.CASES.some((z) => z.id === c), `${x.id} 案例 ${c} 不存在`);
-    if (x.nav) assert.ok((x.nav.tab && ['home', 'pf', 'radar', 'aide', 'news', 'track'].includes(x.nav.tab)) || ['tm', 'duel', 'cases'].includes(x.nav.sheet), `${x.id} nav`);
+    if (x.nav) assert.ok((x.nav.tab && ['home', 'pf', 'radar', 'aide', 'news', 'track'].includes(x.nav.tab)) || ['tm', 'duel', 'cases', 'coach'].includes(x.nav.sheet), `${x.id} nav`);
   }
   assert.ok(L.LESSONS.length >= 30);
   for (const k of Object.keys(L.LESSON_CATS)) assert.ok(L.LESSONS.filter((x) => x.k === k).length >= 8, `${k} 太少`);

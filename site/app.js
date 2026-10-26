@@ -6,11 +6,11 @@ import {
   dirCls, arrow, twParts, CAT, catName, POS, ST, ICON, getJSON, loadCore, useCache, ensureTrack, ensureDivs, ensureHist, quote,
   computePF, hasBook, heldOf, slotVar, stanceChip, posChip, actChip, gaugeSVG, animateNeedles, sparkSVG, toast, countUp,
   today, PF, premBand, DEFAULT_RULES, isPaper, switchMode, reloadBook, isBookKey, journal, saveJournal, reloadJournal, isJournalKey, taiexNow,
-  reloadPlans,
+  reloadPlans, dayTag, ensureNews, NEWS_MAX_AGE, invalidateBatch, ensureDetail, plainText,
 } from './core.js';
 import { openDetail, closeDetail, renderDetail, refreshDetailQuote } from './sheet.js';
 import { openTradeForm, openCashForm, openBackup, checkAlerts, closeModal, modalOpen, wipeBook, openPaperStart, PAPER_FRESH_MIN, openModal } from './forms.js';
-import { installExplain, setExplain, explainOn, glossaryHTML, bindGlossary } from './learn.js';
+import { installExplain, setExplain, explainOn, glossaryHTML, bindGlossary, openTerm } from './learn.js';
 import { irisSVG, heatHTML, heatLegend, heatColor, linesSVG, bindLines } from './viz.js';
 import { brief, benchValue, equityCurve } from './calc.js';
 import { runPlans, onDcaLotDel, dcaActions, plansHTML, dcaStripHTML, bindPlans, openConfirm, openPending, dcaTagsHTML, dcaAfterWipe } from './dca.js';
@@ -23,6 +23,11 @@ import * as FX from './fx.js';
 import { UPDATES } from './updates.js';
 import { lessonHomeHTML, bindLessonHome, openLessonList, LESSONS, seenCount } from './lessons.js';
 import { openCase, casesCardHTML } from './cases.js';
+import { openCoach, hooks as coachHooks, coachRulesHTML, coachPacket } from './coach.js';
+import { xrayPfHTML, bindXrayPf, searchStocks, openStock, coachXray, xrayRulesHTML, refreshStockq } from './xray.js';
+import { openLesson } from './lessons.js';
+import { AIDE } from './aide.js';
+const AIDE_BIG = AIDE.bigMarket;   // 大盤單日漲跌 2% 以上：今日行動請判斷教練帶你看
 
 // 打開之前手機上就有冷眼的資料（老用戶）：有新功能要提示；全新的人不跳
 const HAD_SAVE = (() => { try { return Object.keys(localStorage).some((k) => k.startsWith('coldeye.') && k !== 'coldeye.settings'); } catch { return false; } })();
@@ -99,6 +104,11 @@ function paintMode() {
   const t = $('#mode-tag');
   if (t) t.hidden = !isPaper();
 }
+/** 熱力圖、排序的「漲跌」標籤：報價是今天的才叫今日漲跌，休市或開盤前寫那一天 */
+function chgLabel() {
+  const t = dayTag([S.live && S.live.date, S.summary && S.summary.asof]);
+  return t === '今日' ? '今日漲跌' : `${t} 漲跌`;
+}
 function greeting() {
   const { h } = twParts();
   const word = h >= 5 && h < 11 ? '早安' : h >= 11 && h < 18 ? '午安' : '晚安';
@@ -171,16 +181,8 @@ async function manualRefresh() {
   el.classList.add('busy');
   const before = [S.live && S.live.at, S.summary && S.summary.generated].join('|');
   try {
-    await loadCore();
-    S.news = null;
-    S.track = null;
-    S.detail = {};
-    await Promise.all([ensureTrack(), ensureDivs(true)]);
-    diffSeen();
-    computePF();
+    await newBatch({ force: true });
     el.classList.remove('busy');
-    render();
-    if (S.openCode && !S.openCode.startsWith('__')) renderDetail(S.openCode);
     const after = [S.live && S.live.at, S.summary && S.summary.generated].join('|');
     const f = freshness();
     const liveNow = (f.key === 'live' || f.key === 'lag') && S.live;
@@ -293,6 +295,7 @@ function renderHome() {
   </div>`;
   $$('[data-code]', v).forEach((b) => { if (!b.closest('.hm')) b.addEventListener('click', () => openDetail(b.dataset.code)); });
   $$('[data-act="dca"]', v).forEach((b) => b.addEventListener('click', () => openPending()));
+  $$('[data-act^="coach-"]', v).forEach((b) => b.addEventListener('click', () => openCoach(b.dataset.act.slice(6))));
   bindHero(v, P);
   bindInstall(v);
   bindHeat(v);
@@ -304,15 +307,18 @@ function renderHome() {
   if (more) more.addEventListener('click', () => { settings.radarView = 'heat'; saveSettings(); go('radar'); });
   const nm = $('#news-more', v);
   if (nm) nm.addEventListener('click', () => go('news'));
-  // 戰情室（寬螢幕）才顯示的官方快訊：第一次需要時才去抓
-  if (!S.news && window.innerWidth >= 1100 && !S.newsLoading) {
-    S.newsLoading = true;
-    getJSON('news.json').then((n) => { S.news = n; }).catch(() => {}).finally(() => {
-      S.newsLoading = false;
-      const box = $('.h-news');
-      if (box && S.tab === 'home') { box.innerHTML = newsMiniHTML(); const b2 = $('#news-more', box); if (b2) b2.addEventListener('click', () => go('news')); }
-    });
+  // 戰情室（寬螢幕）才顯示的官方快訊：沒有、或超過 5 分鐘就重抓
+  if (window.innerWidth >= 1100 && (!S.news || Date.now() - S.newsAt > NEWS_MAX_AGE)) {
+    const had = S.news;
+    ensureNews().then(() => { if (S.news !== had) paintNewsMini(); });
   }
+}
+function paintNewsMini() {
+  const box = $('.h-news');
+  if (!box || S.tab !== 'home' || S.openCode) return;
+  box.innerHTML = newsMiniHTML();
+  const b2 = $('#news-more', box);
+  if (b2) b2.addEventListener('click', () => go('news'));
 }
 const SRC_NAME = { twse_news: '證交所', fsc: '金管會', cbc: '中央銀行', cna: '中央社' };
 function newsMiniHTML() {
@@ -351,7 +357,7 @@ function eyeHTML(P, has) {
     outer = breadthSegs();
     center = `<div class="ic-k">${isPaper() ? '模擬倉總資產' : '總資產'}</div>
       <div class="ic-v num" id="ic-v">${money(t.T)}</div>
-      <div class="ic-d num ${dirCls(t.day)}"><span>${arrow(t.day)} ${money(Math.abs(t.day))}</span><small>今日 ${fmt.r(t.dayPct, 2)}</small></div>
+      <div class="ic-d num ${dirCls(t.day)}"><span>${arrow(t.day)} ${money(Math.abs(t.day))}</span><small>${dayTag(P.holdings.map((x) => x.q && x.q.date))} ${fmt.r(t.dayPct, 2)}</small></div>
       <div class="ic-r">${t.cost > 0 ? `<span data-term="upnl">報酬 <b class="num ${dirCls(t.pnl)}">${fmt.r(t.pct)}</b></span>` : ''}${t.divRecv > 0 ? `<span data-term="div">已領息 <b class="num">${money(t.divRecv)}</b></span>` : ''}</div>`;
     legend = `<ul class="iris-legend">${main.map((s) => `<li${s.code ? ` data-code="${s.code}"` : ''}><i style="background:${s.col}"></i><span class="nm">${esc(s.name)}</span><b class="num">${fmt.r(s.v / t.T, 0, false)}</b></li>`).join('')}</ul>`;
   } else {
@@ -398,11 +404,12 @@ function lessonNav(tab, sheet) {
   if (sheet === 'tm') { swapSheet('tm', (push) => openTM(push)); return; }
   if (sheet === 'duel') { swapSheet('duel', (push) => openDuel(push)); return; }
   if (sheet === 'cases') { swapSheet('cases', (push) => openCase(null, push)); return; }
+  if (sheet === 'coach') { swapSheet('coach', (push) => openCoach(null, push)); return; }
   if (tab && TABS.some((t) => t.id === tab)) { if (S.openCode) closeDetail(); go(tab); }
 }
 /** 已經開著一個全螢幕頁（例如設定）時換成另一頁：直接換掉網址，不要先 back 再 push（會和瀏覽器的歷史搶） */
 function swapSheet(hash, open) {
-  if (S.openCode) { S.openCode = null; history.replaceState({ tool: hash }, '', '#' + hash); open(false); } else open(true);
+  if (S.openCode) { S.openCode = null; history.replaceState(history.state == null ? null : { tool: hash }, '', '#' + hash); open(false); } else open(true);
 }
 const md = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
 const BR_ICON = {
@@ -490,6 +497,12 @@ function buildActions(P) {
   }
   // 定期定額：今天扣款、自動記的預估待核對（國泰規則，dca.js）
   out.push(...dcaActions(chip));
+  // 大盤大波動的日子：判斷教練帶你一步一步看（只在有意義的時候出現）
+  const tx = taiexNow();
+  if (tx && isNum(tx.pc) && Math.abs(tx.pc) >= AIDE_BIG) {
+    const down = tx.pc < 0;
+    out.push({ pri: 1, code: 'TAIEX', act: down ? 'coach-crash' : 'coach-rally', chip: chip('教練', 'info'), title: `大盤${down ? '大跌' : '大漲'} ${fmt.pct(tx.pc)}`, text: down ? '先別急著動作：判斷教練帶你看該看什麼、哪裡是陷阱' : '怕錯過？判斷教練帶你看漲多之後的歷史與你的比重' });
+  }
   const held = new Set(P ? P.holdings.map((x) => x.code) : []);
   for (const code of settings.watch) {
     if (held.has(code)) continue;
@@ -526,7 +539,7 @@ function heatRows(filter) {
 }
 function heatCardHTML(mini) {
   const mode = settings.heatMode;
-  return `<div class="sec-h"><h2>盤面熱力</h2><div class="seg mini" role="tablist">${[['chg', '今日漲跌'], ['score', '規則分數']].map(([k, t]) => `<button data-hmode="${k}" aria-pressed="${mode === k}">${t}</button>`).join('')}</div></div>
+  return `<div class="sec-h"><h2>盤面熱力</h2><div class="seg mini" role="tablist">${[['chg', chgLabel()], ['score', '規則分數']].map(([k, t]) => `<button data-hmode="${k}" aria-pressed="${mode === k}">${t}</button>`).join('')}</div></div>
     <section class="panel heat-card"><div class="heat-wrap"><div class="heat" data-heat="${mini ? 'mini' : 'full'}"></div><div class="hm-clock" hidden><span class="k">盤中縮時</span><b class="num">09:00</b><i><s></s></i></div></div>
       <div class="heat-foot">${heatLegend(mode)}<span class="heat-acts">${mode === 'chg' ? `<button class="link small" data-replay>${ICON.play || '▶'} 盤中縮時</button>` : ''}${mini ? '<button class="link small" id="heat-more">看全部</button>' : ''}</span></div>
       <p class="small muted heat-cap">格子大小＝<span data-term="val">成交值</span>，${mode === 'chg' ? '顏色＝今天漲跌（紅漲綠跌）' : '顏色＝<span data-term="sc">規則分數</span>（紅偏多、綠偏空）'}。${mini ? '只放成交值前 60 檔；' : ''}點格子看那一檔。</p></section>`;
@@ -735,7 +748,7 @@ function renderPF() {
         <div class="pt-sub">持股市值 <b class="num">${money(t.mv)}</b>　＋　現金 ${isPaper() ? `<b class="num">${money(t.cash)}</b><small class="muted">（自動計算）</small>` : `<button class="link num" id="pf-cash">${money(t.cash)}</button>`}</div></div>
       <div class="pt-grid">
         <div><span data-term="upnl">未實現損益</span><b class="num ${dirCls(t.pnl)}">${money(t.pnl, true)}</b><small class="num ${dirCls(t.pnl)}">${fmt.r(t.pct)}</small></div>
-        <div><span>今日</span><b class="num ${dirCls(t.day)}">${money(t.day, true)}</b><small class="num ${dirCls(t.day)}">${fmt.r(t.dayPct, 2)}</small></div>
+        <div><span>${dayTag(P.holdings.map((x) => x.q && x.q.date))}</span><b class="num ${dirCls(t.day)}">${money(t.day, true)}</b><small class="num ${dirCls(t.day)}">${fmt.r(t.dayPct, 2)}</small></div>
         <div><span data-term="div">已領配息</span><b class="num">${money(t.divRecv)}</b>${t.undated ? '<small class="muted">只算有日期的交易</small>' : ''}</div>
         <div><span data-term="total">含息總報酬</span><b class="num ${dirCls(t.total)}">${money(t.total, true)}</b><small class="muted">損益＋已實現＋配息</small></div>
         ${Math.abs(t.realized) >= 1 ? `<div><span data-term="rpnl">已實現損益</span><b class="num ${dirCls(t.realized)}">${money(t.realized, true)}</b></div>` : ''}
@@ -745,6 +758,7 @@ function renderPF() {
     </section>`;
   html += eqHTML();
   html += allocHTML(P);
+  html += xrayPfHTML();
   if (P.holdings.length) html += `<section class="panel pad aide-strip slim"><div class="as-h"><span class="ac-core">${coreSVG('mini')}</span><div><b>想討論整體配置？</b><span class="small muted">副官巡檢在「副官」分頁；也可以把配置（預設只寫比例）帶去問 Claude。</span></div></div><div class="row-btns"><button class="btn small ghost" id="pf-aide">${ICON.aide}看副官巡檢</button><button class="btn small ghost" id="pf-ask">${ICON.comms}帶配置去問 Claude</button></div></section>`;
   if (P.holdings.length) {
     html += `<div class="sec-h"><h2>持股</h2><span class="aside">${P.holdings.length} 檔　依市值排序</span></div>
@@ -786,6 +800,7 @@ function renderPF() {
   const pd = $('#pf-aide', v);
   if (pd) pd.addEventListener('click', () => go('aide'));
   drawEq(v);
+  bindXrayPf(v);
 }
 
 // ------------------------------------------------------------------ 資產走勢：用交易紀錄＋官方收盤價重算每一天
@@ -963,12 +978,13 @@ function renderRadar() {
       <div class="hscroll" id="cats">${cats.map((c) => `<button class="pill" data-cat="${c}" aria-pressed="${S.all.cat === c}">${c === '*' ? '全部類型' : CAT[c]}</button>`).join('')}</div>
       <div class="hscroll" id="sigs">${sigs.map(([k, t]) => `<button class="pill${k !== '*' ? ' sig-' + k : ''}" data-sig="${k}" aria-pressed="${S.all.sig === k}">${t}</button>`).join('')}</div>
       <div class="sortrow"><div class="seg mini" role="tablist" aria-label="顯示方式">${[['list', '清單'], ['heat', '熱力圖']].map(([k, t]) => `<button data-view="${k}" aria-pressed="${settings.radarView === k}">${t}</button>`).join('')}</div>
-        ${heat ? '' : `<select id="sort" aria-label="排序方式">${[['score', '觀點分數（高→低）'], ['score_r', '觀點分數（低→高）'], ['chg', '今日漲跌'], ['val', '成交值'], ['yield', '殖利率'], ['r1y', '近一年報酬'], ['prem', '溢價（高→低）'], ['code', '代號']].map(([k, t]) => `<option value="${k}"${S.all.sort === k ? ' selected' : ''}>${t}</option>`).join('')}</select>`}
+        ${heat ? '' : `<select id="sort" aria-label="排序方式">${[['score', '觀點分數（高→低）'], ['score_r', '觀點分數（低→高）'], ['chg', chgLabel()], ['val', '成交值'], ['yield', '殖利率'], ['r1y', '近一年報酬'], ['prem', '溢價（高→低）'], ['code', '代號']].map(([k, t]) => `<option value="${k}"${S.all.sort === k ? ' selected' : ''}>${t}</option>`).join('')}</select>`}
         <span id="cnt" class="cnt"></span></div>
     </div>
+    <div id="stk-hits" class="stk-hits" hidden></div>
     ${heat ? `<div id="rheat">${heatCardHTML(false)}</div>` : '<section class="panel list" id="list"></section>'}`;
   const refresh = () => (settings.radarView === 'heat' ? renderRadarHeat() : renderRadarList());
-  $('#q', v).addEventListener('input', (e) => { S.all.q = e.target.value; refresh(); });
+  $('#q', v).addEventListener('input', (e) => { S.all.q = e.target.value; refresh(); stockHits(); });
   $$('#cats .pill', v).forEach((b) => b.addEventListener('click', () => { S.all.cat = b.dataset.cat; $$('#cats .pill', v).forEach((z) => z.setAttribute('aria-pressed', z === b)); refresh(); }));
   $$('#sigs .pill', v).forEach((b) => b.addEventListener('click', () => { S.all.sig = b.dataset.sig; $$('#sigs .pill', v).forEach((z) => z.setAttribute('aria-pressed', z === b)); refresh(); }));
   const sort = $('#sort', v);
@@ -977,6 +993,25 @@ function renderRadar() {
   $('#to-duel', v).addEventListener('click', () => openDuel());
   $('#to-tm', v).addEventListener('click', () => openTM());
   refresh();
+  stockHits();
+}
+/** 雷達搜尋打的是公司名稱（例如台積電、輝達）：列出這家公司，點開看哪些 ETF 持有它 */
+let stkT = null, stkSeq = 0;
+function stockHits() {
+  clearTimeout(stkT);
+  const box = $('#stk-hits');
+  if (!box) return;
+  const q = S.all.q.trim();
+  if (q.length < 2 || /^\d{2,4}[A-Z]?$/i.test(q) && S.rows.has(q.toUpperCase())) { box.hidden = true; box.innerHTML = ''; return; }
+  const my = ++stkSeq;
+  stkT = setTimeout(async () => {
+    const hits = await searchStocks(q);
+    if (my !== stkSeq || !box.isConnected) return;
+    if (!hits.length) { box.hidden = true; box.innerHTML = ''; return; }
+    box.hidden = false;
+    box.innerHTML = `<div class="stk-h"><span class="xr-eye" aria-hidden="true"></span>成分股：哪些 ETF 有它</div>${hits.map((h) => `<button class="stk-row" data-stk="${esc(h.key)}" data-kind="${esc(h.kind || '')}"><b>${esc(h.name)}</b><span class="num muted">${esc(h.key.length <= 6 ? h.key : '國外')}</span><span class="stk-n">${h.n} 檔 ETF 持有</span><span class="chev">${ICON.chev}</span></button>`).join('')}`;
+    $$('[data-stk]', box).forEach((b) => b.addEventListener('click', () => openStock(b.dataset.stk, b.dataset.kind || null)));
+  }, 260);
 }
 function renderRadarHeat() {
   const box = $('#rheat');
@@ -996,7 +1031,7 @@ function renderRadarList() {
   }[S.all.sort];
   rows = key ? rows.sort((a, b) => key(b) - key(a)) : rows.sort((a, b) => a.c.localeCompare(b.c));
   $('#cnt').textContent = `${rows.length} 檔`;
-  if (!rows.length) { list.innerHTML = '<div class="empty">找不到符合的 ETF</div>'; return; }
+  if (!rows.length) { list.innerHTML = `<div class="empty">找不到符合的 ETF${S.all.q.trim().length >= 2 ? '。打的是公司名稱的話，上面的「成分股」會列出持有它的 ETF。' : ''}</div>`; return; }
   list.innerHTML = rows.slice(0, 400).map((r) => {
     const qq = quote(r);
     const extra = S.all.sort === 'yield' && isNum(r.y) ? `殖利率 ${r.y.toFixed(2)}%` : S.all.sort === 'prem' && isNum(qq.prem) ? `${qq.prem >= 0 ? '溢價' : '折價'} ${Math.abs(qq.prem).toFixed(2)}%` : S.all.sort === 'val' && isNum(r.val) ? `${fmt.big(r.val)}元` : S.all.sort === 'r1y' && isNum(r.r1y) ? `近一年 ${fmt.r(r.r1y)}` : '';
@@ -1010,10 +1045,11 @@ function renderRadarList() {
 // ================================================================== 情報
 async function renderNews() {
   const v = $('#view');
-  if (!S.news) {
-    v.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
-    try { S.news = await getJSON('news.json'); } catch { v.innerHTML = '<section class="panel empty">情報暫時載入失敗，稍後再試。</section>'; return; }
-    if (S.tab !== 'news') return;
+  if (!S.news || Date.now() - S.newsAt > NEWS_MAX_AGE) {
+    if (!S.news) v.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
+    await ensureNews();
+    if (!S.news) { v.innerHTML = '<section class="panel empty">情報暫時載入失敗，稍後再試。</section>'; return; }
+    if (S.tab !== 'news' || S.openCode) return;
   }
   const N = S.news;
   const tabs = [['official', '官方公告'], ['fact', '事實新聞'], ['divs', '除息行事曆'], ['risk', '風險名單']];
@@ -1215,6 +1251,7 @@ function drawSettings() {
     <section class="panel set">
       <div class="srow"><div><div class="h">今日一課</div><div class="d">每天一課，基礎觀念、陷阱提醒、看盤判斷輪流；內容固定、附官方出處，也能從這裡看全部課程</div></div><button class="btn small ghost" id="s-lessons">全部課程</button></div>
       <div class="srow"><div><div class="h">案例教室</div><div class="d">用真實的歷史走勢講 2020 疫情、2022 升息、2024/8/5、2025 關稅、0050 分割、00940 這些事當時該怎麼看</div></div><button class="btn small ghost" id="s-cases">打開</button></div>
+      <div class="srow"><div><div class="h">判斷教練</div><div class="d">大盤大跌、想追漲、看到新聞、除息、熱門新 ETF、部位在虧：選一種狀況，教練一步一步帶你看該看什麼、哪裡是陷阱</div></div><button class="btn small ghost" id="s-coach">打開</button></div>
     </section>
 
     <div class="sec-h"><h2>規則與來源</h2></div>
@@ -1223,9 +1260,11 @@ function drawSettings() {
       <details class="rules"><summary>觀點怎麼算</summary><div class="in prose">${rulesHTML()}</div></details>
       <details class="rules"><summary>加碼、減碼建議怎麼算</summary><div class="in prose">${posRulesHTML()}</div></details>
       <details class="rules"><summary>副官怎麼檢查、怎麼對答案</summary><div class="in prose">${aideRulesHTML()}</div></details>
+      <details class="rules"><summary>判斷教練怎麼判斷</summary><div class="in prose">${coachRulesHTML()}</div></details>
+      <details class="rules"><summary>透視（成分股）怎麼算</summary><div class="in prose">${xrayRulesHTML()}</div></details>
     </section>
     <section class="panel tbl-wrap"><table class="t"><thead><tr><th>官方來源</th><th class="r">最後成功</th></tr></thead><tbody>${src.map(([, s]) => `<tr><td><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name)}</a></td><td class="r muted">${s.ok_at ? fmt.ago(s.ok_at) : '—'}</td></tr>`).join('')}</tbody></table></section>
-    <section class="panel pad prose"><p><b>關於冷眼</b>　規則版本 ${esc(S.summary ? S.summary.engine : '')}，資料更新 ${S.summary ? fmt.ago(S.summary.generated) : '—'}。盤中約每 5 分鐘更新價格與預估淨值（GitHub 忙時會晚一點），收盤後陸續補上法人、融資、淨值。</p>
+    <section class="panel pad prose"><p><b>關於冷眼</b>　規則版本 ${esc(S.summary ? S.summary.engine : '')}，資料更新 ${S.summary ? fmt.ago(S.summary.generated) : '—'}。盤中約每 5 分鐘更新價格與預估淨值（GitHub 忙時會晚一點），收盤後陸續補上法人、融資、淨值。App 開著時每分鐘檢查一次，後台有新資料就自己換上，不用手動重新整理。</p>
       <p>這是 ${esc(settings.name || 'PZ')} 個人使用的資料整理與規則化分析工具，不是投顧服務。觀點與建議不保證報酬，任何買賣決定請自行判斷並承擔風險。</p></section>
   </div>`;
   bindSettings();
@@ -1262,6 +1301,7 @@ function bindSettings() {
   $('#s-upd', sh).addEventListener('click', () => showUpdates(UPDATES.slice(0, 12), '更新紀錄'));
   $('#s-lessons', sh).addEventListener('click', () => openLessonList());
   $('#s-cases', sh).addEventListener('click', () => swapSheet('cases', (push) => openCase(null, push)));
+  $('#s-coach', sh).addEventListener('click', () => swapSheet('coach', (push) => openCoach(null, push)));
   $('#s-wipe', sh).addEventListener('click', (e) => {
     const b = e.currentTarget;
     if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = '確定清除？'; return; }
@@ -1480,6 +1520,8 @@ bus.on((what, data) => {
     if (S.openCode === '__prefs') drawSettings();
     else if (S.openCode && !S.openCode.startsWith('__')) renderDetail(S.openCode);
   }
+  // 全螢幕頁開著時有新資料進來：關掉之後把底下的畫面換新
+  if (what === 'closed') { if (S.viewStale) { S.viewStale = false; render(); } return; }
   if (what === 'journal') {
     // 決策日記變了：首頁卡片、副官分頁、徽章、單檔頁的紀錄跟著更新（彈出視窗是另一層，不受影響）
     paintBadge();
@@ -1495,12 +1537,13 @@ window.addEventListener('popstate', () => {
   if (h === 'duel') { if (S.openCode !== '__duel') openDuel(false); return; }
   if (h === 'tm') { if (S.openCode !== '__tm') openTM(false); return; }
   if (h === 'cases') { if (S.openCode !== '__cases') openCase(S.caseId || null, false); return; }
+  if (h === 'coach') { if (S.openCode !== '__coach') openCoach(S.coachId || null, false); return; }
   if (h && S.rows.has(h)) { openDetail(h, false); return; }
   if (S.openCode) closeDetail(true);
 });
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.deferredInstall = e; if (S.tab === 'home' && S.summary) render(); });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && S.summary) { refreshLive(); refreshEvals(); runPlans(); }
+  if (document.visibilityState === 'visible' && S.summary) { syncTick().then(() => { refreshEvals(); runPlans(); }); }
   if (document.visibilityState === 'hidden') FX.stopSpeak();
 });
 document.addEventListener('keydown', (e) => {
@@ -1517,15 +1560,108 @@ window.addEventListener('resize', () => {
   resizeT = setTimeout(() => { if (!S.openCode && (S.tab === 'home' || (S.tab === 'radar' && settings.radarView === 'heat'))) drawHeats($('#view'), S.tab === 'radar' ? radarFilter() : null); }, 180);
 });
 
-async function refreshLive() {
+async function refreshLive(v) {
   try {
-    S.live = await getJSON('live.json');
+    S.live = await getJSON('live.json', { v });
     store.set('cache.live', S.live);
     computePF();
     renderHeader();
-    if (!S.openCode && (S.tab === 'home' || S.tab === 'pf' || S.tab === 'radar')) render();
+    if (S.tab === 'home' || S.tab === 'pf' || S.tab === 'radar') viewRender();
     refreshDetailQuote();
   } catch { /* 下次再試 */ }
+}
+/** 資料更新後重畫主畫面：有全螢幕頁開著就不動；正在搜尋框打字時只更新清單（不把你打到一半的字和游標洗掉） */
+function viewRender() {
+  if (S.openCode) { S.viewStale = true; return; }
+  const ae = document.activeElement;
+  if (ae && ae.closest && ae.closest('#view') && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) {
+    if (S.tab === 'radar' && settings.radarView !== 'heat') renderRadarList();
+    return;
+  }
+  render();
+}
+
+// ================================================================== 資料同步
+// 後台每一輪（盤中約 5 分鐘一輪、收盤後幾輪）都會寫 version.json：每一份資料自己的時間。
+// 畫面開著時每分鐘看一次（很小的檔），哪一份變了就只重抓那一份——收盤資料換批時，單檔分析、戰績、歷史、成分股的快取一起換新，
+// 不會一頁新一頁舊；新聞、成分股行情也在幾分鐘內跟上。後台是舊版（沒有 files）或離線時，照舊：盤中每分鐘看即時價、其他每 15 分鐘。
+const SYNC_MS = 60000;
+const RETRY_MS = 2 * 60000;
+let syncBusy = false;
+let lastBatch = Date.now();
+const tried = {};
+/** 同一個時間戳抓過了卻還是舊的（網站的快取還沒換）：2 分鐘後再試，不要每分鐘猛抓大檔 */
+function tryStamp(k, stamp) {
+  const t = tried[k];
+  if (t && t.s === stamp && Date.now() - t.at < RETRY_MS) return false;
+  tried[k] = { s: stamp, at: Date.now() };
+  return true;
+}
+async function syncTick() {
+  if (syncBusy || !S.summary) return;
+  syncBusy = true;
+  try {
+    let v = null;
+    try { v = await getJSON('version.json'); } catch { v = null; }
+    const F = v && !S.verOffline && v.files && typeof v.files === 'object' ? v.files : null;
+    if (!F) {
+      if ((S.live && S.live.open) || inSession()) await refreshLive();
+      if (Date.now() - lastBatch > 15 * 60000) await newBatch();
+      return;
+    }
+    // 開 App 時沒有網路（用的是上次存下的資料），現在連得上了：整批重抓一次，「離線」的標示才會消失
+    if (S.offline && tryStamp('offline', F.summary || '')) await newBatch({ v: F.summary, lv: F.live });
+    else if (F.summary && F.summary !== (S.summary && S.summary.generated) && tryStamp('summary', F.summary)) await newBatch({ notify: true, v: F.summary, lv: F.live });
+    else if (F.live && F.live !== (S.live && S.live.at) && tryStamp('live', F.live)) await refreshLive(F.live);
+    if (S.news && F.news && F.news !== S.news.generated && tryStamp('news', F.news)) await refreshNews(F.news);
+    if (S.stockq && F.stockq && F.stockq !== S.stockq.at && tryStamp('stockq', F.stockq)) await refreshStockq(F.stockq);
+    if ((S.stocks && F.stocks && F.stocks !== S.stocks.at && tryStamp('stocks', F.stocks))
+      || (S.holdIdx && F.hold && F.hold !== S.holdIdx.at && tryStamp('hold', F.hold))) {
+      bus.emit('holddata');
+      if (S.tab === 'pf') viewRender();
+    }
+  } catch { /* 連不上：下一分鐘再試 */ } finally {
+    syncBusy = false;
+  }
+}
+/**
+ * 收盤資料換了一批（或手動重新整理）：summary、即時價、配息、戰績一起重抓，單檔分析、歷史、成分股的快取作廢。
+ * 主畫面直接換新；開著的單檔頁重抓它的分析再畫（保留捲動位置）；其他全螢幕頁（時光機、對決、教練…）是打開時算的，提醒重新打開。
+ */
+async function newBatch(o = {}) {
+  lastBatch = Date.now();
+  const before = S.summary && S.summary.generated;
+  await loadCore({ v: o.v, lv: o.lv });
+  const changed = o.force || (S.summary && S.summary.generated !== before);
+  // 先作廢、再抓戰績與配息：網址帶的是新的這一批，網站的快取不會給舊的
+  if (changed) invalidateBatch();
+  const [track] = await Promise.all([changed || !S.track ? getJSON('track.json', { batch: true }).catch(() => null) : null, ensureDivs(true)]);
+  if (track) S.track = track;
+  if (changed && S.news) refreshNews();
+  diffSeen();
+  computePF();
+  viewRender();
+  if (changed && S.openCode && !S.openCode.startsWith('__')) {
+    const code = S.openCode;
+    const row = S.rows.get(code);
+    const det = row && row.st != null ? await ensureDetail(code) : null;
+    if (S.openCode === code) renderDetail(code, det);
+  } else if (changed && S.openCode && o.notify && S.openCode !== '__prefs') {
+    toast(`收盤資料已更新到 ${fmt.d(S.summary.asof)}。這一頁是更新前算的，重新打開就會用新的`);
+  } else {
+    refreshDetailQuote();
+  }
+  refreshEvals();
+  runPlans();
+}
+async function refreshNews(v) {
+  let n;
+  try { n = await getJSON('news.json', { v }); } catch { return; }
+  S.news = n;
+  S.newsAt = Date.now();
+  // 情報分頁：直接換新（有全螢幕頁開著就等關掉再換）；指揮台的官方快訊（寬螢幕）也一樣
+  if (S.tab === 'news') viewRender();
+  else if (S.tab === 'home') { if (S.openCode) S.viewStale = true; else paintNewsMini(); }
 }
 
 async function boot() {
@@ -1544,11 +1680,20 @@ async function boot() {
     FX.haptic('tap');
   }, true);
   aideHooks.brief = () => briefItems().map((it) => it.t.replace(/\*\*/g, ''));
-  aideHooks.actions = () => buildActions(S.P).map((a) => `${a.title}：${String(a.text).replace(/<[^>]+>/g, '')}`);
+  coachHooks.idea = (o) => openIdea(o);
+  coachHooks.lesson = (id) => openLesson(id);
+  coachHooks.kase = (id) => swapSheet('cases', (push) => openCase(id, push));
+  coachHooks.term = (k) => openTerm(k, null);
+  coachHooks.ask = (id, ctx, subject) => openAsk('coach', { coach: (amt) => coachPacket(id, ctx, subject, amt) });
+  coachHooks.xray = (code) => coachXray(code);
+  aideHooks.actions = () => buildActions(S.P).map((a) => `${plainText(a.title, '')}：${plainText(a.text)}`);
   const cached = useCache();
   if (cached) { computePF(); maybeBoot(); render(); } else render();
+  const gen0 = S.summary && S.summary.generated;
   try {
     await loadCore();
+    // 上次存下的是舊的一批：開機這段時間用舊資料抓過的單檔分析、歷史一起作廢
+    if (gen0 && S.summary && S.summary.generated !== gen0) invalidateBatch();
   } catch {
     if (!S.summary) { $('#view').innerHTML = '<section class="panel empty">資料還在準備中，請稍後再開。</section>'; return; }
     toast('連不上伺服器，顯示的是上次的資料');
@@ -1565,14 +1710,14 @@ async function boot() {
   else if (h === 'duel') openDuel(false);
   else if (h === 'tm') openTM(false);
   else if (h === 'cases') openCase(null, false);
+  else if (h === 'coach') openCoach(null, false);
   else if (h && S.rows.has(h)) openDetail(h, false);
-  // 盤中（以手機時間判斷，不靠舊的 live.json）每分鐘看一次後台有沒有新資料
-  setInterval(() => { if (document.visibilityState === 'visible' && ((S.live && S.live.open) || inSession())) refreshLive(); }, 60000);
+  // 畫面開著時每分鐘看一次後台的版本檔，哪一份資料變了就重抓那一份（見 syncTick）；網路恢復時馬上看一次
+  setInterval(() => { if (document.visibilityState === 'visible') syncTick(); }, SYNC_MS);
+  window.addEventListener('online', () => { if (document.visibilityState === 'visible') syncTick(); });
   setInterval(() => { if (document.visibilityState === 'visible') renderHeader(); }, 30000);
-  setInterval(() => {
-    if (document.visibilityState !== 'visible') return;
-    Promise.all([loadCore(), ensureDivs(true)]).then(() => { diffSeen(); computePF(); if (!S.openCode && !modalOpen()) render(); refreshEvals(); runPlans(); }).catch(() => {});
-  }, 15 * 60000);
+  // 對答案、定期定額：每 15 分鐘再檢查一次（例如 13:25 定案、收盤後到期）
+  setInterval(() => { if (document.visibilityState === 'visible') { refreshEvals(); runPlans(); } }, 15 * 60000);
   // 同一支手機開了兩個冷眼分頁：另一邊記了交易或提醒，這邊馬上重讀，免得用舊的內容蓋回去
   window.addEventListener('storage', (e) => {
     if (!e.key) return;

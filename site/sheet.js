@@ -2,12 +2,13 @@
 import {
   $, $$, esc, clamp, isNum, S, PF, settings, saveSettings, book, alerts, fmt, money, sharesOf, cash3, dirCls, arrow,
   catName, ICON, ST, POS, quote, ensureDetail, ensureTrack, heldOf, adviceFor, ctxFor, holdingInput, stanceChip, posChip,
-  actChip, gaugeSVG, animateNeedles, toast, bus, today, premBand, slotVar, isPaper,
+  actChip, gaugeSVG, animateNeedles, toast, bus, today, premBand, slotVar, isPaper, dayTag, quoteWhen,
 } from './core.js';
 import { openTradeForm, openAlertForm, closeModal, modalOpen } from './forms.js';
 import { addToDuel, openDuel, openTM } from './tools.js';
 import { aideDetailHTML, bindAideDetail, openIdea } from './desk.js';
 import { openConfirm, dcaTagsHTML } from './dca.js';
+import { xrayDetailHTML, bindXrayDetail } from './xray.js';
 import * as FX from './fx.js';
 
 const ICON_DUEL = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l9.5 9.5M4 4h3.5M4 4v3.5M20 4l-9.5 9.5M20 4h-3.5M20 4v3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6.5 15.5l2 2M17.5 15.5l-2 2M5 19l2.5-2.5M19 19l-2.5-2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
@@ -50,7 +51,13 @@ export function closeDetail(fromPop = false) {
   sh.hidden = true;
   sh.innerHTML = '';
   document.body.classList.remove('locked');
-  if (!fromPop && location.hash) history.back();
+  // 這一頁是 App 自己 push 進來的（有 state）就上一頁；直接從網址打開的（state 是 null，例如書籤、別人傳的連結）
+  // 就只把網址的 # 拿掉，不然「上一頁」會離開冷眼
+  if (!fromPop && location.hash) {
+    if (history.state == null) history.replaceState(null, '', location.pathname + location.search);
+    else history.back();
+  }
+  bus.emit('closed');
 }
 export function refreshDetailQuote() {
   if (!S.openCode || S.openCode.startsWith('__')) return;
@@ -94,7 +101,7 @@ function bindTop(code) {
 // ------------------------------------------------------------------ 標題與報價
 function quoteLine(row) {
   const q = quote(row);
-  return `<div class="pxline" id="dq" data-px="${isNum(q.px) ? q.px : ''}"><span class="p num">${fmt.px(q.px)}</span><span class="c num ${dirCls(q.pc)}">${arrow(q.ch)} ${isNum(q.ch) ? Math.abs(q.ch).toFixed(2) : '—'}　${fmt.pct(q.pc)}</span><span class="live">${q.live ? `盤中 ${esc(q.time || '')}` : `${fmt.d(row.d)} 收盤`}</span></div>`;
+  return `<div class="pxline" id="dq" data-px="${isNum(q.px) ? q.px : ''}"><span class="p num">${fmt.px(q.px)}</span><span class="c num ${dirCls(q.pc)}">${arrow(q.ch)} ${isNum(q.ch) ? Math.abs(q.ch).toFixed(2) : '—'}　${fmt.pct(q.pc)}</span><span class="live">${esc(quoteWhen(q, row.d))}</span></div>`;
 }
 function heroHTML(row) {
   if (!row) return '<section class="panel empty">找不到這檔 ETF</section>';
@@ -116,6 +123,7 @@ function detailHTML(row, det) {
   if (a) h += adviceHTML(row, x, a);
   h += aideDetailHTML(row.c);
   if (row.st != null && det) h += scopeHTML(row, x, det.view);
+  h += xrayDetailHTML(row.c);
   h += calcHTML(row, x);
   h += journalHTML(row.c);
   if (row.st == null || !det) {
@@ -136,7 +144,7 @@ function myPositionHTML(x) {
     ['已領配息', x.undated && !x.divRecv ? '<small class="muted">要填買進日期</small>' : `<span class="num">${money(x.divRecv)}</span>`, 'div'],
     ['損益兩平', `<span class="num">${settings.privacy ? '••••' : fmt.px(x.be)}</span>`, 'be'],
     ['占總資產', `<span class="num">${fmt.r(x.w, 1, false)}</span>`, 'risk'],
-    ['今日', `<span class="num ${dirCls(x.day)}">${money(x.day, true)}</span>`],
+    [dayTag(x.q && x.q.date), `<span class="num ${dirCls(x.day)}">${money(x.day, true)}</span>`],
   ];
   return `<section class="panel mine" aria-label="我的部位">
     <div class="mine-h"><h2>${isPaper() ? '模擬部位' : '我的部位'}</h2><button class="btn small" id="m-add">${ICON.plus}記一筆</button></div>
@@ -478,6 +486,7 @@ function bindDetail(code, row, det) {
   }));
   bindCalc(row, heldOf(code));
   bindAideDetail($('#sheet'), code);
+  bindXrayDetail($('#sheet'), code);
   if (!det || row.st == null) return;
   const x = heldOf(code);
   drawPriceChart(det, S.range, row, x);

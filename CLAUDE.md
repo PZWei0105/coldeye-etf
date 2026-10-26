@@ -3,7 +3,7 @@
 使用者 PZ（痞子葳）沒有程式背景，所有回覆用繁體中文、白話。這個 repo 是他的台股 ETF 資訊 App。
 
 ## 原則（不可違反）
-- 資料只收官方一手來源（證交所、櫃買、集保、美國財政部、中央社、金管會、央行）。不要加入社群、KOL、論壇內容。
+- 資料只收官方一手來源（證交所、櫃買、集保、投信投顧公會（各投信依法申報的基金資料，金管會監理）、美國財政部、中央社、金管會、央行）。不要加入社群、KOL、論壇內容。
 - 證交所「ETF e添富」網站的使用條款禁止程式抓取，不要抓它。
 - 觀點與部位建議必須是固定規則、可重現；任何回測或戰績都要和「同類 ETF 一直看多／任何一天」的基準並列（依類別加權，不要用全部 ETF 混在一起的基準）。
 - 不做自動下單。
@@ -29,9 +29,29 @@
 
 ## 今日一課與案例教室（帶著 PZ 成長）
 - 兩個都是**固定內容、不連 AI**：`site/lessons.js` 的 `LESSONS`（三類：basic 基礎觀念、trap 陷阱提醒、read 看盤判斷）、`site/cases.js` 的 `CASES`。每一課、每個案例**一定要有官方出處**（`src`，只放一手來源：證交所、櫃買、集保、金管會、央行、健保署、法規資料庫、國泰官方說明、美國財政部），文字要白話、不能像社群 KOL 的口吻、不直接叫人買賣。不確定的數字不要寫死，用 `ex`／`(st) => …` 從當下資料算。
-- 今日一課照日期輪（`EPOCH`＝2026/10/22 起算，三類輪流，`lessonOrder`／`todayLessonIdx`），可往前翻、看全部課程；上過的記在 `coldeye.lessons`（只在手機）。`id` 不要改（紀錄跟著 id）；新增一課直接加進 `LESSONS`，`terms` 要是 `learn.js` TERMS 的 key、`cases` 要是 CASES 的 id、`nav` 只能是分頁或 tm／duel／cases。「現在的例子」`ex()` 不能炸（沒資料回空字串）。有內建中文語音的裝置可以念（和晨報同一套 `fx.js` 規則）。
+- 今日一課照日期輪（`EPOCH`＝2026/10/22 起算，三類輪流，`lessonOrder`／`todayLessonIdx`），可往前翻、看全部課程；上過的記在 `coldeye.lessons`（只在手機）。`id` 不要改（紀錄跟著 id）；新增一課直接加進 `LESSONS`，`terms` 要是 `learn.js` TERMS 的 key、`cases` 要是 CASES 的 id、`nav` 只能是分頁或 tm／duel／cases／coach。「現在的例子」`ex()` 不能炸（沒資料回空字串）。有內建中文語音的裝置可以念（和晨報同一套 `fx.js` 規則）。
 - 案例教室的數字全部在手機上由 `data/hist/{代號}.json` 算（`windowStats`／`recoverAfter`／`divFill`／`sigChanges`／`caseStats`，純函式，含息用 `aide.js` 的 `trIndex`）；敘述裡的「硬數字」（加權指數跌幾點、00940 募了多少）要先查證官方或可靠報導，其餘用 `(st) => …` 動態帶入。`raw: true` 的案例畫原始價格 vs 還原價（分割、除息）。開在 `#sheet`（網址 `#cases`）；從設定頁或另一個全螢幕頁切過去要用 `app.js` 的 `swapSheet`（replaceState，不要 back 再 push）。
 - 折線圖（`viz.js` 的 `linesSVG`）：`marks` 標事件、`w` 傳容器寬度（寬螢幕字才不會被放大）。測試：`node tests/lessons_test.mjs [hist 資料夾]`（內容完整性、輪課、例子不炸、案例統計與文字；給 hist 資料夾會用真實資料把每個案例算一遍）。
+
+## 判斷教練與 ETF 透視（股票第一層，2026/10/26）
+- PZ 要的是「專精的冷眼」：個股只做到「ETF 裡面裝了什麼」這一層（成分股、穿透持股、重疊、成分股的官方資料），**不做個股的觀點、買賣建議、個股持股記帳**；要做第二層（自己持有的個股）以上要 PZ 另外說「開工」。
+- **判斷教練**（`site/coach.js`，網址 `#coach`）：六種狀況 `PLAYS`（大盤大跌 crash、大漲想追 rally、看到一則新聞 news、除息快到了 div、熱門新 ETF hot、部位在虧 loss），每一步是純函式 `buildPlay(id, ctx)` 算出的 `{ t, v, lvl, how, trap, links }`（燈號 ok／info／warn，不用紅綠）。門檻全部在 `COACH`；改了要同步設定頁「判斷教練怎麼判斷」（`coachRulesHTML` 照常數產生）。不連 AI、不替使用者決定；歷史統計（`dropStats`／`gainStats`，含息、之後 20 個交易日）一律和「任何一天」並列，說明文字不能寫資料撐不起來的結論（2020 年以來是多頭，大跌之後多半漲回來——要寫清楚樣本期間與 2022 那種年份）。部位在虧：台股股票型才拿 0050 比，債券／海外／期貨改說它跟著什麼走。新聞只用固定的字詞規則（`newsRead`：預測字、事實字、類別關鍵字）。和副官分工：副官檢查「已經有的想法」，教練帶「還沒有想法」時怎麼看，最後按鈕交給副官 `openIdea`（帶立場、代號、理由）或「帶去問 Claude」（`coachPacket`：沒打開「附上金額」時用隱藏金額重算，aide.js 的 `packCoach`／`ASKS.coach`）。入口：副官分頁的六格（`coachStripHTML`）、設定「學習」、今日行動（大盤單日漲跌 ≥ `AIDE.bigMarket` 2% 才出現）、今日一課的 `nav: { sheet: 'coach' }`。連結的課程、案例、名詞要存在（`tests/xray_test.mjs` 會檢查）。隱藏金額（`ctx.privacy`：隱私模式、或帶去問 Claude 沒打開「附上金額」）時，金額、股數（`shTxt`）、會不會扣二代健保都不寫；不是今天的資料不說「今天」（`dayWord`）；打包與語音用 `core.js` 的 `plainText`（拿掉標籤、把 `&amp;` 換回來）；最後一步只說「交給副官檢查」，不叫人賣。
+- **ETF 透視**（`site/xray.js`）：資料是投信投顧公會「基金投資明細」——IN2629 每月前十大、IN2630 每季占淨資產 1% 以上（約次月第 10 個營業日公布）。後台 `pipeline/holdings.py`：`update`（eod 17:00 以後那幾輪、一天檢查一次；每月、每季各留 2 期）先在 ETF 專區（etf_statement2）用「基金名稱＋類型代號」對到代號，再在明細裡找拿掉警語與級別後**完全相同**的名稱（不做模糊比對，正 2／反 1 只差兩個字）；查詢前一定要先送「換期間」的 postback、用它回來的 VIEWSTATE（不然伺服器會默默回第一家投信的資料）。**新的一期配對到的 ETF 不到上一期的 `MIN_RATIO`（一半）先不收**（當作沒抓完整，隔天再抓）；**第一次抓到後 `FRESH_DAYS`（20 天）內每天重抓、和已經有的合併**（新的覆蓋、這次沒抓到的保留；`hold['seen']` 記第一次抓到的日期），晚申報、更正的投信會補進來，某一類暫時失敗也不會少一塊。輸出時最新一期裡沒有的 ETF 用它自己最新的一期（期間照實標），已經不在專區的不輸出。槓桿、反向、期貨型多半只有期貨和現金，明細裡沒有。
+- **成分股的官方資料**（`update_stocks`，**每一輪 eod 都檢查**，不是一天一次）：目標是最新交易日（`trading_days(state)[-1]`）。先用「指定日期」的官方每日資料——證交所 `MI_INDEX?type=ALLBUT0999`（收盤）、`BWIBBU_d`（本益比、殖利率、股價淨值比），櫃買 `afterTrading/otc?type=EW`、`peQryDate`——回應裡的日期對不上就不用；還沒公布才用 OpenAPI 的最新一天（櫃買的收盤 OpenAPI 常常斷線）。每一檔記自己的收盤日期、本益比日期、營收月份（`stocks.s` 每檔 13 欄，順序見 `holdings.py` 的 `NF` 註解，`xray.js` 的 `F_` 一樣），抓不到的保留上一次的、不會倒退到更舊的日期；四份都到最新交易日、今天也看過月營收才略過（`dd` 記每一份到哪天）。舊格式（10 欄）由 `_upgrade` 轉。月營收：公開資訊觀測站（經證交所、櫃買開放資料）。
+- **成分股盤中行情**（`stock_quotes`）：盤中每一輪（`intraday`）和每一輪 eod 都用 MIS `getStockInfo` 查全部成分股（約 320 檔、3 批，實測約 6 秒），`publish` 寫 `stockq.json`：`{at, d, q: {代號: [成交價, 參考價, 開, 高, 低, 量(張), 資料時間 epoch 秒, 日期]}}`。App 的 `stockPx`：即時行情的日期比官方收盤新才用（13:30 以前標「盤中 HH:MM・即時行情」、13:30 那一筆標「今日收盤・即時行情（官方收盤資料稍後更新）」、還沒成交標「還沒有成交（參考價）」），官方收盤是同一天或更新的就用官方的（標日期）。
+- `write_out` 輸出 `hold/{代號}.json`（`m`／`q` 本期、`pm`／`pq` 上一期，每列 `[代號或 ISIN, 名稱, 種類 tse/otc/f/b/fund/o, 占淨值%]`）、`hold.json`（索引：最完整清單的期間、涵蓋率、前三大、`at`）、`stocks.json`（`at`、`dd`、`s` 個股資料、`f` 國外股票名稱、`by` 每家公司被哪些 ETF 持有（前 15）、`nby` 總數）。state 多了 `holdings.json.gz`、`stocks.json`。實測新來源：`control/probe.json` 用 `{"py": "holdings:probe_sources"}`（各端點）或 `holdings:probe_stocks_full`（拿 state 分支的真實資料跑一次、不存回去）。
+- 成分股快取（`xray.js`）：`ensureHold` 回傳明細、`null`（確定沒有：索引裡沒有這一檔）或 `undefined`（這次抓不到，不快取、下次再試）——抓不到不能說成「沒有明細」；`lookThrough` 把抓不到的放 `failed`（畫面照實說、不記住這次的結果），確定沒有的放 `missing`。成分股小卡 `openStock(key, kind)`：呼叫的地方一律帶那一列的種類，個股資料抓不到或沒整理進來時，國內股票不會被說成國外股票；名稱從每月、每季、上一期的明細都找。後台 `domestic_codes` 包含每一期存著的明細（退出的公司點得到）；`KIND` 先認「ETF」再認「國外」（國外掛牌的 ETF 是基金、不是一家公司）；投信明細只保留存著的最新 `KEEP` 期（新的一期不收時上一期不會被擠掉）；個股資料的 `at` 只在內容真的變了才換。
+- 前端：`bestList`（每季明細不比每月舊 `XR.staleQ` 2 個月以上就用每季）、`changes`（新進／退出／比重變動 0.5 個百分點以上）、`lookThrough`（每檔 ETF 占總資產 × 成分比例加總，記下來源；沒有資料的 ETF 列在 `missing`）、`overlap`（Σ 兩邊較小的比例）、`treemap`（squarified，字放得下才放）。畫面：單檔頁「透視：裡面裝了什麼」（比例圖＋清單＋和上一期比）、部位分頁「透視：你其實押了誰」（單一公司超過 `XR.oneCo` 20% 琥珀提醒；依產業）、成分股小卡 `openStock`（官方資料、哪些 ETF 持有、你間接持有多少；**不評價個股**）、雷達搜尋打公司名稱、對決的成分股重疊（≥ `XR.overlapHi` 50% 標示高度重疊）。門檻改了同步 `xrayRulesHTML`。測試：`node tests/xray_test.mjs [hist 資料夾] [data 資料夾]`、`python3 tests/holdings_test.py`。
+
+## 資料同步（PZ：資料要真實、即時，幾分鐘內一定要校正，不能不同步、不能錯）
+- 後台每一輪 `publish` 寫 `version.json`：`{built, mode, files: {summary, live, news, stockq, stocks, hold}}`，每一份是那個檔案自己的時間欄位（summary／news 的 `generated`、live／stockq／stocks／hold 的 `at`，`build.py` 的 `STAMPS`／`file_stamps`）。沙盤只看 `built`，加欄位不影響它。
+- App（`app.js` 的 `syncTick`）畫面開著時**每分鐘**抓一次 `version.json`（回到 App 時馬上抓），拿手上那一份的同一個欄位比，哪一份變了就只重抓那一份：summary 變了＝新的一批（`newBatch`：summary、live、配息、戰績重抓，`core.js` 的 `invalidateBatch` 作廢單檔分析 `S.detail`、歷史檔 `S.hist`、成分股快取（xray.js 聽 `batch`／`holddata` 事件，用 `gen` 擋掉作廢前發出、之後才回來的舊請求）；開著的單檔頁重抓它的分析再畫、其他全螢幕頁提醒重新打開；全螢幕頁關掉時（`closed` 事件）把底下的畫面換新）。live 變了→`refreshLive`；news→`refreshNews`；stockq→成分股小卡開著就換價格（閃一下）。同一個時間戳抓過還是舊的（網站快取還沒換），2 分鐘後才再試（`tryStamp`）。後台是舊版（沒有 `files`）或離線：照舊盤中每分鐘看即時價、其他每 15 分鐘。對答案、定期定額另外每 15 分鐘跑一次。
+- 抓 data/ 的網址鍵（`core.js` 的 `dataUrl`）：知道要哪一版時帶版本檔的時間戳 `v=`（保證網站快取給那一版）；單檔分析 etf/、歷史 hist/、戰績、配息帶那一批的 `b=summary.generated`（只在 summary 是這次連網抓到的時候）；其他每分鐘換一次。`fetchData` 30 秒逾時（同步不會卡住）。換批時 `invalidateBatch` 把 `batchGen` 加一，作廢之前發出、之後才回來的 `ensureDetail`／`ensureHist` 不寫回快取；開機時上次存下的 summary 是舊的一批也會作廢一次。開 App 時沒網路（用 service worker 的舊副本）、之後連上了：整批重抓一次（`S.offline` 才會清掉；`online` 事件也會馬上同步）。
+- 新聞一律經過 `core.js` 的 `ensureNews`（超過 5 分鐘 `NEWS_MAX_AGE` 就重抓）。重畫主畫面用 `viewRender`：有全螢幕頁開著先不動（記 `S.viewStale`），正在搜尋框打字時只更新清單（不洗掉打到一半的字）。
+- 收盤後到完整計算跑完之前（約 13:35～14:30），證交所即時資料已經是今天的收盤：`quote()`、`taiexNow()`、打包的價格說明（desk.js `whenText`）都用它並標「今日收盤」，不會 ETF 是今天、大盤是昨天。報價的時間說法一律用 `core.js` 的 `quoteWhen`（13:30 以前「盤中 HH:MM」、13:30 那一筆「今日收盤」、其他「M/D 收盤」；aide.js 打包用同樣的規則）。
+- 今日損益（`pf.js` 的 `buildPortfolio`）：最新交易日＝各檔報價日期裡最新的；某一檔在那天沒有新的成交價（冷門、還沒成交），它那天的漲跌算 0，不把它前一個交易日的漲跌算進「今日」（那天的交易照樣用成交價和現價的差算）。
+- 直接從網址打開的全螢幕頁（`history.state` 是 null，例如書籤、別人傳的連結）關掉時只把網址的 # 拿掉（`replaceState`），不會「上一頁」離開冷眼；`swapSheet` 保留 null。
+- 測試：`tests/xray_test.mjs` 的成分股價格（盤中、收盤後、官方出來、還沒成交、整天沒成交、即時行情比較舊），`tests/holdings_test.py` 的每輪檢查、不倒退、失敗保留、回應日期對不上、投信不完整與合併。改了同步流程要在瀏覽器實際驗：改 data/ 裡的檔案和 version.json 的時間戳 → 只重抓那一份、開著的單檔頁重畫、新聞跟上、搜尋框打字不被洗掉。
 
 ## 定期定額（PZ 用國泰證券）
 - 規則照國泰官方說明（https://istockapp.cathaysec.com.tw/Marketing/DCA/）：每月 1～31 號任選、可多選；遇市場假日順延到下一個交易日；那個月沒有的日期（例如 2/30）那一期不買；盤中、盤後分批買零股，不設價格；每筆金額已含手續費（2026/12/31 前每筆 1 元，以百元為單位、最低 100 元）；扣款失敗（餘額不足）不補扣，連續 3 次失敗自動終止全部台股定期定額。**申請、變更、終止都是 1 個交易日後生效，最晚要在扣款日前 2 天送出**（4 號送、5 號生效、6 號扣；前 1 天才送，隔天照舊扣）→ `calc.js` 的 `dcaCutover`＝送出日之後第 2 個交易日。**股票停止交易（例如 0050 在 2025/6/11～6/17 分割停止買賣）那幾天券商不扣、也不補**（國泰台股說明沒有寫這一條；根據是 0050 分割時各券商都沒扣也沒補的報導 https://technews.tw/?p=1409883，以及國泰美股說明「資產分割等公司活動當次不扣款」；之後國泰有正式說明要照著改）。國泰改規則時改 `calc.js` 的定期定額區塊與 `dca.js` 的說明文字。
@@ -57,7 +77,8 @@
 - `live.json` 的 `date`（App 判斷「今天有沒有開市」、盤中接力判斷休市都看它）來自證交所即時成交資料本身的日期（`build.py` 的 `market_day`：加權指數 t00 的 `d` 與 tape 那一輪多數 ETF 的 `d`，取比較早的），每一檔的日期也不會比它新。不要改回用投信預估淨值檔 `all_etf.txt` 的日期：2026/10/23 颱風休市那天它有 45 檔標了「今天」，價格卻是前一天的。測試：`python3 tests/live_test.py`。
 - 執行紀錄在 `state` 分支的 `status.json` 的 `_runs`；盤中那幾輪沒有新聞變動時不寫 state（看 Actions 的執行列表）。
 - 歷史資料從 2020-01 起（`build.py` 的 `HISTORY_START`），回測包含 2022 年大跌，也包含已下市的 ETF（避免只看活下來的）。每檔的原始收盤、規則訊號取樣、分割與配息輸出在 `out/hist/{代號}.json`，給存股時光機用。
-- 本機測試：`python3 tests/local_pipeline.py`、`python3 tests/local_build.py <輸出資料夾>`（需要先有 probe 的原始回應）；部位計算：`node tests/pf_test.mjs [summary.json divs.json track.json]`、`node tests/pf_regress.mjs`；時光機、對決、熱力圖、資產走勢：`node tests/calc_test.mjs [hist/0050.json]`；副官：`node tests/aide_test.mjs [hist 資料夾] [track.json]`。今日一課與案例教室：`node tests/lessons_test.mjs [hist 資料夾]`。
+- 本機測試：`python3 tests/local_pipeline.py`、`python3 tests/local_build.py <輸出資料夾>`（需要先有 probe 的原始回應）；部位計算：`node tests/pf_test.mjs [summary.json divs.json track.json]`、`node tests/pf_regress.mjs`；時光機、對決、熱力圖、資產走勢：`node tests/calc_test.mjs [hist/0050.json]`；副官：`node tests/aide_test.mjs [hist 資料夾] [track.json]`。今日一課與案例教室：`node tests/lessons_test.mjs [hist 資料夾]`。判斷教練與透視：`node tests/xray_test.mjs [hist 資料夾] [data 資料夾]`、`python3 tests/holdings_test.py`。
+- probe 可以直接跑 pipeline 裡的函式：`control/probe.json` 寫 `{"name": "x", "py": "holdings:probe_full"}`，回傳值存成 `raw/x.json`（新來源先用這個在 GitHub Actions 上實測整段流程）。
 
 ## 介面設計（機甲 HUD）
 - 極夜深藍底；冰川藍 #4ee0ff＝系統與動作、極光紫 #b59cff＝「你自己」（持有、成本、提醒、模擬倉）、琥珀 #ffb02e＝小心；紅漲 #ff4d6a 綠跌 #17d39a 只用在價格、損益與多空。數字一律用 Oxanium，標題 Noto Serif TC，內文 Noto Sans TC。
@@ -66,4 +87,6 @@
 - 盤面熱力的「盤中縮時」（`app.js` 的 `heatReplay`）：讀 `data/spark.json`（後台每一輪輸出、今天每一檔的 [分鐘, 價]），把熱力圖從開盤快轉到現在（只換格子顏色與漲跌數字、不動排版；參考價用 `quote()` 的 `px − ch`，所以播完剛好接上現在的顏色；`spark.json` 的日期和報價日期不同就不播）。純顯示。
 - 聲光（PZ 要求「聲光效果拉滿」）：動態只放在有意義的時刻——開機點火、大盤之瞳的掃描、價格閃動、切換分頁的掃描、副官檢查逐條鎖定、記錄時蓋章、對答案揭曉；副官核心環會慢慢轉。全部可在設定關（`settings.fx`，body 加 `nofx`），並尊重「減少動態效果」。
 - 音效用 WebAudio 即時合成（`fx.js` 的 `SOUNDS`，不放音檔）；手機要先點一下才能出聲，所以開機預設停在「啟動」按鈕（`settings.ignite`）。語音播報用瀏覽器的 speechSynthesis，但只用裝置內建（`localService`）的中文語音——桌機 Chrome 的「Google 國語」、Edge 的 Online 語音會把文字送到網路，而晨報裡有持股，所以這種裝置不念（`voiceStatus`／`voiceWhy` 說明原因）；iPhone 要在點擊當下先 `primeSpeech()`。震動只有 Android 有效。iPhone 側邊靜音時不出聲（`audioSession.type = 'ambient'`）。
-- 檔案分工：`calc.js` 純計算（時光機、對決百分位、熱力圖排版、晨報、資產走勢、定期定額排程與預估）、`aide.js` 副官純計算、`dca.js` 定期定額畫面與自動入帳、`viz.js` 畫圖（瞳孔環、熱力圖、六角雷達、折線）、`learn.js` 名詞解釋（看懂模式）、`lessons.js` 今日一課、`cases.js` 案例教室、`tools.js` 對決與時光機畫面、`desk.js` 副官畫面、`fx.js` 聲光。新增名詞時同時補 `learn.js` 的 TERMS，畫面上的元素加 `data-term`。新增介面檔案要同時加進 `sw.js` 的 `SHELL_FILES`。
+- 「今日」漲跌一律用 `core.js` 的 `dayTag`：報價是今天的才寫「今日」，休市、週末、開盤前寫那個交易日（例如 10/22）。雷達清單在筆電／電視排兩欄。
+- 判斷教練的動態：上方訊號燈一格一格亮、每一步像任務序列一樣鎖定（掃過一道光）、最後小結；透視的比例圖是掃描線掃過一次、格子照比重亮起來；部位的「你其實押了誰」第一次打開掃一次。全部跟著 `settings.fx` 與「減少動態效果」關掉。
+- 檔案分工：`calc.js` 純計算（時光機、對決百分位、熱力圖排版、晨報、資產走勢、定期定額排程與預估）、`aide.js` 副官純計算、`dca.js` 定期定額畫面與自動入帳、`viz.js` 畫圖（瞳孔環、熱力圖、六角雷達、折線）、`learn.js` 名詞解釋（看懂模式）、`lessons.js` 今日一課、`cases.js` 案例教室、`coach.js` 判斷教練、`xray.js` ETF 透視與成分股、`tools.js` 對決與時光機畫面、`desk.js` 副官畫面、`fx.js` 聲光。新增名詞時同時補 `learn.js` 的 TERMS，畫面上的元素加 `data-term`。新增介面檔案要同時加進 `sw.js` 的 `SHELL_FILES`。

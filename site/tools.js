@@ -6,6 +6,7 @@ import { duelStats, DUEL_AXES, timeMachine, firstMonth, indexTo100, TM_STRATS } 
 import { hexSVG, linesSVG, bindLines } from './viz.js';
 import { closeDetail } from './sheet.js';
 import { openAsk } from './desk.js';
+import { duelOverlapHTML, openStock } from './xray.js';
 import * as FX from './fx.js';
 
 const SLOT_COL = ['var(--s1)', 'var(--s2)', 'var(--s3)'];   // 顏色跟著格子，不跟著排名
@@ -99,6 +100,7 @@ async function drawDuel() {
     </section>
     <section class="panel tbl-wrap"><table class="t duel-t"><thead><tr><th></th>${picks.map((p) => `<th class="r"><span class="th-c" style="--c:${SLOT_COL[p.i]}"><i></i>${esc(p.r.c)}</span></th>`).join('')}</tr></thead><tbody>${tRows}${extra}</tbody></table></section>
     <section class="panel chart-card"><div class="chart-head"><h3>近一年含息走勢</h3><span class="small muted">起點都換成 100</span></div><div class="chart" id="dchart"><div class="skeleton" style="height:200px"></div></div></section>
+    <div id="dover"></div>
     <section class="panel pad prose" id="dsum">${duelSummary(picks.map((p) => p.r))}<div class="row-btns" style="margin-top:10px"><button class="btn small ghost" id="duel-ask">${ICON.comms}帶這場對決去問 Claude</button></div></section>
     <p class="disclaim">數字來自官方收盤價與除息紀錄，用還原權息價計算；過去一年的表現不代表未來，這裡只是比較，不是推薦。</p>` : `<section class="panel pad calm"><b>再選一檔就能開始對決。</b><span class="muted">最多三檔，顏色會跟著格子，不會因為排名改變。</span></section>`}
   </div>`;
@@ -108,6 +110,13 @@ async function drawDuel() {
   $$('[data-rm]', sh).forEach((b) => b.addEventListener('click', () => { const d = settings.duel.slice(); d[+b.dataset.rm] = null; settings.duel = d; saveSettings(); drawDuel(); }));
   rows.forEach((r, i) => { if (!r) bindPicker(sh, 'dq' + i, (code) => { const d = settings.duel.slice(); while (d.length < 3) d.push(null); d[i] = code; settings.duel = d; saveSettings(); drawDuel(); }, slots.filter(Boolean)); });
   if (picks.length >= 2) {
+    // 成分股重疊（投信投顧公會基金投資明細）：資料慢一點到也不影響其他部分
+    duelOverlapHTML(picks.map((p) => p.r.c)).then((html) => {
+      const box = $('#dover', sh);
+      if (!box || S.openCode !== '__duel' || my !== duelSeq) return;
+      box.innerHTML = html;
+      $$('[data-stock]', box).forEach((b) => b.addEventListener('click', () => openStock(b.dataset.stock, b.dataset.kind || null)));
+    }).catch(() => {});
     const dets = await Promise.all(picks.map((p) => ensureDetail(p.r.c)));
     if (S.openCode !== '__duel' || my !== duelSeq) return;
     const box = $('#dchart', sh);

@@ -530,6 +530,8 @@ def publish(state, log, mode):
         shutil.rmtree(PUBLIC)
     shutil.copytree(SITE, PUBLIC)
     shutil.copytree(out_dir, PUBLIC / 'data', dirs_exist_ok=True)
+    # ETF 成分股與成分股資料每一輪都照 state 重寫：格式或內容改了，不用等收盤後那一輪才跟上
+    step(log, 'holdings_out', holdings.write_out, state, PUBLIC / 'data')
     step(log, 'sandtable_publish', tape.publish, PUBLIC / 'data', extra.get('tape'))
     live = make_live(state, extra, now, mode)
     write_json(PUBLIC / 'data' / 'live.json', live)

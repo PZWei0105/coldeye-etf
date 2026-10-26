@@ -59,9 +59,9 @@ def _():
     assert H.parse_holdings('<html>沒有表</html>') == ([], {})
 
 
-@t('種類：上市、上櫃、國外（股票、存託憑證、國外 ETF）、債券、基金、其他')
+@t('種類：上市、上櫃、國外（股票、存託憑證）、國外 ETF 算基金、債券、基金、其他')
 def _():
-    cases = {'國內上市': 'tse', '國內上櫃': 'otc', '國外股票(含承銷)': 'f', '國外存託憑證': 'f', '國外掛牌交易之ETF': 'f',
+    cases = {'國內上市': 'tse', '國內上櫃': 'otc', '國外股票(含承銷)': 'f', '國外存託憑證': 'f', '國外掛牌交易之ETF': 'fund',
              '公司債 無擔保': 'b', '政府公債 100%比例(有擔)': 'b', '金融債-Tlac 無擔保': 'b', '同公司發行之境內基金': 'fund',
              '投信ETF': 'fund', '依境外基金管理辦法經金管會核准之境外基金': 'fund', '其他': 'o'}
     for k, v in cases.items():
@@ -206,6 +206,7 @@ def _():
     data[('m', '202610', 'AH21')] = data[('m', '202609', 'AH21')]
     got = H.update(st, http, dt.date(2026, 11, 12))
     assert '202610' not in st['hold']['m'] and any('不完整' in g for g in got), got
+    assert '202609' in st['hold']['m']                       # 上一期沒有被擠掉
     # 隔天：AH11 也出來了一檔 → 收（2 檔，不少於一半）
     data[('m', '202610', 'AH11')] = [data[('m', '202609', 'AH11')][0]]
     got = H.update(st, http, dt.date(2026, 11, 13))
@@ -298,7 +299,7 @@ def _():
     tw, tp = FakeOpen(), FakeOpen()
     msg = H.update_stocks(st, tw, tp, dt.date(2026, 10, 22), target=20261022)
     s = st['stocks']['s']
-    assert set(s) == {'2330', '2454', '2891', '5274', '2308'}, (s, msg)
+    assert set(s) == {'2330', '2454', '2891', '5274', '2308', '2317'}, (s, msg)   # 2317 只在上一期（退出的也要點得到）
     assert s['2330'][:6] == ['台積電', 'tse', '半導體業', 2385.0, round(-35 / 2420 * 100, 2), 20261022], s['2330']
     assert s['2330'][6:] == [27.65, 0.92, 9.61, 20261022, 54.65, 41.11, '202609'], s['2330']
     assert s['2454'][3] == 4010.0 and s['2454'][4] is None            # 不比價
@@ -342,6 +343,14 @@ def _():
     assert st['stocks']['s']['5274'][9] == 20261026
     # 月營收今天已經看過、收盤與本益比也都是最新 → 略過
     assert H.update_stocks(st, tw2, tp2, dt.date(2026, 10, 26), target=20261026) == 'skip'
+    # 隔天又抓了一次但內容一樣：at 不換（App 才不會白白重抓）；內容變了才換
+    at0 = st['stocks']['at']
+    H.update_stocks(st, tw2, tp2, dt.date(2026, 10, 27), target=20261026)
+    assert st['stocks']['at'] == at0, (st['stocks']['at'], at0)
+    st['stocks']['at'] = 'old'
+    H.update_stocks(st, FakeOpen(day=20261027, open_day=20261027, px={'2330': ('2,410.00', RED, '10.00')}), FakeOpen(day=20261027, open_day=20261027),
+                    dt.date(2026, 10, 27), target=20261027)
+    assert st['stocks']['at'] != 'old' and st['stocks']['s']['2330'][3] == 2410.0
 
 
 @t('個股資料：指定日期抓不到改用 OpenAPI；某個市場整個失敗就保留上一次的（不會被空的蓋掉）；回應日期對不上不用')
@@ -429,7 +438,7 @@ def _():
     q = out['q']
     assert q['2330'] == [2400.0, 2385.0, 2390.0, 2410.0, 2380.0, 12345, 1792981865, 20261027], q['2330']
     assert q['2308'][0] is None and q['2308'][1] == 1000.0
-    assert out['d'] == 20261027 and out['n'] == 5
+    assert out['d'] == 20261027 and out['n'] == 6
 
 
 @t('輸出：每一檔的明細（含上一期）、索引（最完整清單、涵蓋率、前三大）、個股資料（每一檔自己的日期）與反查')
