@@ -44,6 +44,25 @@ def run():
 
     for t in targets:
         name = t['name']
+        if t.get('py'):
+            # 跑 pipeline 裡的一個函式（例如 "holdings:probe"），把回傳值存成 JSON：實測整段流程用
+            import importlib
+            import traceback
+            from .util import Http
+            meta = {'name': name, 'py': t['py']}
+            t0 = time.time()
+            try:
+                mod, fn = t['py'].split(':')
+                res = getattr(importlib.import_module(f'pipeline.{mod}'), fn)(Http(t.get('gap', 2.3)))
+                (out / 'raw' / f'{name}.json').write_text(json.dumps(res, ensure_ascii=False, indent=1, default=str),
+                                                          encoding='utf-8')
+                meta['ok'] = True
+            except Exception:  # noqa: BLE001
+                meta['error'] = traceback.format_exc()[-3000:]
+            meta['elapsed'] = round(time.time() - t0, 2)
+            summary['results'].append(meta)
+            print(json.dumps(meta, ensure_ascii=False)[:600], flush=True)
+            continue
         meta = {'name': name, 'url': t['url']}
         t0 = time.time()
         for verify in (True, False):

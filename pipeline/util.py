@@ -62,6 +62,29 @@ class Http:
         self.log.append({'url': url, 'error': err})
         raise RuntimeError(f'{url} -> {err}')
 
+    def post(self, url, *, data=None, tries=3, timeout=60, verify=True, **kw):
+        """送出表單（投信投顧公會的 ASP.NET 查詢頁要用）；和 get 一樣有間隔與重試。"""
+        host = re.sub(r'^https?://([^/]+).*$', r'\1', url)
+        err = None
+        for attempt in range(tries):
+            self._wait(host)
+            try:
+                r = self.s.post(url, data=data, timeout=timeout, verify=verify, **kw)
+                if r.status_code == 200:
+                    self.log.append({'url': url, 'status': 200, 'bytes': len(r.content), 'post': True})
+                    return r
+                err = f'HTTP {r.status_code}'
+                if r.status_code in (403, 404):
+                    break
+            except requests.exceptions.SSLError as e:
+                err = f'SSL {e!r}'[:300]
+                verify = False
+            except Exception as e:  # noqa: BLE001
+                err = repr(e)[:300]
+            time.sleep(3 + attempt * 4)
+        self.log.append({'url': url, 'error': err, 'post': True})
+        raise RuntimeError(f'POST {url} -> {err}')
+
     def json(self, url, **kw):
         r = self.get(url, **kw)
         txt = r.content.decode('utf-8-sig', errors='replace')
