@@ -257,6 +257,11 @@ class FakeOpen:
                 return {'stat': '很抱歉，沒有符合條件的資料!'}
             return {'stat': 'OK', 'date': str(d), 'fields': ['證券代號', '證券名稱', '收盤價', '殖利率(%)', '股利年度', '本益比', '股價淨值比', '財報年/季'],
                     'data': [['2330', '台積電', '2385', '0.92', '114', '27.65', '9.61', '115/2'], ['2891', '中信金', '74.9', '3.34', '114', '-', '2.14', '115/2']]}
+        if 'peQryDate' in url:
+            y, m, dd = url.split('date=')[1].split('&')[0].split('%2F')
+            d = int(y) * 10000 + int(m) * 100 + int(dd)
+            rows = [['5274', '信驊', '106.80', '15.0', 114, '0.51', '77.68', '115Q2']] if d == self.day else []
+            return {'stat': 'ok', 'date': str(d), 'tables': [{'title': '', 'fields': ['股票代號', '公司名稱', '本益比', '每股股利', '股利年度', '殖利率(%)', '股價淨值比', '財報年/季'], 'data': rows}]}
         if 'afterTrading/otc' in url:
             y, m, dd = url.split('date=')[1].split('&')[0].split('%2F')
             d = int(y) * 10000 + int(m) * 100 + int(dd)
@@ -300,7 +305,7 @@ def _():
     assert s['2891'][6] is None and s['2891'][7] == 3.34              # 本益比是「-」
     assert s['2308'][3] is None and s['2308'][5] is None               # 那天沒成交：留空
     assert s['5274'][1] == 'otc' and s['5274'][3] == 16010.0 and s['5274'][5] == 20261022
-    assert s['5274'][6] == 106.8 and s['5274'][9] == 20261022         # 上櫃本益比用 OpenAPI（有日期）
+    assert s['5274'][6] == 106.8 and s['5274'][9] == 20261022         # 上櫃本益比（依日期查詢）
     assert st['stocks']['dd'] == {'tse': 20261022, 'otc': 20261022, 'pe_tse': 20261022, 'pe_otc': 20261022}
     assert not any('STOCK_DAY_ALL' in u for u in tw.urls)              # 指定日期有資料就不用 OpenAPI
     # 同一天再跑：全部都是最新的 → 略過（不再抓任何東西）
@@ -320,17 +325,19 @@ def _():
     assert s['2330'][3] == 2385.0 and s['2330'][5] == 20261022        # 沒有被 OpenAPI 的舊資料蓋掉
     assert st['stocks']['dd']['tse'] == 20261022
     # 下一輪還會再檢查（不是一天一次）
-    tw2, tp2 = FakeOpen(day=20261026, open_day=20261022, px={'2330': ('2,400.00', RED, '15.00')}), FakeOpen(day=20261026, open_day=20261022)
+    tw2, tp2 = FakeOpen(day=20261026, open_day=20261022, px={'2330': ('2,400.00', RED, '15.00')}), FakeOpen(day=20261026, open_day=20261022, fail=('peQryDate',))
     H.update_stocks(st, tw2, tp2, dt.date(2026, 10, 26), target=20261026)
     s = st['stocks']['s']
     assert s['2330'][3] == 2400.0 and s['2330'][5] == 20261026, s['2330']
     assert s['5274'][3] == 16010.0 and s['5274'][5] == 20261026
     assert st['stocks']['dd']['tse'] == 20261026 and st['stocks']['dd']['otc'] == 20261026
-    # 上櫃的本益比（OpenAPI）還停在 10/22：下一輪只再問那一份
+    # 上櫃的本益比（依日期查詢失敗、OpenAPI 還停在 10/22）：下一輪只再問那一份
+    assert st['stocks']['s']['5274'][9] == 20261022 and st['stocks']['dd']['pe_otc'] == 20261022
     n = len(tw2.urls) + len(tp2.urls)
     H.update_stocks(st, tw2, tp2, dt.date(2026, 10, 26), target=20261026)
-    assert [u for u in (tw2.urls + tp2.urls)[n:]] == ['https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis'], (tw2.urls + tp2.urls)[n:]
-    tp2.open_day = 20261026
+    asked = [u.split('/')[-1].split('?')[0] for u in (tw2.urls + tp2.urls)[n:]]
+    assert asked == ['peQryDate', 'tpex_mainboard_peratio_analysis'], asked
+    tp2.fail = set()
     H.update_stocks(st, tw2, tp2, dt.date(2026, 10, 26), target=20261026)
     assert st['stocks']['s']['5274'][9] == 20261026
     # 月營收今天已經看過、收盤與本益比也都是最新 → 略過

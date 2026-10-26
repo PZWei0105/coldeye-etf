@@ -519,6 +519,29 @@ def twse_pe_day(http, d: int, want):
     return out
 
 
+def tpex_pe_day(http, d: int, want):
+    """櫃買中心上櫃個股本益比、殖利率、股價淨值比（依日期查詢）某一天：{代號: (本益比, 殖利率, 股價淨值比)}。"""
+    y, m, dd = d // 10000, d // 100 % 100, d % 100
+    js = http.json(f'{TPEX_RWD}/afterTrading/peQryDate?date={y}%2F{m:02d}%2F{dd:02d}&response=json', timeout=90)
+    if not _ok(js):
+        return {}
+    rd = _resp_day(js)
+    if rd and rd != d:
+        return {}
+    out = {}
+    for t in tables_of(js):
+        f = t['fields']
+        ic, ipe = find_col(f, '代號'), find_col(f, '本益比')
+        if ic is None or ipe is None:
+            continue
+        idy, ipb = find_col(f, '殖利率'), find_col(f, '股價淨值比')
+        for row in t['data']:
+            code = str(row[ic]).strip()
+            if code in want:
+                out[code] = (_f(row[ipe]), _f(row[idy]) if idy is not None else None, _f(row[ipb]) if ipb is not None else None)
+    return out
+
+
 def twse_pe_open(http, want):
     """證交所 OpenAPI 個股本益比（最新一天）：({代號: (...)}, 日期或 None)。"""
     out, day = {}, None
@@ -629,17 +652,10 @@ def update_stocks(state, http_tw, http_tp, today: dt.date, target=None, force=Fa
             for c, v in got.items():
                 px[c] = (v, d)
     for key, codes, day_fn, open_fn, http in (('pe_tse', tse, twse_pe_day, twse_pe_open, http_tw),
-                                               ('pe_otc', otc, None, tpex_pe_open, http_tp)):
+                                               ('pe_otc', otc, tpex_pe_day, tpex_pe_open, http_tp)):
         if not parts[key]:
             continue
-        if day_fn is None:
-            try:
-                got, d = open_fn(http, codes)
-            except Exception as e:  # noqa: BLE001
-                errs.append(f'{open_fn.__name__}: {e!r}'[:160])
-                got, d = {}, None
-        else:
-            got, d = fetch(day_fn, open_fn, http, codes)
+        got, d = fetch(day_fn, open_fn, http, codes)
         if got and (d is None or d >= (dd.get(key) or 0)):
             if d:
                 dd[key] = d
@@ -923,4 +939,45 @@ def probe_sources(http):
         return {'at': at, 'n': len(arr), 'parsed': {m.get('c'): tape.parse_quote(m) for m in arr},
                 'raw0': {k: v for k, v in (arr[0] if arr else {}).items() if k in ('c', 'n', 'z', 'y', 'o', 'h', 'l', 'v', 't', 'd', 'tlong', 'ex', 'pz', 'a', 'b')}}
     run('mis', mis)
+    return out
+
+
+def probe_stocks_full(http):
+    """開發用：拿 state 分支的真實資料（不存回去）跑一次個股資料更新、略過檢查、盤中報價與輸出，回傳摘要。"""
+    import json
+    import pathlib
+    import tempfile
+    import time
+    from . import gitstate
+    from .state import State
+    from .util import Http
+    state = State(gitstate.open_branch('state', '.state'))
+    days = state['taiex']['d']
+    today = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).date()
+    before = {k: v for k, v in (state['stocks'] or {}).items() if k != 's'}
+    out = {'target': days[-1] if days else None, 'before': before, 'want': len(domestic_codes(state))}
+    t0 = time.time()
+    out['first'] = update_stocks(state, Http(1.5), Http(1.5), today, target=out['target'])
+    out['first_s'] = round(time.time() - t0, 1)
+    out['second'] = update_stocks(state, Http(1.5), Http(1.5), today, target=out['target'])
+    s = state['stocks']['s']
+    out['after'] = {k: v for k, v in state['stocks'].items() if k != 's'}
+    out['n'] = len(s)
+    out['no_close'] = [c for c, v in s.items() if not v[3]][:30]
+    out['no_pe_date'] = [c for c, v in s.items() if not v[9]][:30]
+    out['cd'] = sorted({v[5] for v in s.values() if v[5]})
+    out['sample'] = {c: s.get(c) for c in ('2330', '2454', '2317', '6488', '5274', '3105', '2891')}
+    t1 = time.time()
+    try:
+        q = stock_quotes(state)
+        out['quotes'] = {'s': round(time.time() - t1, 1), 'n': len(q['q']), 'd': q['d'], 'want': q['n'],
+                         'no_z': [c for c, v in q['q'].items() if v[0] is None][:20],
+                         'sample': {c: q['q'].get(c) for c in ('2330', '6488', '5274')}}
+    except Exception as e:  # noqa: BLE001
+        out['quotes'] = {'err': repr(e)[:300], 's': round(time.time() - t1, 1)}
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    write_out(state, tmp)
+    sj = json.loads((tmp / 'stocks.json').read_text(encoding='utf-8'))
+    out['stocks_json'] = {'size': (tmp / 'stocks.json').stat().st_size, 'at': sj.get('at'), 'dd': sj.get('dd'),
+                          '2330': sj['s'].get('2330')}
     return out
