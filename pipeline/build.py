@@ -319,21 +319,25 @@ def eod(state, log, weekly=False):
                     lst.append([hd, n, units])
                     del lst[:-60]
             state.mark('tdcc', when=when)
-    # ETF 成分股（投信投顧公會每月前十大、每季明細）與成分股的官方個股資料：17:00 以後那幾輪才做（不拖慢 14:25 的收盤計算）
+    # ETF 成分股（投信投顧公會每月前十大、每季明細）：17:00 以後那幾輪才做（一天檢查一次，不拖慢 14:25 的收盤計算）
     if weekly or now.hour >= 17 or not state['hold'].get('m'):
         got = step(log, 'sitca_holdings', holdings.update, state, Http(2.3), today)
         if got and got != 'skip':
             state.mark('sitca', when=when)
-        sk = step(log, 'stocks', holdings.update_stocks, state, Http(1.5), Http(1.5), today)
-        if sk and sk not in ('skip', 'no-holdings'):
-            state.mark('stocks', when=when)
+    # 成分股的官方收盤、本益比、月營收：每一輪都檢查，直到是最新交易日的資料（不是一天一次，免得卡在舊的）
+    days = trading_days(state)
+    sk = step(log, 'stocks', holdings.update_stocks, state, Http(1.5), Http(1.5), today, target=days[-1] if days else None)
+    if sk and sk not in ('skip', 'no-holdings'):
+        state.mark('stocks', when=when)
+    # 成分股的即時行情（收盤後是當天收盤時的資料；官方收盤資料還沒出來之前 App 先用它）
+    sq = step(log, 'stock_quotes', holdings.stock_quotes, state)
     # 沙盤用：交易日曆、盤後零股與盤後定價結果、今天的 tape 收尾並封存
     step(log, 'sandtable_cal', tape.update_cal, state, log, http_tw)
     step(log, 'sandtable_after', tape.update_after, state, log, http_tw)
     step(log, 'sandtable_finish', tape.finish_day, state, log)
     # 證交所即時資料的日期（判斷今天有沒有開市用，颱風假也一樣；失敗就當作不知道）
     tx = step(log, 'mis_taiex', src.mis_quotes, http_x, ['tse_t00.tw']) or {}
-    state['_extra'] = {'mis': mis, 'pre': pre, 'risk': risk, 'news': news, 'taiex_live': tx.get('t00')}
+    state['_extra'] = {'mis': mis, 'pre': pre, 'risk': risk, 'news': news, 'taiex_live': tx.get('t00'), 'stockq': sq}
     store_news(state, news)
 
 
@@ -440,9 +444,11 @@ def intraday(state, log):
             news.extend(items)
     store_news(state, news)
     fresh = {x['url'] for x in state['news']} - before
+    # 成分股的即時行情（ETF 透視的成分股小卡用）
+    sq = step(log, 'stock_quotes', holdings.stock_quotes, state)
     # 沙盤用的五檔與 tape（失敗也不影響冷眼）
     tp = step(log, 'sandtable_tape', tape.intraday, state, log)
-    state['_extra'] = {'mis': mis, 'taiex_live': tx.get('t00'), 'news_changed': bool(fresh), 'tape': tp}
+    state['_extra'] = {'mis': mis, 'taiex_live': tx.get('t00'), 'news_changed': bool(fresh), 'tape': tp, 'stockq': sq}
 
 
 # ================================================================== 計算與輸出
@@ -527,7 +533,11 @@ def publish(state, log, mode):
     step(log, 'sandtable_publish', tape.publish, PUBLIC / 'data', extra.get('tape'))
     live = make_live(state, extra, now, mode)
     write_json(PUBLIC / 'data' / 'live.json', live)
-    write_json(PUBLIC / 'data' / 'version.json', {'built': now.isoformat(timespec='seconds'), 'mode': mode})
+    if extra.get('stockq'):
+        write_json(PUBLIC / 'data' / 'stockq.json', extra['stockq'])
+    # 各份資料的時間戳：App 每分鐘看一次這個小檔，哪一份變了就只重抓那一份（幾分鐘內就同步）
+    write_json(PUBLIC / 'data' / 'version.json', {'built': now.isoformat(timespec='seconds'), 'mode': mode,
+                                                  'files': file_stamps(PUBLIC / 'data')})
     (PUBLIC / '.nojekyll').write_text('', encoding='utf-8')
     # service worker 的版本號 = 介面檔案內容的指紋：程式真的有改才換新版，
     # 盤中每 5 分鐘一次的資料更新不會讓手機每次打開都重新下載整個 App
@@ -535,6 +545,23 @@ def publish(state, log, mode):
     if sw.exists():
         sw.write_text(sw.read_text(encoding='utf-8').replace('__BUILD__', site_fingerprint()), encoding='utf-8')
     return True
+
+
+STAMPS = (('summary', 'generated'), ('live', 'at'), ('news', 'generated'), ('stockq', 'at'), ('stocks', 'at'), ('hold', 'at'))
+
+
+def file_stamps(data_dir):
+    """每一份資料自己帶的時間（summary 的 generated、live 的 at…）。App 拿手上那一份的同一個欄位來比，
+    不一樣就重抓。讀不到的不列（App 會照舊方式定時更新）。"""
+    out = {}
+    for name, key in STAMPS:
+        try:
+            v = json.loads((data_dir / f'{name}.json').read_text(encoding='utf-8')).get(key)
+        except Exception:  # noqa: BLE001
+            continue
+        if v:
+            out[name] = str(v)
+    return out
 
 
 def site_fingerprint():

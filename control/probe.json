@@ -1,4 +1,3 @@
 [
- {"name": "holdings_full", "py": "holdings:probe_full", "gap": 2.3},
- {"name": "tpex_close", "url": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes", "sleep": 2.5}
+ {"name": "stock_sources", "py": "holdings:probe_sources", "gap": 2.3}
 ]
