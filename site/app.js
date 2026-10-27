@@ -3,7 +3,7 @@
    持股、交易、模擬倉、提醒：只存在這支手機（localStorage），不會上傳。 */
 import {
   $, $$, esc, clamp, isNum, reduceMotion, store, settings, saveSettings, book, alerts, saveAlerts, S, bus, fmt, money, sharesOf, cash3,
-  dirCls, arrow, twParts, CAT, catName, POS, ST, ICON, getJSON, loadCore, useCache, ensureTrack, ensureDivs, ensureHist, quote,
+  dirCls, arrow, twParts, CAT, catName, POS, ST, ICON, getJSON, loadCore, useCache, ensureTrack, ensureDivs, ensureCal, marketClosedOn, ensureHist, quote,
   computePF, hasBook, heldOf, slotVar, stanceChip, posChip, actChip, gaugeSVG, animateNeedles, sparkSVG, toast, countUp,
   today, PF, premBand, DEFAULT_RULES, isPaper, switchMode, reloadBook, isBookKey, journal, saveJournal, reloadJournal, isJournalKey, taiexNow,
   reloadPlans, dayTag, ensureNews, NEWS_MAX_AGE, invalidateBatch, ensureDetail, plainText,
@@ -142,7 +142,8 @@ function freshness() {
   const liveToday = !!(L && L.date === td);
   // 後台今天開盤後跑過，證交所的即時資料卻停在之前的日期 → 今天休市（颱風假也一樣）
   const ranToday = !!(L && isoD(L.at) === td && isoHm(L.at) >= 905);
-  const closedToday = ranToday && L.date != null && L.date < td;
+  // 證交所的開休市日期表說今天休市（國定假日、補假）：不用等後台開盤後跑過才知道
+  const closedToday = (ranToday && L.date != null && L.date < td) || (weekday && !liveToday && marketClosedOn(td));
   if (session && liveToday && L.open) {
     const lag = age != null && age > LAG_MIN;
     return { key: lag ? 'lag' : 'live', txt: `盤中　${hhmm(L.at)} 資料・${agoShort(age)}`, stall };
@@ -518,7 +519,6 @@ function buildActions(P) {
   const seen = new Set();
   return out.sort((a, b) => a.pri - b.pri).filter((a) => { const k = a.code + a.chip; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 9);
 }
-/** 這個月的扣款日：當月的 day 號，遇到週六、週日順延到星期一（颱風假等臨時休市看不到） */
 function actionsHTML(P) {
   const acts = buildActions(P);
   let html = `<div class="sec-h"><h2>今日行動</h2><span class="aside">${acts.length ? `${acts.length} 件` : ''}</span></div>`;
@@ -1663,7 +1663,7 @@ async function newBatch(o = {}) {
   const changed = o.force || (S.summary && S.summary.generated !== before);
   // 先作廢、再抓戰績與配息：網址帶的是新的這一批，網站的快取不會給舊的
   if (changed) invalidateBatch();
-  const [track] = await Promise.all([changed || !S.track ? getJSON('track.json', { batch: true }).catch(() => null) : null, ensureDivs(true)]);
+  const [track] = await Promise.all([changed || !S.track ? getJSON('track.json', { batch: true }).catch(() => null) : null, ensureDivs(true), ensureCal(true)]);
   if (track) S.track = track;
   if (changed && S.news) refreshNews();
   diffSeen();
@@ -1732,7 +1732,7 @@ async function boot() {
     if (!S.summary) { $('#view').innerHTML = '<section class="panel empty">資料還在準備中，請稍後再開。</section>'; return; }
     toast('連不上伺服器，顯示的是上次的資料');
   }
-  await Promise.all([ensureTrack(), ensureDivs(true)]);
+  await Promise.all([ensureTrack(), ensureDivs(true), ensureCal(true)]);
   diffSeen();
   computePF();
   if (!cached) maybeBoot();

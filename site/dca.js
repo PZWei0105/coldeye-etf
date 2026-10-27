@@ -4,7 +4,7 @@
    「每一期應該記成什麼樣子」由 calc.js 的 dcaReconcile 算（純函式）：只動還沒核對的「預估」，核對過的、你自己記的交易一律不動。 */
 import {
   $, $$, esc, isNum, S, PF, settings, saveSettings, savePlans, reloadPlans, fmt, money, sharesOf, ICON, toast, bus, today, newId,
-  ensureHist, updateRealBook, realLots, isPaper, PLAN_MAX, store,
+  ensureHist, updateRealBook, realLots, isPaper, PLAN_MAX, store, marketClosedOn,
 } from './core.js';
 import { openModal, closeModal, modalOpen } from './forms.js';
 import * as C from './calc.js';
@@ -167,18 +167,10 @@ export function dcaAfterWipe() {
 /** 這支手機看到過「今天休市」的日子（後台開盤後有跑、證交所的資料卻停在之前）：用來判斷扣款有沒有順延到今天 */
 const closedDays = () => { const xs = store.get('closed', []); return Array.isArray(xs) ? xs.filter((x) => Number.isInteger(x)) : []; };
 function noteClosed(td) { const xs = closedDays(); if (!xs.includes(td)) store.set('closed', [...xs, td].slice(-40)); }
-const weekdayOf = (d) => new Date(Date.UTC(Math.floor(d / 10000), Math.floor(d / 100) % 100 - 1, d % 100)).getUTCDay();
-/** 原本的扣款日到昨天的每一個平日都確定休市，國泰才會順延到今天（資料只是晚到的時候不亂說） */
+/** 原本的扣款日到昨天的每一個平日都確定休市（證交所開休市日期表、或這支手機看到過），國泰才會順延到今天（資料只是晚到的時候不亂說） */
 function rolledKnown(p, td, asof) {
   const closed = new Set(closedDays());
-  const days = new Set(C.planDays(p));
-  for (let x = PF.addDays(asof, 1); x < td; x = PF.addDays(x, 1)) {
-    if (!days.has(x % 100)) continue;
-    let ok = true;
-    for (let y = x; y < td; y = PF.addDays(y, 1)) { const w = weekdayOf(y); if (w >= 1 && w <= 5 && !closed.has(y)) { ok = false; break; } }
-    if (ok) return true;
-  }
-  return false;
+  return C.rolledKnownBy(p, td, asof, (d) => closed.has(d) || marketClosedOn(d));
 }
 /** 今天扣款的計畫、待核對的筆數（給指揮台的「今日行動」） */
 export function dcaActions(chip) {
@@ -189,7 +181,8 @@ export function dcaActions(chip) {
   const openToday = !!(L && L.date === td);          // 今天有盤中資料＝今天有開市
   // 後台今天開盤後跑過、證交所的即時資料卻停在之前的日期＝今天休市（和頂端狀態列同一個判斷）
   const ranToday = !!(L && L.at && +String(L.at).slice(0, 10).replace(/-/g, '') === td && +String(L.at).slice(11, 13) * 100 + +String(L.at).slice(14, 16) >= 905);
-  const closedToday = ranToday && L.date != null && L.date < td;
+  // 證交所的開休市日期表說今天休市（國定假日、補假）：一早就知道，不用等後台開盤後跑過
+  const closedToday = (ranToday && L.date != null && L.date < td) || (!openToday && marketClosedOn(td));
   if (closedToday) noteClosed(td);
   const asof = S.summary ? S.summary.asof : null;
   for (const p of settings.plans || []) {

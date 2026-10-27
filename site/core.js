@@ -1,6 +1,6 @@
 /* 冷眼 — 共用核心：狀態、設定、資料載入、格式、圖示、小元件。 */
 import * as PF from './pf.js';
-import { breadth, normPlan, planSkipKeys, normSkips, normNoAsk } from './calc.js';
+import { breadth, normPlan, planSkipKeys, normSkips, normNoAsk, calClosed } from './calc.js';
 import * as FX from './fx.js';
 
 export { PF };
@@ -171,7 +171,7 @@ export const isJournalKey = (k) => k === 'coldeye.journal';
 
 // ------------------------------------------------------------------ 全域狀態與事件
 export const S = {
-  summary: null, live: null, offline: false, news: null, newsAt: 0, track: null, divs: null, detail: {}, hist: {}, histMeta: {}, breadth: null, pxSeen: new Map(),
+  summary: null, live: null, offline: false, news: null, newsAt: 0, track: null, divs: null, cal: null, detail: {}, hist: {}, histMeta: {}, breadth: null, pxSeen: new Map(),
   verOffline: false, summaryNet: false, stockq: null, stockqAt: 0,
   tab: store.get('tab', 'home'), all: { q: '', cat: '*', sig: '*', sort: 'score' }, newsTab: 'official',
   range: 120, rows: new Map(), deferredInstall: null, P: null, adv: new Map(), openCode: null,
@@ -390,6 +390,7 @@ export function useCache() {
   S.breadth = breadth(cached.etfs);
   S.live = store.get('cache.live', null);
   S.divs = store.get('cache.divs', null);
+  S.cal = store.get('cache.cal', null);
   return true;
 }
 export async function ensureTrack() {
@@ -397,6 +398,17 @@ export async function ensureTrack() {
   try { S.track = await getJSON('track.json', { batch: true }); } catch { S.track = null; }
   return S.track;
 }
+/** 證交所開休市日期表（後台的 cal.json）：判斷平日的國定假日、補假、颱風假。抓不到就用上次存的，沒有就當作不知道 */
+export async function ensureCal(force = false) {
+  if (S.cal && !force) return S.cal;
+  try {
+    const c = await getJSON('cal.json', { batch: true });
+    if (c && Array.isArray(c.holidays)) { S.cal = { holidays: c.holidays, closed: Array.isArray(c.closed) ? c.closed : [] }; store.set('cache.cal', S.cal); }
+  } catch { /* 用快取 */ }
+  return S.cal;
+}
+/** 這一天證交所確定休市（休市日期表上的平日、或用實際成交推出來的颱風假） */
+export const marketClosedOn = (d) => calClosed(S.cal, d);
 export async function ensureDivs(force = false) {
   if (S.divs && !force) return S.divs;
   try { S.divs = await getJSON('divs.json', { batch: true }); store.set('cache.divs', S.divs); } catch { /* 用快取 */ }

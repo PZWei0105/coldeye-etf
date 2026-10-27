@@ -420,6 +420,25 @@ t('定期定額提醒：週末順延、那個月沒有的日期不提醒、開�
   assert.equal(C.dcaRolledToday({ days: [9], start: 20261013 }, 20261012, 20261008), false);
 });
 
+t('定期定額順延：證交所休市日期表（光復節補假 10/26）不用這支手機親眼看過', () => {
+  const cal = { holidays: [20261009, 20261026], closed: [20261023] };
+  const isC = (d) => C.calClosed(cal, d);
+  assert.equal(C.calClosed(cal, 20261026), true);
+  assert.equal(C.calClosed(cal, 20261023), true);    // 颱風假（用實際成交推出來的）
+  assert.equal(C.calClosed(cal, 20261027), false);
+  assert.equal(C.calClosed(null, 20261026), false);  // 沒有表：當作不知道
+  // 26 號那一期：10/26 補假 → 10/27 扣；上一個交易日 10/22（10/23 颱風、週末、10/26 補假）
+  assert.equal(C.rolledKnownBy({ days: [26] }, 20261027, 20261022, isC), true);
+  // 23 號那一期：10/23 颱風、10/26 補假都確定休市 → 也是 10/27 扣
+  assert.equal(C.rolledKnownBy({ days: [23] }, 20261027, 20261022, isC), true);
+  // 沒有表也沒親眼看過：資料可能只是晚到，不亂說
+  assert.equal(C.rolledKnownBy({ days: [26] }, 20261027, 20261022, () => false), false);
+  // 只知道 10/26 休市、不知道 10/23：23 號那一期不說順延到今天
+  assert.equal(C.rolledKnownBy({ days: [23] }, 20261027, 20261022, (d) => d === 20261026), false);
+  assert.equal(C.rolledKnownBy({ days: [27] }, 20261027, 20261022, isC), false);   // 今天本來就是扣款日，不是順延
+  assert.equal(C.rolledKnownBy({ days: [26] }, 20261027, 20261027, isC), false);
+});
+
 t('部位走勢：市值、淨投入、除息前一天買才領得到、分割後股數變多', () => {
   const h = { d: [20260105, 20260106, 20260107, 20260108, 20260109], p: [100, 102, 100, 25.5, 26], splits: [[20260108, 4]], divs: [[20260107, 2]] };
   const lots = [

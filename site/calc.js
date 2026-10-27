@@ -852,3 +852,23 @@ export function dcaRolledToday(plan, td, lastTd) {
   }
   return false;
 }
+/**
+ * 上一個交易日 asof 之後、今天 td 之前，有一個原本的扣款日，而且從那天到昨天的每一個平日都「確定休市」（isClosed），
+ * 國泰才會順延到今天扣。確定休市＝證交所的開休市日期表（cal.json）或這支手機親眼看到過；資料只是晚到的時候不亂說。
+ */
+export function rolledKnownBy(plan, td, asof, isClosed) {
+  const days = new Set(planDays(plan));
+  if (!days.size || !okDay8(td) || !okDay8(asof) || asof >= td) return false;
+  for (let x = addDays(asof, 1), g = 0; x < td && g < 40; x = addDays(x, 1), g++) {
+    if (!days.has(x % 100)) continue;
+    let ok = true;
+    for (let y = x; y < td; y = addDays(y, 1)) { if (isWeekday(y) && !isClosed(y)) { ok = false; break; } }
+    if (ok) return true;
+  }
+  return false;
+}
+/** 證交所開休市日期表（後台的 cal.json：休市日、只辦交割日、用實際成交推出來的颱風假）：這一天確定不交易 */
+export function calClosed(cal, d) {
+  if (!cal || !Number.isInteger(d)) return false;
+  return (Array.isArray(cal.holidays) && cal.holidays.includes(d)) || (Array.isArray(cal.closed) && cal.closed.includes(d));
+}
