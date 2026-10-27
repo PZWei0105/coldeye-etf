@@ -541,8 +541,12 @@ function heatCardHTML(mini) {
   const mode = settings.heatMode;
   return `<div class="sec-h"><h2>盤面熱力</h2><div class="seg mini" role="tablist">${[['chg', chgLabel()], ['score', '規則分數']].map(([k, t]) => `<button data-hmode="${k}" aria-pressed="${mode === k}">${t}</button>`).join('')}</div></div>
     <section class="panel heat-card"><div class="heat-wrap"><div class="heat" data-heat="${mini ? 'mini' : 'full'}"></div><div class="hm-clock" hidden><span class="k">盤中縮時</span><b class="num">09:00</b><i><s></s></i></div></div>
-      <div class="heat-foot">${heatLegend(mode)}<span class="heat-acts">${mode === 'chg' ? `<button class="link small" data-replay>${ICON.play || '▶'} 盤中縮時</button>` : ''}${mini ? '<button class="link small" id="heat-more">看全部</button>' : ''}</span></div>
-      <p class="small muted heat-cap">格子大小＝<span data-term="val">成交值</span>，${mode === 'chg' ? '顏色＝今天漲跌（紅漲綠跌）' : '顏色＝<span data-term="sc">規則分數</span>（紅偏多、綠偏空）'}。${mini ? '只放成交值前 60 檔；' : ''}點格子看那一檔。</p></section>`;
+      <div class="heat-foot">${heatLegend(mode)}<span class="heat-acts"><button class="link small" data-replay${mode === 'chg' ? '' : ' hidden'}>${ICON.play || '▶'} 盤中縮時</button>${mini ? '<button class="link small" id="heat-more">看全部</button>' : ''}</span></div>
+      <p class="small muted heat-cap">${heatCapHTML(mode, mini)}</p></section>`;
+}
+/** 熱力圖下面的說明：顏色是哪一天的漲跌（和上面的標籤一樣，不是今天的資料就寫那一天） */
+function heatCapHTML(mode, mini) {
+  return `格子大小＝<span data-term="val">成交值</span>，${mode === 'chg' ? `顏色＝${chgLabel()}（紅漲綠跌）` : '顏色＝<span data-term="sc">規則分數</span>（紅偏多、綠偏空）'}。${mini ? '只放成交值前 60 檔；' : ''}點格子看那一檔。`;
 }
 function drawHeats(root, filter) {
   for (const box of $$('[data-heat]', root)) {
@@ -553,7 +557,7 @@ function drawHeats(root, filter) {
     if (mini) rows = rows.sort((a, b) => b.val - a.val).slice(0, 60);
     const desk = window.innerWidth >= 1100;
     const h = Math.round(mini ? clamp(w * 0.62, 200, desk ? 420 : 300) : clamp(w * (desk ? 0.6 : 1.15), 320, desk ? 640 : 620));
-    box.innerHTML = rows.length ? heatHTML(rows, { w, h, mode: settings.heatMode, groups: CAT, mini }) : '<div class="empty">沒有符合的 ETF</div>';
+    box.innerHTML = rows.length ? heatHTML(rows, { w, h, mode: settings.heatMode, groups: CAT, mini, tag: dayTag([S.live && S.live.date, S.summary && S.summary.asof]) }) : '<div class="empty">沒有符合的 ETF</div>';
     $$('.hm-t', box).forEach((b) => b.addEventListener('click', () => openDetail(b.dataset.code)));
   }
 }
@@ -635,10 +639,14 @@ function bindHeat(v, filter) {
     saveSettings();
     $$('[data-hmode]', v).forEach((z) => z.setAttribute('aria-pressed', z === b));
     const card = b.closest('.sec-h').nextElementSibling;
+    if (heatRP) stopHeatReplay(false);
     if (card) {
       $('.heat-foot', card).firstElementChild.outerHTML = heatLegend(settings.heatMode);
+      const rp = $('[data-replay]', card);
+      if (rp) rp.hidden = settings.heatMode !== 'chg';   // 縮時播的是漲跌，規則分數的顏色不播
       const cap = $('.heat-cap', card);
-      if (cap) cap.innerHTML = `格子大小＝<span data-term="val">成交值</span>，${settings.heatMode === 'chg' ? '顏色＝今天漲跌（紅漲綠跌）' : '顏色＝<span data-term="sc">規則分數</span>（紅偏多、綠偏空）'}。點格子看那一檔。`;
+      const mini = !!$('[data-heat="mini"]', card);
+      if (cap) cap.innerHTML = heatCapHTML(settings.heatMode, mini);
     }
     drawHeats(v, filter);
   }));

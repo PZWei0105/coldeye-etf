@@ -72,11 +72,13 @@ export function heatColor(v, max) {
   return `color-mix(in oklab, ${v > 0 ? 'var(--up)' : 'var(--down)'} ${pct}%, var(--heat-base))`;
 }
 const shortName = (n) => String(n || '').replace(/^(元大|國泰|富邦|中信|群益|復華|永豐|凱基|兆豐|統一|野村|第一金|台新|新光|大華銀|街口|華南永昌|日盛|國票|摩根|貝萊德|聯博|安聯|保德信|富蘭克林華美|富蘭克林|柏瑞|路博邁|PGIM保德信|宏利|德銀遠東|中國信託|鋒裕匯理|瀚亞)/, '') || n;
+/** 熱力圖小格裡代號的寬度（px，Oxanium 600 10px：數字約 5.8、字母約 6.7；小格左右各留 3px）：放不下就不寫，免得被切掉一半看錯 */
+export const codeW = (c) => [...String(c || '')].reduce((a, ch) => a + (/[0-9]/.test(ch) ? 5.8 : 6.7), 0);
 /**
- * rows：[{c, n, k, val, v}]（v 是上色用的數字），groups：類別名稱
+ * rows：[{c, n, k, val, v}]（v 是上色用的數字），groups：類別名稱，tag：漲跌是哪一天的（「今日」或「10/27」，提示文字用）
  * 先依類別切大塊（面積＝成交值合計），每塊裡面再依成交值切每一檔。格子之間留 2px 底色間隔。
  */
-export function heatHTML(rows, { w, h, mode = 'chg', groups = {}, mini = false }) {
+export function heatHTML(rows, { w, h, mode = 'chg', groups = {}, mini = false, tag = '今日' }) {
   const max = mode === 'chg' ? 3 : 1.5;
   const byCat = new Map();
   for (const r of rows) {
@@ -96,10 +98,13 @@ export function heatHTML(rows, { w, h, mode = 'chg', groups = {}, mini = false }
       const tw = t.w - 2, th = t.h - 2;
       if (tw < 1 || th < 1) continue;
       const big = !mini ? tw >= 58 && th >= 34 : tw >= 64 && th >= 36;
-      const mid = !big && tw >= 34 && th >= 18;
+      // 只放代號的小格：代號放得下才寫，差一點放不下就縮小一號（以前 00679B 會被切成「00679E」）
+      const cw = codeW(t.c);
+      const fit = tw < 34 || th < 18 ? 0 : tw >= cw + 4 ? 1 : tw >= cw * 0.9 + 4 ? 0.9 : 0;
+      const mid = !big && fit > 0;
       const val = t.vv;
       const txt = mode === 'chg' ? (isNum(val) ? `${val > 0 ? '+' : ''}${val.toFixed(2)}%` : '—') : (isNum(val) ? `${val > 0 ? '+' : ''}${val.toFixed(2)}` : '—');
-      html += `<button class="hm-t${big ? ' big' : mid ? ' mid' : ''}" data-code="${t.c}" style="left:${f1(t.x + 1)}px;top:${f1(t.y + 1)}px;width:${f1(tw)}px;height:${f1(th)}px;background:${heatColor(val, max)}" title="${esc(t.n)} ${t.c}　${mode === 'chg' ? '今日' : '規則分數'} ${txt}　成交值 ${fmt.big(t.val)}元" aria-label="${esc(t.n)} ${txt}">${big ? `<b>${esc(shortName(t.n))}</b><span class="num">${txt}</span>` : mid ? `<span class="num">${t.c}</span>` : ''}</button>`;
+      html += `<button class="hm-t${big ? ' big' : mid ? (fit < 1 ? ' mid sm' : ' mid') : ''}" data-code="${t.c}" style="left:${f1(t.x + 1)}px;top:${f1(t.y + 1)}px;width:${f1(tw)}px;height:${f1(th)}px;background:${heatColor(val, max)}" title="${esc(t.n)} ${t.c}　${mode === 'chg' ? esc(tag) : '規則分數'} ${txt}　成交值 ${fmt.big(t.val)}元" aria-label="${esc(t.n)} ${txt}">${big ? `<b>${esc(shortName(t.n))}</b><span class="num">${txt}</span>` : mid ? `<span class="num">${t.c}</span>` : ''}</button>`;
     }
   }
   return `<div class="hm" style="height:${h}px">${html}</div>`;
