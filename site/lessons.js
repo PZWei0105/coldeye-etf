@@ -8,6 +8,7 @@ import { openModal, closeModal } from './forms.js';
 import { openTerm } from './learn.js';
 import { openCase, CASES } from './cases.js';
 import * as FX from './fx.js';
+import { ensureHoldIdx, ensureHold, bestList, overlap } from './xray.js';
 
 export const LESSON_CATS = { basic: '基礎觀念', trap: '陷阱提醒', read: '看盤判斷' };
 const EPOCH = 20261022;   // 第一課的日期
@@ -38,6 +39,8 @@ const SRC = {
   ust: { n: '美國財政部：公債殖利率', u: 'https://home.treasury.gov/resource-center/data-chart-center/interest-rates/TextView?type=daily_treasury_yield_curve' },
   cbc: { n: '中央銀行：新聞稿', u: 'https://www.cbc.gov.tw/tw/lp-302-1.html' },
   fsc: { n: '金管會：新聞稿', u: 'https://www.fsc.gov.tw/ch/home.jsp?id=96&parentpath=0,2' },
+  sitcaM: { n: '投信投顧公會：基金投資明細（每月前十大）', u: 'https://www.sitca.org.tw/ROC/Industry/IN2629.aspx' },
+  sitcaQ: { n: '投信投顧公會：基金投資明細（每季 1% 以上）', u: 'https://www.sitca.org.tw/ROC/Industry/IN2630.aspx' },
 };
 
 // ------------------------------------------------------------------ 舉例用的小工具
@@ -50,6 +53,13 @@ const pct = (x, d = 1) => (isNum(x) ? `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math
 const r2 = (x) => (isNum(x) ? x.toFixed(2) : '—');
 const premOf = (r) => { const q = quote(r); return isNum(q.prem) ? q.prem : null; };
 const nameOf = (c) => { const r = S.rows.get(c); return r ? r.n : c; };
+// 成分股明細（ETF 透視的資料）：有 pre 的課，打開前先載入（最多等 2.5 秒，抓不到「現在的例子」就不寫）
+const HOLD_EX = ['0050', '006208'];
+const holdCodes = () => [...new Set([...(S.P ? S.P.holdings.map((x) => x.code) : []), ...(settings.watch || []), ...HOLD_EX])].slice(0, 12);
+const preHold = () => ensureHoldIdx().then((idx) => (idx ? Promise.all(holdCodes().map((c) => ensureHold(c))) : null));
+const holdList = (c) => (S.hold && S.hold[c] ? bestList(S.hold[c]) : null);
+const ymOf = (p) => { const t = String(p || ''); return /^\d{6}$/.test(t) ? `${t.slice(0, 4)}/${t.slice(4)}` : ''; };
+const kindOf = (Lh) => (Lh.k === 'q' ? '每季 1% 以上明細' : '每月前十大');
 
 // ------------------------------------------------------------------ 課程
 export const LESSONS = [
@@ -252,6 +262,32 @@ export const LESSONS = [
     ],
     src: [SRC.ust, SRC.etf], terms: ['bond'], cases: ['bondrate', 'bear2022'],
   },
+  {
+    id: 'b-hold', k: 'basic', t: '打開 ETF 看裡面：前十大與穿透持股',
+    hook: 'ETF 的名字只說了選股規則；裡面真正裝了哪些公司、各占多少，要看投信申報的持股明細。',
+    b: [
+      '投信要依規定申報基金的投資明細，投信投顧公會公開兩種：每月的前十大持股，和每季占淨資產 1% 以上的持股（大約下個月第 10 個營業日公布）。所以你看到的是上個月底或上一季底的樣子，不是今天的。',
+      '同樣叫「台灣」「科技」「高息」，裡面可能差很多；反過來，名字不同的兩檔也可能押在同幾家公司。看明細比看名字可靠。',
+      '穿透持股：每檔 ETF 占你總資產的比例 × 它裡面每家公司的比例，加起來。例如 0050 占你一半、台積電占 0050 的一半多，你光透過 0050 就有四分之一以上押在台積電。',
+      '槓桿、反向、期貨型 ETF 主要持有期貨和現金，明細裡看不到成分股；主動式 ETF 由經理人選股，每一期的名單和比重可能換得比較多，值得每個月看一次「和上一期比」。',
+    ],
+    do: [
+      '單檔頁往下滑到「透視：裡面裝了什麼」，看比例圖和「和上一期比」（新進、退出、比重變多變少）。',
+      '部位分頁的「透視：你其實押了誰」：單一公司超過總資產 20% 會用琥珀色提醒，代表分散的效果比你想的小。',
+    ],
+    ex: () => {
+      const c = [...mine().map((r) => r.c), '0050'].find((k) => holdList(k));
+      if (!c) return '';
+      const Lh = holdList(c);
+      const h = Lh.h.slice().sort((a, b) => b[3] - a[3]);
+      const top = h.slice(0, 3).filter((r) => isNum(r[3]));
+      if (!top.length) return '';
+      const s10 = h.slice(0, 10).reduce((s, r) => s + (isNum(r[3]) ? r[3] : 0), 0);
+      return `${nameOf(c)}（${ymOf(Lh.p) ? `${ymOf(Lh.p)} ` : ''}${kindOf(Lh)}）前三大：${top.map((r) => `${r[1]} ${r[3].toFixed(1)}%`).join('、')}；前十大合計 ${s10.toFixed(1)}%。`;
+    },
+    pre: preHold,
+    src: [SRC.sitcaM, SRC.sitcaQ], terms: ['xray'], nav: { tab: 'pf', t: '看你其實押了誰' },
+  },
 
   // ============================================================ 陷阱提醒
   {
@@ -422,6 +458,41 @@ export const LESSONS = [
     ],
     ex: () => { const rs = rowsAll().filter((r) => r.k === 'active'); return rs.length ? `台股現在有 ${rs.length} 檔主動式 ETF。` : ''; },
     src: [SRC.etf, SRC.tax21], terms: ['tax'],
+  },
+  {
+    id: 't-overlap', k: 'trap', t: '買兩檔不等於分散：先看重疊度',
+    hook: '0050 和 006208 追蹤同一個指數，兩檔一起買，押的還是同一群公司。',
+    b: [
+      '分散的意思是把錢押在不同的東西上。如果兩檔 ETF 的成分股大多一樣，買兩檔只是把同一個押注拆成兩張單，碰到同一家公司出事，兩檔會一起跌。',
+      '重疊度的算法：兩檔都有的公司，各取兩邊比較小的那個比例，全部加起來。重疊 50% 代表兩檔有一半的錢押在同樣的公司、同樣的比重。',
+      '常見的情況：市值型和「台灣科技」「半導體」這類 ETF 常一起重壓台積電、聯發科；不同家的高股息 ETF 選股規則不同，但也常有一大塊共同的成分股。要用明細確認，不要用名字猜。',
+      '冷眼只算得到投信有公布的部分（每月前十大或每季 1% 以上），實際的重疊可能再多一點。',
+    ],
+    do: [
+      '想再買一檔之前，先用「對決」把它和你手上那檔放在一起，看「成分股重疊」（50% 以上會標示高度重疊）。',
+      '判斷教練的「熱門新 ETF」會算出那一檔和你現有部位（穿透之後）重疊多少。',
+    ],
+    ex: () => {
+      const cs = [...new Set([...(S.P ? S.P.holdings.map((x) => x.code) : []), ...(settings.watch || [])])].filter((c) => holdList(c)).slice(0, 10);
+      let best = null;
+      for (let i = 0; i < cs.length; i++) {
+        for (let j = i + 1; j < cs.length; j++) {
+          const o = overlap(holdList(cs[i]), holdList(cs[j]));
+          if (o && isNum(o.o) && (!best || o.o > best.o.o)) best = { a: cs[i], b: cs[j], o };
+        }
+      }
+      const mineBest = best && best.o.o > 0;
+      if (!mineBest) {
+        const o = overlap(holdList(HOLD_EX[0]), holdList(HOLD_EX[1]));
+        best = o && isNum(o.o) ? { a: HOLD_EX[0], b: HOLD_EX[1], o } : null;
+      }
+      if (!best) return '';
+      const sh = best.o.shared;
+      const top = sh.length ? `，重疊最多的是 ${sh[0].name}（${Math.min(sh[0].a, sh[0].b).toFixed(1)}%）` : '';
+      return `${mineBest ? '你持有和關注的 ETF 裡，重疊最高的一組：' : ''}${nameOf(best.a)} × ${nameOf(best.b)} 重疊約 ${(best.o.o * 100).toFixed(0)}%（共同 ${sh.length} 家${top}；只算投信有公布的部分）。`;
+    },
+    pre: preHold,
+    src: [SRC.sitcaQ, SRC.etf], terms: ['overlap', 'xray'], nav: { sheet: 'duel', t: '開對決比重疊' },
   },
 
   // ============================================================ 看盤判斷
@@ -628,6 +699,14 @@ function lessonSpeech(L) {
 export function openLesson(id) {
   const L = lessonById(id);
   if (!L) return;
+  if (!L.pre) { showLesson(L); return; }
+  // 「現在的例子」要用到的資料先載入；最多等 2.5 秒，抓不到就照樣打開（例子不寫）
+  let shown = false;
+  const go = () => { if (!shown) { shown = true; showLesson(L); } };
+  setTimeout(go, 2500);
+  Promise.resolve().then(L.pre).catch(() => null).then(go);
+}
+function showLesson(L) {
   const order = lessonOrder();
   const i = order.indexOf(L.id);
   let ex = '';
@@ -664,7 +743,7 @@ export function openLesson(id) {
 }
 function termTitle(k) {
   // 不直接 import TERMS（避免循環），用 learn.js 的 openTerm 開；標題照常見名詞對應
-  const T = { prem: '折溢價', nav: '淨值', div: '除息', annual: '預估一年配息', y: '殖利率', r1y: '近一年含息報酬', total: '含息總報酬', fee: '手續費', tax: '證交稅', be: '損益兩平價', dca: '定期定額', irr: '年化報酬', lev: '槓桿型 ETF', inv: '反向型 ETF', bond: '債券 ETF', aum: '規模', bt: '回測', insti: '三大法人', units: '單位數', hd: '受益人數', notice: '注意與處置', aide: '副官', cool: '冷靜期', base: '同類基準', ps: '部位訊號', p10: '最差 10%', val: '成交值', breadth: '大盤之瞳', ma: '季線', dl: '移動防守線', atr: 'ATR', margin: '融資餘額', journal: '決策日記' };
+  const T = { prem: '折溢價', nav: '淨值', div: '除息', annual: '預估一年配息', y: '殖利率', r1y: '近一年含息報酬', total: '含息總報酬', fee: '手續費', tax: '證交稅', be: '損益兩平價', dca: '定期定額', irr: '年化報酬', lev: '槓桿型 ETF', inv: '反向型 ETF', bond: '債券 ETF', aum: '規模', bt: '回測', insti: '三大法人', units: '單位數', hd: '受益人數', notice: '注意與處置', aide: '副官', cool: '冷靜期', base: '同類基準', ps: '部位訊號', p10: '最差 10%', val: '成交值', breadth: '大盤之瞳', ma: '季線', dl: '移動防守線', atr: 'ATR', margin: '融資餘額', journal: '決策日記', xray: '透視', overlap: '重疊度' };
   return T[k] || k;
 }
 

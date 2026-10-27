@@ -28,8 +28,8 @@
 - 資產走勢用 `calc.js` 的 `equityCurve`（交易紀錄＋`hist/` 的官方收盤，交易與分割、除息照時間順序重播；比歷史資料還早的交易也算得到之前的配息；冷門 ETF 除權息當天沒成交時，參考價先照除權息調整）重算。
 
 ## 今日一課與案例教室（帶著 PZ 成長）
-- 兩個都是**固定內容、不連 AI**：`site/lessons.js` 的 `LESSONS`（三類：basic 基礎觀念、trap 陷阱提醒、read 看盤判斷）、`site/cases.js` 的 `CASES`。每一課、每個案例**一定要有官方出處**（`src`，只放一手來源：證交所、櫃買、集保、金管會、央行、健保署、法規資料庫、國泰官方說明、美國財政部），文字要白話、不能像社群 KOL 的口吻、不直接叫人買賣。不確定的數字不要寫死，用 `ex`／`(st) => …` 從當下資料算。
-- 今日一課照日期輪（`EPOCH`＝2026/10/22 起算，三類輪流，`lessonOrder`／`todayLessonIdx`），可往前翻、看全部課程；上過的記在 `coldeye.lessons`（只在手機）。`id` 不要改（紀錄跟著 id）；新增一課直接加進 `LESSONS`，`terms` 要是 `learn.js` TERMS 的 key、`cases` 要是 CASES 的 id、`nav` 只能是分頁或 tm／duel／cases／coach。「現在的例子」`ex()` 不能炸（沒資料回空字串）。有內建中文語音的裝置可以念（和晨報同一套 `fx.js` 規則）。
+- 兩個都是**固定內容、不連 AI**：`site/lessons.js` 的 `LESSONS`（三類：basic 基礎觀念、trap 陷阱提醒、read 看盤判斷）、`site/cases.js` 的 `CASES`。每一課、每個案例**一定要有官方出處**（`src`，只放一手來源：證交所、櫃買、集保、投信投顧公會、金管會、央行、健保署、法規資料庫、國泰官方說明、美國財政部），文字要白話、不能像社群 KOL 的口吻、不直接叫人買賣。不確定的數字不要寫死，用 `ex`／`(st) => …` 從當下資料算。
+- 今日一課照日期輪（`EPOCH`＝2026/10/22 起算，三類輪流，`lessonOrder`／`todayLessonIdx`），可往前翻、看全部課程；上過的記在 `coldeye.lessons`（只在手機）。`id` 不要改（紀錄跟著 id）；新增一課直接加進 `LESSONS`，`terms` 要是 `learn.js` TERMS 的 key、`cases` 要是 CASES 的 id、`nav` 只能是分頁或 tm／duel／cases／coach。「現在的例子」`ex()` 不能炸（沒資料回空字串）；要用非同步資料的（成分股明細）在 `pre` 先載入，`openLesson` 最多等 2.5 秒就照樣打開。有內建中文語音的裝置可以念（和晨報同一套 `fx.js` 規則）。
 - 案例教室的數字全部在手機上由 `data/hist/{代號}.json` 算（`windowStats`／`recoverAfter`／`divFill`／`sigChanges`／`caseStats`，純函式，含息用 `aide.js` 的 `trIndex`）；敘述裡的「硬數字」（加權指數跌幾點、00940 募了多少）要先查證官方或可靠報導，其餘用 `(st) => …` 動態帶入。`raw: true` 的案例畫原始價格 vs 還原價（分割、除息）。開在 `#sheet`（網址 `#cases`）；從設定頁或另一個全螢幕頁切過去要用 `app.js` 的 `swapSheet`（replaceState，不要 back 再 push）。
 - 折線圖（`viz.js` 的 `linesSVG`）：`marks` 標事件、`w` 傳容器寬度（寬螢幕字才不會被放大）。測試：`node tests/lessons_test.mjs [hist 資料夾]`（內容完整性、輪課、例子不炸、案例統計與文字；給 hist 資料夾會用真實資料把每個案例算一遍）。
 

@@ -382,7 +382,7 @@ function hot(ctx) {
     ctx.overlapWarn ? 'warn' : 'info',
     '名字不同的 ETF，裡面可能是同一群股票；先看成分股，再決定是不是真的需要多一檔。',
     '收集 ETF：每檔都買一點，以為分散，其實重複。',
-    { term: 'xray' }));
+    { lesson: 't-overlap', term: 'xray' }));
   out.push(step('配息率不是報酬率',
     `${isNum(r.y) ? `近一年配息殖利率約 <b class="num">${r.y.toFixed(2)}%</b>。` : '還沒有一整年的配息紀錄。'}廣告上的「年化配息率」是用最近一次配息乘上次數算的，不保證之後也配這麼多。`,
     'info',

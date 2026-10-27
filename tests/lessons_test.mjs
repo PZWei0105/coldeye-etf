@@ -83,6 +83,31 @@ t('「現在的例子」：沒有資料時不會炸、有資料時不會印出 u
   assert.ok(withEx >= 20, `有例子的課太少：${withEx}`);
 });
 
+t('成分股的課：沒有明細時不寫例子；有明細時寫前三大、重疊度（你持有或關注的優先，沒有就用 0050 × 006208）', () => {
+  const B = L.lessonById('b-hold'), O = L.lessonById('t-overlap');
+  assert.ok(B && O && typeof B.pre === 'function' && typeof O.pre === 'function');
+  core.S.hold = {};
+  assert.equal(B.ex(), ''); assert.equal(O.ex(), '');
+  const q = (p, h) => ({ q: { p, h } });
+  core.S.rows.set('006208', { c: '006208', n: '富邦台50', k: 'broad' });
+  core.S.hold = {
+    '0050': q('202609', [['2330', '台積電', 'tse', 56.4], ['2454', '聯發科', 'tse', 6.7], ['2308', '台達電', 'tse', 3.4]]),
+    '006208': q('202609', [['2330', '台積電', 'tse', 55.1], ['2454', '聯發科', 'tse', 6.5]]),
+    '0056': q('202609', [['2454', '聯發科', 'tse', 3.0], ['2303', '聯電', 'tse', 4.0]]),
+    '00662': null,
+  };
+  core.settings.watch = ['00662'];
+  const b = B.ex();
+  assert.ok(b.includes('元大台灣50') && b.includes('台積電 56.4%') && b.includes('2026/09') && b.includes('前十大合計 66.5%'), b);
+  let o = O.ex();
+  assert.ok(o.startsWith('元大台灣50 × 富邦台50 重疊約 62%') && o.includes('共同 2 家') && o.includes('台積電（55.1%）'), o);
+  core.settings.watch = ['0050', '0056', '00662'];
+  o = O.ex();
+  assert.ok(o.startsWith('你持有和關注的 ETF 裡') && o.includes('元大台灣50 × 元大高股息 重疊約 3%'), o);
+  for (const s of [b, o]) assert.ok(!bad(s), s);
+  core.S.hold = {};
+});
+
 t('指揮台小卡：有今天那一課的標題、按鈕；上過的課會記在手機', () => {
   const html = L.lessonHomeHTML();
   const Ltoday = L.lessonById(L.lessonOrder()[L.todayLessonIdx()]);
