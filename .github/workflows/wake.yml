@@ -1,0 +1,28 @@
+name: wake
+
+# 開盤叫醒：GitHub 的排程在台灣早上很忙，coldeye.yml 08:37–08:53 的暖身排程每天都延遲到 09:15 以後，
+# 開盤後前 20 分鐘沒有新資料。這裡在清晨先起來（延遲一兩個小時也還來得及），睡到 09:00:30 發出第一輪盤中更新，
+# 之後照舊由每一輪自己接力（pipeline/wake.py）。不和 coldeye 共用排隊，睡覺時不會擋住推送或其他工作；
+# 同一個早上好幾個排程都跑起來時，只有最早的那個在等，其他的馬上結束。
+on:
+  schedule:
+    # 時間皆為 UTC（台灣時間 = UTC+8）；台灣的週一到週五 = UTC 的週日到週四
+    - cron: '13 21 * * 0-4'   # 05:13
+    - cron: '13 22 * * 0-4'   # 06:13
+    - cron: '13 23 * * 0-4'   # 07:13
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m pipeline.wake
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
