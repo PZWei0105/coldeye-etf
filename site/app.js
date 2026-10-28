@@ -156,7 +156,7 @@ function freshness() {
   if (S.summary.asof === td) return { key: 'idle', txt: `${fmt.d(S.summary.asof)} 收盤　${agoShort(minsAgo(gen))}更新`, stall };
   // 收盤後到晚上的完整計算跑完之前：畫面上已經是今天的收盤價，只是分析還是昨天的
   if (weekday && liveToday && hm > 1335) {
-    if (isoHm(L.at) >= 1330) return { key: 'idle', txt: `今天收盤　${hhmm(L.at)} 的價格・完整分析${hm < 1500 ? '約 14:30 ' : '稍晚'}更新`, stall };
+    if (isoHm(L.at) >= 1330) return { key: 'idle', txt: `今天收盤　${hhmm(L.at)} 的價格・完整分析${hm < 1425 ? '約 14:20 ' : '稍晚'}更新`, stall };
     return { key: 'lag', txt: `今天 ${hhmm(L.at)} 的價格・收盤價還沒送來`, stall };
   }
   if (!weekday) return { key: 'idle', txt: `休市　資料到 ${fmt.d(S.summary.asof)}`, stall };
