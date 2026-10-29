@@ -1,6 +1,6 @@
 /* 冷眼 — 共用核心：狀態、設定、資料載入、格式、圖示、小元件。 */
 import * as PF from './pf.js';
-import { breadth, normPlan, planSkipKeys, normSkips, normNoAsk, calClosed } from './calc.js';
+import { breadth, normPlan, planSkipKeys, normSkips, normNoAsk, calClosed, dcaReserve } from './calc.js';
 import * as FX from './fx.js';
 
 export { PF };
@@ -28,6 +28,8 @@ export const DEFAULT_RULES = [
   '每次加碼前先想好出場線',
   '分批買進，不一次梭哈',
 ];
+/** 緊急預備金：0 到 1 百億元的整數，其他都當作 0 */
+export const normReserve = (x) => { const v = Math.round(Number(x)); return isFinite(v) && v > 0 ? Math.min(v, 1e10) : 0; };
 const savedSettings = store.get('settings', {});
 export const settings = Object.assign({
   watch: DEFAULT_WATCH.slice(), risk: 'mid', fee: { ...PF.DEFAULT_FEE }, name: 'PZ', theme: 'system',
@@ -37,6 +39,8 @@ export const settings = Object.assign({
   sfx: true, vol: 2, voice: true, fx: true, haptic: true, ignite: true, autoJ: true, askShort: false, askAmt: false, jf: 'all',
   // 定期定額（dca.js）：計畫一律經過 calc.js 的 normPlan；dcaSkip＝你刪掉的那幾期、dcaNoAsk＝你說過「不是同一筆」的那幾期（都是 `代號|原本扣款日`）
   plans: [], dcaSkip: [], dcaNoAsk: [],
+  // 加碼計畫：緊急預備金（不能動的錢，不算進可動用的現金；只用在真實部位）
+  reserve: 0,
 }, savedSettings);
 /** 定期定額計畫最多幾個（國泰改設定時，舊的設定會變成一個「已換設定」的計畫留著，所以留多一點空間） */
 export const PLAN_MAX = 60;
@@ -60,6 +64,7 @@ function cleanPlans(rawPlans, rawSkip, rawNoAsk) {
 if (!['real', 'paper'].includes(settings.mode)) settings.mode = 'real';
 if (![1, 2, 3].includes(settings.vol)) settings.vol = 2;
 if (!PF.PROFILES[settings.risk]) settings.risk = 'mid';
+settings.reserve = normReserve(settings.reserve);
 settings.fee = Object.assign({ ...PF.DEFAULT_FEE }, settings.fee || {});
 delete settings.capital;   // 舊版的「投資本金」改由「部位」裡的現金與持股計算
 const DCA_KEYS = ['plans', 'dcaSkip', 'dcaNoAsk'];
@@ -172,7 +177,7 @@ export const isJournalKey = (k) => k === 'coldeye.journal';
 // ------------------------------------------------------------------ 全域狀態與事件
 export const S = {
   summary: null, live: null, offline: false, news: null, newsAt: 0, track: null, divs: null, cal: null, detail: {}, hist: {}, histMeta: {}, breadth: null, pxSeen: new Map(),
-  verOffline: false, summaryNet: false, stockq: null, stockqAt: 0,
+  verOffline: false, summaryNet: false, stockq: null, stockqAt: 0, global: null, alloc: null,
   tab: store.get('tab', 'home'), all: { q: '', cat: '*', sig: '*', sort: 'score' }, newsTab: 'official',
   range: 120, rows: new Map(), deferredInstall: null, P: null, adv: new Map(), openCode: null,
   firstPaint: true, changes: [],
@@ -391,6 +396,7 @@ export function useCache() {
   S.live = store.get('cache.live', null);
   S.divs = store.get('cache.divs', null);
   S.cal = store.get('cache.cal', null);
+  S.global = store.get('cache.global', null);
   return true;
 }
 export async function ensureTrack() {
@@ -488,38 +494,100 @@ export function computePF() {
   const colors = PF.assignColors(book, codes);
   if (JSON.stringify(colors) !== JSON.stringify(book.colors || {})) { book.colors = colors; saveBook(); }
   for (const x of P.holdings) x.slot = colors[x.code] ?? null;
-  // 兩輪：先看有幾檔「可加碼」，再把現金平均分給它們（至少分 3 份）
-  S.adv = new Map();
-  const first = new Map(P.holdings.map((x) => [x.code, PF.advise(holdingInput(x), ctxFor(x.code, P))]));
-  const nAdd = [...first.values()].filter((a) => a.plan && a.plan.n > 0).length;   // 所有會拿到加碼計畫的（含減半的續抱）
-  const share = P.totals.cash / Math.max(PF.CASH_SLICES, nAdd);
-  for (const x of P.holdings) S.adv.set(x.code, PF.advise(holdingInput(x), ctxFor(x.code, P, share)));
-  P.nAdd = nAdd;
-  P.cashShare = share;
+  // 加碼計畫：可動用的錢（現金減掉緊急預備金、定期定額保留款）分給你持有和關注的 ETF，
+  // 同類型、同一家公司（穿透）的空間一起算，不會兩檔各算一次（pf.js 的 allocAdds）
+  P.deploy = deployOf(P);
+  const base = addBase(P);
+  const cands = [];
+  for (const x of P.holdings) cands.push({ code: x.code, H: holdingInput(x) });
+  for (const c of settings.watch) {
+    if (P.holdings.some((x) => x.code === c)) continue;
+    const row = S.rows.get(c);
+    if (!row) continue;
+    const q = quote(row);
+    cands.push({ code: c, H: { row, sh: 0, avg: null, cost: 0, px: q.px, prem: q.prem } });
+  }
+  const A = PF.allocAdds(cands, base);
+  S.alloc = A;
+  S.adv = new Map(P.holdings.map((x) => [x.code, A.adv.get(x.code)]));
+  P.nAdd = A.n;
+  P.cashShare = A.share;
+  P.lists = base.lists;
   S.P = P;
+  // 單一公司（穿透）要用成分股明細：還沒載入的請 app.js 去抓（xray.js 的 ensureHold），抓到之後重算一次
+  const pend = Object.keys(base.lists).filter((c) => base.lists[c] === undefined && S.rows.has(c));
+  if (pend.length) bus.emit('needhold', pend);
   return P;
+}
+/** 可動用的錢：現金減掉緊急預備金、定期定額接下來 31 天要扣的（都只算真實部位；模擬倉的現金全部可以用） */
+export function deployOf(P) {
+  const cash = P ? P.totals.cash : 0;
+  if (isPaper()) return { cash, emergency: 0, dca: { total: 0, items: [] }, usable: cash };
+  const emergency = settings.reserve || 0;
+  const dca = dcaReserve(settings.plans, book.lots, today(), PF.DCA_RESERVE_DAYS, S.cal, settings.dcaSkip);
+  return { cash, emergency, dca, usable: Math.max(0, cash - emergency - dca.total) };
+}
+/** 成分股明細（透視的快取 S.hold）：明細／null（確定沒有）／undefined（還沒載入） */
+export function listOf(code) {
+  const h = S.hold || {};
+  if (!(code in h)) return undefined;
+  return h[code] ? PF.holdList(h[code]) : null;
+}
+/** 加碼計畫的共同條件：總資產、可動用的錢、風險屬性、手續費、目前各類型市值、透過 ETF 間接持有的每一家公司（市場溫度只提醒、不改股數） */
+export function addBase(P = S.P) {
+  const T = P ? P.totals.T : 0;
+  const dep = (P && P.deploy) || deployOf(P);
+  const codes = new Set([...(P ? P.holdings.map((x) => x.code) : []), ...settings.watch]);
+  const lists = {};
+  for (const c of codes) lists[c] = listOf(c);
+  const catMV = {};
+  for (const x of (P ? P.holdings : [])) if (x.mv > 0) catMV[x.cat] = (catMV[x.cat] || 0) + x.mv;
+  const ex = PF.companyExposure(P ? P.holdings : [], lists);
+  return {
+    T, cash: dep.usable, cashAll: dep.cash, reserve: dep, profile: settings.risk, fee: settings.fee, today: today(),
+    catMV, coAmt: ex.amt, coPending: ex.pending, lists, listOf,
+    stats: (code) => { const row = S.rows.get(code); return S.track && S.track.pos && row ? (S.track.pos[row.k] || null) : null; },
+  };
+}
+/** 市場溫度（後台 global.json 算好的：晴／陰／雨與每一個警訊）：還沒有資料時回傳 null。只提醒、不影響股數 */
+export function marketTemp() {
+  return (S.global && S.global.temp) || null;
+}
+/** 全球市場與市場溫度（global.json）：v＝版本檔裡的時間戳；抓不到就用手上的（或上次存下的） */
+let globalP = null;
+export function ensureGlobal(o = {}) {
+  if (S.global && !o.force && !o.v) return Promise.resolve(S.global);
+  if (!globalP) {
+    globalP = getJSON('global.json', { v: o.v }).then((g) => {
+      if (g && g.temp) { S.global = g; store.set('cache.global', g); }
+      return S.global;
+    }).catch(() => S.global || null).finally(() => { globalP = null; });
+  }
+  return globalP;
 }
 export function holdingInput(x) {
   return { row: x.row, sh: x.h.sh, avg: x.h.avg, cost: x.h.cost, px: x.px, prem: x.q ? x.q.prem : null };
 }
+/** 單一 ETF 的試算、建議用的條件（和加碼計畫同一套：可動用的錢、同類型合計、單一公司） */
 export function ctxFor(code, P = S.P, cashShare) {
-  const row = S.rows.get(code);
-  const T = P ? P.totals.T : 0;
-  const cash = P ? P.totals.cash : 0;
+  const base = addBase(P);
   return {
-    T, cash, cashShare: cashShare ?? (P && isNum(P.cashShare) ? P.cashShare : cash / PF.CASH_SLICES),
-    profile: settings.risk, fee: settings.fee, today: today(),
-    stats: S.track && S.track.pos && row ? (S.track.pos[row.k] || null) : null,
+    ...base, cashShare: cashShare ?? (P && isNum(P.cashShare) ? P.cashShare : base.cash / PF.CASH_SLICES),
+    stats: base.stats(code),
   };
 }
 export function heldOf(code) { return S.P ? S.P.holdings.find((x) => x.code === code) || null : null; }
 export function adviceFor(code) {
+  if (S.alloc && S.alloc.adv.has(code)) return S.alloc.adv.get(code);
   const x = heldOf(code);
   if (x) return S.adv.get(code) || null;
   const row = S.rows.get(code);
   if (!row) return null;
   const q = quote(row);
-  return PF.advise({ row, sh: 0, avg: null, cost: 0, px: q.px, prem: q.prem }, ctxFor(code));
+  const H = { row, sh: 0, avg: null, cost: 0, px: q.px, prem: q.prem };
+  // 不在加碼計畫裡的（從雷達打開的）：用計畫分完之後剩下的空間，算「如果另外買這檔」；成分股明細還沒載入就請 app.js 抓
+  if (listOf(code) === undefined) bus.emit('needhold', [code]);
+  return S.alloc ? S.alloc.adviseOther(H, code) : PF.advise(H, ctxFor(code));
 }
 export const slotVar = (slot) => (slot == null ? 'var(--s-other)' : `var(--s${slot + 1})`);
 

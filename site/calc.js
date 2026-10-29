@@ -872,3 +872,43 @@ export function calClosed(cal, d) {
   if (!cal || !Number.isInteger(d)) return false;
   return (Array.isArray(cal.holidays) && cal.holidays.includes(d)) || (Array.isArray(cal.closed) && cal.closed.includes(d));
 }
+
+/**
+ * 定期定額接下來要扣的錢（加碼計畫先保留，不拿去加碼：扣款失敗不補扣，連續 3 次失敗國泰會終止全部台股定期定額）。
+ * 從今天（含）到 days 天後，每個還在扣的計畫的每一期：原本的扣款日遇到週末、休市日（cal：證交所開休市日期表）順延，
+ * 還沒記進交易紀錄（自動入帳或你核對、連結過的那一期）、也不是你刪掉的那幾期（skip：`代號|原本扣款日`）。
+ * plans：normPlan 過的計畫；lots：真實部位的交易。回傳 { total, items: [{ c, plan, s: 原本扣款日, d: 預計扣款日, amt }] }（照 d 排序）
+ */
+export function dcaReserve(plans, lots, today, days, cal = null, skip = []) {
+  const items = [];
+  if (!okDay8(today)) return { total: 0, items };
+  const hi = addDays(today, days);
+  const done = new Set((lots || []).filter(isDcaLot).map((l) => `${l.dca.plan}|${l.dca.s}`));
+  const sk = new Set(skip || []);
+  const open = (d) => isWeekday(d) && !calClosed(cal, d);
+  for (const p of plans || []) {
+    if (!p || (p.end && p.end < today)) continue;
+    const pd = planDays(p);
+    if (!pd.length) continue;
+    // 從上個月開始看：上個月底的扣款日遇到連假，可能順延到今天以後
+    let y = Math.floor(today / 10000), m = Math.floor(today / 100) % 100 - 1;
+    if (m < 1) { m = 12; y -= 1; }
+    for (let g = 0; g < 4; g++) {
+      if (y * 10000 + m * 100 + 1 > hi) break;
+      for (const day of pd) {
+        if (day > daysIn(y, m)) continue;                 // 那個月沒有這一天：國泰那一期不買
+        const s = y * 10000 + m * 100 + day;
+        let d = s;
+        for (let k = 0; k < 15 && !open(d); k++) d = addDays(d, 1);
+        if (d < today || d > hi) continue;
+        if (p.sb === true ? (s < p.start || (p.end && s > p.end)) : (d < p.start || (p.end && d > p.end))) continue;
+        if (done.has(`${p.id}|${s}`) || sk.has(`${p.c}|${s}`)) continue;
+        items.push({ c: p.c, plan: p.id, s, d, amt: p.amt });
+      }
+      m += 1;
+      if (m > 12) { m = 1; y += 1; }
+    }
+  }
+  items.sort((a, b) => a.d - b.d || a.s - b.s);
+  return { total: items.reduce((t, x) => t + x.amt, 0), items };
+}

@@ -142,6 +142,85 @@ t('跳動單位', () => {
   assert.equal(pf.tickDown(32.459), 32.45);
 });
 
+// ---------------------------------------------------------------- 加碼計畫（allocAdds）：可動用的錢、同類型、單一公司、溢價
+const mkRow = (c, k, o = {}) => ({ c, n: c, k, st: 1, sc: 1.2, cf: 80, ps: 'add', dl: 90, iv: 92, atr: 1.5, pb: 98, fl: [], ...o });
+const H0 = (row, px = 100, sh = 0, prem = 0) => ({ row, sh, avg: sh ? px : null, cost: sh * px, px, prem });
+const base0 = (o = {}) => ({ T: 1000000, cash: 300000, cashAll: 300000, profile: 'mid', fee: cfg, today: 20261030, catMV: {}, coAmt: {}, lists: {}, ...o });
+
+t('加碼計畫：可動用的錢分給候選，排在前面的先拿；總共不會超過可動用的錢', () => {
+  const A = mkRow('A', 'broad', { cf: 90 }), B = mkRow('B', 'div', { cf: 75 }), C = mkRow('C', 'theme', { ps: 'hold', st: 0, cf: null });
+  const R = pf.allocAdds([{ code: 'C', H: H0(C) }, { code: 'B', H: H0(B) }, { code: 'A', H: H0(A) }], base0({ cash: 90000, cashAll: 90000 }));
+  assert.deepEqual(R.order, ['A', 'B', 'C']);          // 可加碼（信心高的先）→ 續抱
+  const spend = [...R.adv.values()].reduce((t, a) => t + (a.plan ? a.plan.spend : 0), 0);
+  assert.ok(spend <= 90000 + 1, spend);
+  assert.ok(R.adv.get('A').plan.n > 0 && R.adv.get('A').plan.limit === 'cash', R.adv.get('A').plan.limit);
+});
+
+t('加碼計畫：同類型合計到上限，第二檔就不加（不會兩檔各算一次）', () => {
+  // 穩健型市值型上限 60%：已經有 55%（其他市值型），剩 5 萬的空間給 A、B 兩檔市值型
+  const A = mkRow('A', 'broad', { cf: 90 }), B = mkRow('B', 'broad', { cf: 80 });
+  const R = pf.allocAdds([{ code: 'A', H: H0(A) }, { code: 'B', H: H0(B) }], base0({ catMV: { broad: 550000 } }));
+  const a = R.adv.get('A'), b = R.adv.get('B');
+  assert.equal(a.plan.limit, 'cat');
+  assert.ok(a.plan.n * 100 <= 50000 && a.plan.n * 100 > 45000, a.plan.n);
+  assert.equal(b.plan.n, 0);
+  assert.equal(b.key, 'full');
+  assert.equal(b.label, '先不買');
+  assert.ok(b.lines.some((l) => l.text.includes('市值型合計已經到上限 60%')), b.lines.map((l) => l.text));
+});
+
+t('加碼計畫：透過 ETF 間接持有的同一家公司到上限（穿透），含它的 ETF 就少買或不買', () => {
+  const A = mkRow('A', 'broad', { cf: 90 }), B = mkRow('B', 'theme', { cf: 85 });
+  const lists = { A: { h: [['2330', '台積電', 'tse', 50], ['2317', '鴻海', 'tse', 5]] }, B: { h: [['2330', '台積電', 'tse', 25], ['xx', '公債', 'b', 60]] } };
+  // 穩健型單一公司上限 30%：已經間接持有台積電 28 萬（28%），剩 2 萬；A 有一半是台積電 → 最多買 4 萬
+  const R = pf.allocAdds([{ code: 'A', H: H0(A) }, { code: 'B', H: H0(B) }], base0({ lists, coAmt: { 2330: { name: '台積電', amt: 280000 } } }));
+  const a = R.adv.get('A'), b = R.adv.get('B');
+  assert.equal(a.plan.limit, 'co');
+  assert.equal(a.plan.coName, '台積電');
+  assert.ok(a.plan.n * 100 <= 40000 && a.plan.n * 100 >= 39000, a.plan.n);
+  assert.equal(b.plan.n, 0);                         // A 用掉了台積電剩下的空間
+  assert.equal(b.key, 'full');
+  assert.ok(pf.planWhy(b.plan).includes('台積電'), pf.planWhy(b.plan));
+  // 明細還沒載入：不擋（照樣算），但記下來
+  const R2 = pf.allocAdds([{ code: 'A', H: H0(A) }], base0({ lists: { A: undefined }, coAmt: { 2330: { name: '台積電', amt: 300000 } } }));
+  assert.ok(R2.adv.get('A').plan.n > 0);
+  assert.equal(R2.adv.get('A').plan.coNote, 'pending');
+});
+
+t('加碼計畫：盤中溢價超過警戒線減半、超過 2 倍先不買', () => {
+  const A = mkRow('A', 'broad', { cf: 90 });
+  const n0 = pf.allocAdds([{ code: 'A', H: H0(A, 100, 0, 0.1) }], base0()).adv.get('A').plan.n;
+  const half = pf.allocAdds([{ code: 'A', H: H0(A, 100, 0, 0.7) }], base0()).adv.get('A');
+  assert.ok(half.plan.n > 0 && Math.abs(half.plan.n - Math.floor(n0 / 2)) <= 1, `${half.plan.n} vs ${n0}`);
+  assert.equal(half.label, '可小額分批買進');
+  const zero = pf.allocAdds([{ code: 'A', H: H0(A, 100, 0, 1.2) }], base0()).adv.get('A');
+  assert.equal(zero.plan.n, 0);
+  assert.equal(zero.key, 'hold_off');
+  assert.ok(zero.lines.some((l) => l.text.includes('先不買')));
+});
+
+t('加碼計畫：沒有可動用的錢時說清楚是緊急預備金、定期定額扣掉的', () => {
+  const A = mkRow('A', 'broad', { cf: 90 });
+  const a = pf.allocAdds([{ code: 'A', H: H0(A) }], base0({ cash: 0, cashAll: 50000 })).adv.get('A');
+  assert.equal(a.plan.n, 0);
+  assert.equal(a.key, 'add');                        // 訊號照樣可加碼，只是沒有錢
+  assert.ok(pf.planWhy(a.plan).includes('緊急預備金'), pf.planWhy(a.plan));
+  const b = pf.allocAdds([{ code: 'A', H: H0(A) }], base0({ cash: 0, cashAll: 0 })).adv.get('A');
+  assert.ok(pf.planWhy(b.plan).includes('還沒設定可投入現金'));
+});
+
+t('加碼試算：同類型合計、單一公司、可動用的錢都檢查', () => {
+  const A = mkRow('A', 'broad');
+  const lists = { A: { h: [['2330', '台積電', 'tse', 50]] } };
+  const ctx = { ...base0({ cash: 30000, cashAll: 80000, catMV: { broad: 580000 }, lists, coAmt: { 2330: { name: '台積電', amt: 290000 } } }),
+    reserve: { cash: 80000, emergency: 50000, dca: { total: 0, items: [] }, usable: 30000 } };
+  const sim = pf.simulateAdd(H0(A), 400, 100, ctx);
+  const txt = sim.checks.map((c) => `${c.ok}:${c.text}`);
+  assert.ok(txt.some((x) => x.startsWith('false:買進後市值型合計')), txt);
+  assert.ok(txt.some((x) => x.startsWith('false:買進後透過 ETF 間接持有的台積電')), txt);
+  assert.ok(txt.some((x) => x.startsWith('false:需要') && x.includes('緊急預備金')), txt);
+});
+
 // ---------------------------------------------------------------- 用真實資料跑一遍
 const [sumPath, divPath, trackPath] = process.argv.slice(2);
 if (sumPath) {

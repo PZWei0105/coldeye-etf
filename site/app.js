@@ -6,7 +6,7 @@ import {
   dirCls, arrow, twParts, CAT, catName, POS, ST, ICON, getJSON, loadCore, useCache, ensureTrack, ensureDivs, ensureCal, marketClosedOn, ensureHist, quote,
   computePF, hasBook, heldOf, slotVar, stanceChip, posChip, actChip, gaugeSVG, animateNeedles, sparkSVG, toast, countUp,
   today, PF, premBand, DEFAULT_RULES, isPaper, switchMode, reloadBook, isBookKey, journal, saveJournal, reloadJournal, isJournalKey, taiexNow,
-  reloadPlans, dayTag, ensureNews, NEWS_MAX_AGE, invalidateBatch, ensureDetail, plainText,
+  reloadPlans, dayTag, ensureNews, NEWS_MAX_AGE, invalidateBatch, ensureDetail, plainText, adviceFor, ensureGlobal, marketTemp, normReserve,
 } from './core.js';
 import { openDetail, closeDetail, renderDetail, refreshDetailQuote } from './sheet.js';
 import { openTradeForm, openCashForm, openBackup, checkAlerts, closeModal, modalOpen, wipeBook, openPaperStart, PAPER_FRESH_MIN, openModal } from './forms.js';
@@ -24,7 +24,8 @@ import { UPDATES } from './updates.js';
 import { lessonHomeHTML, bindLessonHome, openLessonList, LESSONS, seenCount } from './lessons.js';
 import { openCase, casesCardHTML } from './cases.js';
 import { openCoach, hooks as coachHooks, coachRulesHTML, coachPacket } from './coach.js';
-import { xrayPfHTML, bindXrayPf, searchStocks, openStock, coachXray, xrayRulesHTML, refreshStockq } from './xray.js';
+import { xrayPfHTML, bindXrayPf, searchStocks, openStock, coachXray, xrayRulesHTML, refreshStockq, ensureHold } from './xray.js';
+import { planCardHTML, bindPlanCard, planTagHTML, planStripHTML, openTemp, refreshTemp, tempRulesHTML, compact, globalTickerHTML, bindGlobalTicker } from './plan.js';
 import { openLesson } from './lessons.js';
 import { AIDE } from './aide.js';
 const AIDE_BIG = AIDE.bigMarket;   // 大盤單日漲跌 2% 以上：今日行動請判斷教練帶你看
@@ -290,13 +291,16 @@ function renderHome() {
   v.innerHTML = `<div class="home">
     ${stallHTML()}
     <div class="col c1"><div class="h-eye">${eyeHTML(P, has)}</div><div class="h-brief">${briefHTML()}</div><div class="h-lesson">${lessonHomeHTML()}</div><div class="h-aide">${aideHomeHTML()}</div></div>
-    <div class="col c2"><div class="h-acts">${actionsHTML(P)}</div><div class="h-watch">${watchHTML()}</div></div>
+    <div class="col c2">${has ? `<div class="h-plan">${planStripHTML(P)}</div>` : ''}<div class="h-acts">${actionsHTML(P)}</div><div class="h-watch">${watchHTML()}</div></div>
     <div class="col c3"><div class="h-heat">${heatCardHTML(true)}</div><div class="h-news">${newsMiniHTML()}</div></div>
     <div class="h-foot">${installCard()}<p class="disclaim">資料來自證交所、櫃買中心、集保結算所等官方發布；觀點與建議由固定規則計算，不保證報酬，買賣請自行判斷。</p></div>
   </div>`;
   $$('[data-code]', v).forEach((b) => { if (!b.closest('.hm')) b.addEventListener('click', () => openDetail(b.dataset.code)); });
   $$('[data-act="dca"]', v).forEach((b) => b.addEventListener('click', () => openPending()));
   $$('[data-act^="coach-"]', v).forEach((b) => b.addEventListener('click', () => openCoach(b.dataset.act.slice(6))));
+  $$('[data-act="temp"]', v).forEach((b) => b.addEventListener('click', () => openTemp()));
+  const apg = $('#ap-go', v);
+  if (apg) apg.addEventListener('click', () => { go('pf'); requestAnimationFrame(() => { const c = $('.ap-card'); if (c) c.previousElementSibling.scrollIntoView({ block: 'start', behavior: reduceMotion() ? 'auto' : 'smooth' }); }); });
   bindHero(v, P);
   bindInstall(v);
   bindHeat(v);
@@ -417,10 +421,11 @@ const BR_ICON = {
   market: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 15.5l4.5-5 3.5 3 6.5-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   watch: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.5" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="10" cy="10" r="2" fill="currentColor"/></svg>',
   cal: ICON.cal,
+  temp: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 15.5h8a3.3 3.3 0 0 0 .3-6.6 4.7 4.7 0 0 0-9 1.2A2.7 2.7 0 0 0 6 15.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>',
 };
 function briefItems() {
   const tx = liveTaiex();
-  return brief({
+  const items = brief({
     market: tx ? { px: tx.px, pc: tx.pc, ma60: tx.ma60, insti: tx.insti } : null,
     br: S.breadth,
     watch: settings.watch.map((c) => S.rows.get(c)).filter(Boolean),
@@ -429,6 +434,12 @@ function briefItems() {
     names: { st: { 1: '偏多', 0: '中性', '-1': '偏空' }, ps: Object.fromEntries(Object.entries(POS).map(([k, v]) => [k, v.t])) },
     premWarn: (r) => premBand(r)[0], rowOf: (c) => S.rows.get(c),
   });
+  // 市場溫度是陰或雨時，第二句說哪幾個警訊亮了（只提醒、不改加碼股數；晴就不佔晨報的位置）
+  const t = marketTemp();
+  if (t && t.level !== '晴' && t.flags.length) {
+    items.splice(1, 0, { k: 'temp', act: 'temp', t: `市場溫度「**${t.level}**」：${t.flags.map((f) => f.t).join('、')}${t.notes && t.notes.length ? '；' + t.notes.map((z) => z.t).join('、') : ''}。` });
+  }
+  return items;
 }
 const briefName = () => { const { h } = twParts(); return h < 12 ? '冷眼晨報' : h < 18 ? '冷眼午報' : '冷眼晚報'; };
 /** 語音播報的稿子：問候＋晨報三句＋今日行動件數＋副官待辦 */
@@ -450,7 +461,7 @@ function briefHTML() {
   const items = briefItems();
   return `<section class="panel brief"><div class="br-h"><span class="br-t">${briefName()}</span><span class="br-s num">${tx ? esc(tx.when) : ''}</span>
       ${FX.hasVoice() ? `<button class="icon-btn br-say" id="br-say" aria-label="念給我聽">${ICON.speaker}</button>` : ''}</div>
-    <ul class="br-list">${items.map((it) => `<li class="br-${it.k}"${it.code ? ` data-code="${it.code}"` : ''}><span class="br-ic">${BR_ICON[it.k] || ''}</span><span class="br-x">${md(it.t)}</span></li>`).join('')}</ul>
+    <ul class="br-list">${items.map((it) => `<li class="br-${it.k}"${it.code ? ` data-code="${it.code}"` : it.act ? ` data-act="${it.act}"` : ''}><span class="br-ic">${BR_ICON[it.k] || ''}</span><span class="br-x">${md(it.t)}</span></li>`).join('')}</ul>
     <button class="link small br-ask" id="br-ask">${ICON.comms}帶今天的市場去問 Claude</button></section>`;
 }
 function bindBrief(v) {
@@ -483,7 +494,8 @@ function buildActions(P) {
         out.push({ pri: 2, code: x.code, chip: chip(a.label, 'warn'), title: x.name, text: esc(why ? why.text : '規則建議先觀察') });
       } else if (a.key === 'add') {
         const p = a.plan;
-        out.push({ pri: 1, code: x.code, chip: chip(a.label, 'go'), title: x.name, text: p && p.n > 0 ? `這次最多 ${sharesOf(p.n)}，分 3 批；出場線 <b class="num">${fmt.px(p.stop)}</b>` : `訊號可加碼，但${p && p.limit === 'cash' ? (p.cash > 0 ? '分到的現金不夠' : '還沒設定可投入現金') : '比重或風險預算已滿'}` });
+        const amt = p && p.n > 0 ? (settings.privacy ? `約總資產 <b class="num">${(p.spend / P.totals.T * 100).toFixed(1)}%</b>` : `約 <b class="num">${compact(p.spend)}</b>元`) : '';
+        out.push({ pri: 1, code: x.code, chip: chip(a.label, 'go'), title: x.name, text: p && p.n > 0 ? `加碼計畫：這次${amt}（${sharesOf(p.n)}），分 ${p.parts.length} 批；出場線 <b class="num">${fmt.px(p.stop)}</b>` : `訊號可加碼，但${esc(PF.planWhy(p, { cat: x.cat }))}` });
       }
       if (x.nextDiv && PF.daysBetween(today(), x.nextDiv.d) <= PF.DIV_SOON_DAYS) {
         out.push({ pri: 2, code: x.code, chip: chip('除息', 'info'), title: x.name, text: `${fmt.d(x.nextDiv.d)} 除息${x.nextDiv.cash ? `，每單位 ${cash3(x.nextDiv.cash)} 元，預估領 <b class="num">${money(x.nextDiv.amt)}</b> 元` : '，金額待公告'}` });
@@ -498,6 +510,9 @@ function buildActions(P) {
   }
   // 定期定額：今天扣款、自動記的預估待核對（國泰規則，dca.js）
   out.push(...dcaActions(chip));
+  // 市場溫度是「雨」（4 個以上的警訊）：加碼前先看一眼（只提醒、不改股數）
+  const mt = marketTemp();
+  if (mt && mt.level === '雨') out.push({ pri: 1, code: 'TEMP', act: 'temp', chip: chip('溫度', 'warn'), title: `市場溫度：雨（${mt.flags.length} 個警訊）`, text: esc(mt.flags.map((f) => f.t).join('、')) + '。加碼前先看全球市場；股數照紀律算，不因溫度改變' });
   // 大盤大波動的日子：判斷教練帶你一步一步看（只在有意義的時候出現）
   const tx = taiexNow();
   if (tx && isNum(tx.pc) && Math.abs(tx.pc) >= AIDE_BIG) {
@@ -664,7 +679,7 @@ function watchRow(row) {
     <span class="w-id"><span class="w-name">${esc(row.n)}${held ? '<i class="mine-dot" title="持有中"></i>' : ''}</span><span class="w-code num">${row.c}<span>${esc(catName(row.k))}</span></span></span>
     ${sparkSVG(row.sp, 58, 26, q.pc)}
     <span class="w-px"><span class="p num"${pxAttr(row.c, q.px)}>${fmt.px(q.px)}</span><span class="c num ${dirCls(q.pc)}">${arrow(q.pc)}${isNum(q.pc) ? Math.abs(q.pc).toFixed(2) + '%' : '—'}</span></span>
-    <span class="w-sig">${stanceChip(row.st)}${posChip(row.ps)}${row.cf != null ? `<span class="small muted" data-term="cf">信心 <b class="num">${row.cf}</b></span>` : ''}</span>
+    <span class="w-sig">${stanceChip(row.st)}${posChip(row.ps)}${planTagHTML(S.alloc ? S.alloc.adv.get(row.c) : null)}${row.cf != null ? `<span class="small muted" data-term="cf">信心 <b class="num">${row.cf}</b></span>` : ''}</span>
     <span class="w-g" data-term="sc">${gaugeSVG(row.sc, row.st)}</span>
   </button>`;
 }
@@ -764,6 +779,7 @@ function renderPF() {
       </div>
       <p class="small muted">損益已扣掉賣出時的<span data-term="fee">手續費</span>與<span data-term="tax">證交稅</span>估計值。${settings.fee.disc < 1 ? `手續費以 ${(settings.fee.disc * 10).toFixed(1).replace(/\.0$/, '')} 折計算。` : '手續費以原價計算，可在設定改成你的折扣。'}</p>
     </section>`;
+  html += planCardHTML(P);
   html += eqHTML();
   html += allocHTML(P);
   html += xrayPfHTML();
@@ -809,6 +825,7 @@ function renderPF() {
   if (pd) pd.addEventListener('click', () => go('aide'));
   drawEq(v);
   bindXrayPf(v);
+  bindPlanCard(v);
 }
 
 // ------------------------------------------------------------------ 資產走勢：用交易紀錄＋官方收盤價重算每一天
@@ -898,7 +915,7 @@ function holdRow(x) {
   const a = S.adv.get(x.code);
   const q = x.q || {};
   return `<button class="h-row" data-code="${x.code}">
-    <span class="h-top"><i class="h-dot" style="background:${slotVar(x.slot)}"></i><span class="h-name">${esc(x.name)}<small class="num">${x.code}</small></span>${actChip(a)}</span>
+    <span class="h-top"><i class="h-dot" style="background:${slotVar(x.slot)}"></i><span class="h-name">${esc(x.name)}<small class="num">${x.code}</small></span>${actChip(a)}${planTagHTML(a)}</span>
     <span class="h-mid"><span>${sharesOf(x.h.sh)}　均價 <b class="num">${settings.privacy ? '••••' : fmt.px(x.h.avg)}</b></span><span>現價 <b class="num"${pxAttr(x.code, x.px)}>${fmt.px(x.px)}</b> <span class="num ${dirCls(q.pc)}">${fmt.pct(q.pc)}</span></span></span>
     <span class="h-bot"><span class="num ${dirCls(x.pnl)}">${money(x.pnl, true)}<small>${fmt.r(x.pct)}</small></span><span class="muted">${x.divRecv > 0 ? `已領息 <span class="num">${money(x.divRecv)}</span>　` : ''}比重 <span class="num">${fmt.r(x.w, 1, false)}</span></span></span>
   </button>`;
@@ -1077,8 +1094,9 @@ async function renderNews() {
   } else {
     body = `<p class="disclaim">證交所與櫃買中心公布的<span data-term="notice">注意、處置</span>名單。今天全市場共 ${N.risk_total} 筆，以下只列 ETF。</p><section class="panel list news">${N.risk.length ? N.risk.map((x) => `<div class="n-item"><span class="n-meta"><span class="tag op">${x.kind === 'disposal' ? '處置' : '注意'}</span><span class="num">${x.code}</span></span><span class="n-t">${esc(x.name)}　${esc(x.period || x.text || '')}</span></div>`).join('') : '<div class="empty">目前沒有 ETF 被列入注意或處置</div>'}</section>`;
   }
-  v.innerHTML = `<div class="news-wrap"><div class="hscroll"><div class="seg" role="tablist">${tabs.map(([k, t]) => `<button data-nt="${k}" aria-pressed="${S.newsTab === k}">${t}</button>`).join('')}</div></div>${body}</div>`;
+  v.innerHTML = `<div class="news-wrap">${globalTickerHTML()}<div class="hscroll"><div class="seg" role="tablist">${tabs.map(([k, t]) => `<button data-nt="${k}" aria-pressed="${S.newsTab === k}">${t}</button>`).join('')}</div></div>${body}</div>`;
   $$('[data-nt]', v).forEach((b) => b.addEventListener('click', () => { S.newsTab = b.dataset.nt; renderNews(); }));
+  bindGlobalTicker(v);
 }
 
 // ================================================================== 戰績
@@ -1246,7 +1264,9 @@ function drawSettings() {
     <section class="panel set">
       <div class="srow col"><div><div class="h">風險屬性</div><div class="d">單筆最多虧總資產 ${(prof.loss * 100).toFixed(1)}%；各類型單檔上限如下表</div></div>
         <div class="seg">${Object.entries(PF.PROFILES).map(([k, p]) => `<button data-risk="${k}" aria-pressed="${settings.risk === k}">${p.name}</button>`).join('')}</div></div>
-      <div class="tbl-wrap"><table class="t caps"><thead><tr><th>類型</th><th class="r">保守</th><th class="r">穩健</th><th class="r">積極</th></tr></thead><tbody>${capRows}</tbody></table></div>
+      <div class="tbl-wrap"><table class="t caps"><thead><tr><th>類型</th><th class="r">保守</th><th class="r">穩健</th><th class="r">積極</th></tr></thead><tbody>${capRows}<tr class="co"><td><span data-term="cocap">單一公司（穿透）</span></td>${['cons', 'mid', 'aggr'].map((p) => `<td class="r num${p === settings.risk ? ' on' : ''}">${(PF.CO_CAP[p] * 100).toFixed(0)}%</td>`).join('')}</tr></tbody></table></div>
+      <p class="small muted pad-x">每一類的上限同時是「單檔上限」和「同一類合計的上限」（例如 0050、006208 合起來也不能超過市值型的上限）；單一公司是把你的 ETF 拆開、透過 ETF 間接持有同一家公司的上限。</p>
+      <div class="srow"><div><div class="h" data-term="reserve">緊急預備金</div><div class="d">不拿去加碼的錢（生活費、臨時要用的）。加碼計畫先扣掉它、再扣掉定期定額接下來 ${PF.DCA_RESERVE_DAYS} 天要扣的錢，剩下的才分給 ETF。只用在真實部位</div></div><input class="input short num" id="s-reserve" inputmode="numeric" value="${settings.reserve || 0}"></div>
       <div class="srow col"><div><div class="h">我的紀律</div><div class="d">加碼試算時會列出來，下單前對一次</div></div>
         <ul class="rules-ed">${(settings.rules || []).map((r, i) => `<li><span>${esc(r)}</span><button class="mini-btn" data-rr="${i}" aria-label="刪除這條">${ICON.x}</button></li>`).join('')}</ul>
         <div class="addrow"><input class="input" id="s-rule" maxlength="40" placeholder="新增一條，例如：除息前不追高"><button class="btn small" id="s-rule-add">新增</button></div>
@@ -1293,7 +1313,8 @@ function drawSettings() {
     <section class="panel">
       <details class="rules"><summary>冷眼小辭典</summary><div class="in">${glossaryHTML()}</div></details>
       <details class="rules"><summary>觀點怎麼算</summary><div class="in prose">${rulesHTML()}</div></details>
-      <details class="rules"><summary>加碼、減碼建議怎麼算</summary><div class="in prose">${posRulesHTML()}</div></details>
+      <details class="rules"><summary>加碼、減碼建議怎麼算（含加碼計畫）</summary><div class="in prose">${posRulesHTML()}</div></details>
+      <details class="rules"><summary>市場溫度怎麼判斷</summary><div class="in prose">${tempRulesHTML()}</div></details>
       <details class="rules"><summary>副官怎麼檢查、怎麼對答案</summary><div class="in prose">${aideRulesHTML()}</div></details>
       <details class="rules"><summary>判斷教練怎麼判斷</summary><div class="in prose">${coachRulesHTML()}</div></details>
       <details class="rules"><summary>透視（成分股）怎麼算</summary><div class="in prose">${xrayRulesHTML()}</div></details>
@@ -1324,6 +1345,15 @@ function bindSettings() {
     const n = Number(String(e.target.value).replace(/[^0-9.]/g, ''));
     if (ok(n)) { settings.fee[key] = n; saveSettings(); computePF(); render(); toast('交易成本已更新'); }
     e.target.value = settings.fee[key];
+  });
+  $('#s-reserve', sh).addEventListener('change', (e) => {
+    const raw = String(e.target.value).replace(/[^0-9.]/g, '');
+    settings.reserve = normReserve(raw === '' ? 0 : Number(raw));
+    saveSettings();
+    e.target.value = settings.reserve;
+    computePF();
+    render();
+    toast(settings.reserve > 0 ? `緊急預備金 ${money(settings.reserve)} 元：加碼計畫會先扣掉` : '已取消緊急預備金');
   });
   numSet('#s-disc', 'disc', (n) => n > 0 && n <= 1);
   numSet('#s-min', 'min', (n) => n >= 0 && n <= 100);
@@ -1415,7 +1445,8 @@ function posRulesHTML() {
   const P = PF.PROFILES;
   return `<p><b>移動防守線</b>近 22 個交易日最高收盤，減 3 倍 ATR（平均真實波幅）。價格創高就跟著上移；下跌時多半停在原地，但波動變大、或高點超過 22 個交易日時也會往下移；收盤跌破代表前一段上漲已經中斷。</p>
     <p><b>部位訊號</b>依序判斷，先符合先決定：① 觀點偏空且收盤跌破防守線 → 減碼；② 觀點偏空、跌破防守線、注意／處置中、或溢價超過警戒 → 先不加碼；③ 觀點偏多但短線漲多（RSI ≥ 75、爆量上漲、或比月線高出 2 倍 ATR）→ 漲多分批；④ 觀點偏多 → 可加碼；⑤ 其他 → 續抱。</p>
-    <p><b>加上你的部位</b>先看注意／處置，再看減碼訊號，接著檢查比重：超過該類型上限 2 個百分點以上就建議調節。可加碼時，股數取這三個的最小值：單筆最多虧損（${P.cons.name} ${(P.cons.loss * 100).toFixed(1)}%、${P.mid.name} ${(P.mid.loss * 100).toFixed(0)}%、${P.aggr.name} ${(P.aggr.loss * 100).toFixed(0)}% 的總資產）÷ 每股到出場線的最壞虧損（含來回手續費與證交稅）、單檔上限剩下的空間、分到的可用現金（現金分 ${PF.CASH_SLICES} 份；同時有超過 ${PF.CASH_SLICES} 檔會拿到加碼計畫時平均分）。觀點中性、或信心不到 ${PF.CONF_FULL}，股數再減半。</p>
+    <p><b>加上你的部位</b>先看注意／處置，再看減碼訊號，接著檢查比重：超過該類型上限 2 個百分點以上就建議調節。</p>
+    <p><b>加碼計畫</b>可動用的錢＝現金 − 緊急預備金 − 定期定額接下來 ${PF.DCA_RESERVE_DAYS} 天要扣的錢（國泰扣款失敗不補扣、連續 3 次會終止，所以先留著；模擬倉沒有這兩項）。可動用的錢分給你持有的和關注的 ETF，照順序：訊號「可加碼」的先（信心高的先），再來是「續抱」裡想小額加碼的。每一檔的股數取這幾個的最小值：① 單筆最多虧損（${P.cons.name} ${(P.cons.loss * 100).toFixed(1)}%、${P.mid.name} ${(P.mid.loss * 100).toFixed(0)}%、${P.aggr.name} ${(P.aggr.loss * 100).toFixed(0)}% 的總資產）÷ 每股到出場線的最壞虧損（含來回手續費與證交稅）；② 這一檔的上限剩下的空間；③ 同一類合計的上限剩下的空間（上限和單檔一樣，例如 0050 和 006208 合起來也不能超過市值型的上限）；④ 單一公司的上限（把 ETF 拆開，透過 ETF 間接持有同一家公司：${P.cons.name} ${PF.CO_CAP.cons * 100}%、${P.mid.name} ${PF.CO_CAP.mid * 100}%、${P.aggr.name} ${PF.CO_CAP.aggr * 100}% 的總資產；在這檔裡占不到 ${PF.CO_MIN * 100}% 的公司不算）；⑤ 分到的可動用現金（分 ${PF.CASH_SLICES} 份；同時有超過 ${PF.CASH_SLICES} 檔會拿到加碼計畫時平均分）。排在前面的用掉了同類型、同一家公司的空間，後面的就少，不會兩檔各算一次。之後：觀點中性、或信心不到 ${PF.CONF_FULL}，股數減半；盤中溢價超過警戒線（台股 ETF 0.5%，海外、債券、期貨 1%）減半、超過 ${PF.PREM_CUT[1]} 倍先不買。市場溫度不改股數（回測沒有變好），只提醒風險。</p>
     <p><b>分三批</b>第一批現價附近（除不盡的零頭放這批）；第二、三批等拉回價，沒等到就一週、兩週後照時間買——回測顯示挑時機的優勢很小，這樣可以避免一直追不到。「跌到出場線約虧多少」用三批都以現價成交的最壞情況計算。</p>
     <p><b>出場線</b>偏多時用作廢線，其他用移動防守線。<b>減碼幅度</b>市值型、高股息、海外、債券先減三分之一；產業主題、主動式、期貨先減一半；槓桿與反向全部出場。</p>
     <p><b>成本不影響方向</b>平均成本只用來算損益、損益兩平與「跌到防守線還剩多少獲利」，不會讓規則變成攤平建議。</p>
@@ -1549,6 +1580,9 @@ bus.on((what, data) => {
   if (what === 'dcarun') { runPlans(); return; }
   if (what === 'lotdel') { onLotDel(data); onDcaLotDel(data); return; }
   if (what === 'lotedit') { onLotEdit(data); return; }
+  // 加碼計畫的單一公司上限要用成分股明細：還沒載入的抓回來，再重算一次（同一檔一分鐘最多試一次；換了一批資料就重新算起）
+  if (what === 'needhold') { holdFetch(data); return; }
+  if (what === 'batch' || what === 'holddata') holdTried.clear();
   if (what === 'book' || what === 'watch' || what === 'alerts') {
     if (what !== 'alerts') diffSeen();
     computePF();
@@ -1566,6 +1600,19 @@ bus.on((what, data) => {
     else if (S.openCode && !S.openCode.startsWith('__')) renderDetail(S.openCode);
   }
 });
+const holdTried = new Map();
+function holdFetch(codes) {
+  const now = Date.now();
+  const todo = (codes || []).filter((c) => !(holdTried.get(c) > now - 60000));
+  if (!todo.length) return;
+  for (const c of todo) holdTried.set(c, now);
+  Promise.all(todo.map((c) => ensureHold(c).catch(() => undefined))).then((res) => {
+    if (!res.some((r) => r !== undefined)) return;
+    computePF();
+    viewRender();
+    if (S.openCode && !S.openCode.startsWith('__')) renderDetail(S.openCode);
+  });
+}
 window.addEventListener('popstate', () => {
   const h = location.hash.replace('#', '');
   if (modalOpen()) closeModal();
@@ -1574,6 +1621,7 @@ window.addEventListener('popstate', () => {
   if (h === 'tm') { if (S.openCode !== '__tm') openTM(false); return; }
   if (h === 'cases') { if (S.openCode !== '__cases') openCase(S.caseId || null, false); return; }
   if (h === 'coach') { if (S.openCode !== '__coach') openCoach(S.coachId || null, false); return; }
+  if (h === 'temp') { if (S.openCode !== '__temp') openTemp(false); return; }
   if (h && S.rows.has(h)) { openDetail(h, false); return; }
   if (S.openCode) closeDetail(true);
 });
@@ -1642,7 +1690,7 @@ async function syncTick() {
     const F = v && !S.verOffline && v.files && typeof v.files === 'object' ? v.files : null;
     if (!F) {
       if ((S.live && S.live.open) || inSession()) await refreshLive();
-      if (Date.now() - lastBatch > 15 * 60000) await newBatch();
+      if (Date.now() - lastBatch > 15 * 60000) { await newBatch(); await ensureGlobal({ force: true }); refreshTemp(); }
       return;
     }
     // 開 App 時沒有網路（用的是上次存下的資料），現在連得上了：整批重抓一次，「離線」的標示才會消失
@@ -1651,6 +1699,12 @@ async function syncTick() {
     else if (F.live && F.live !== (S.live && S.live.at) && tryStamp('live', F.live)) await refreshLive(F.live);
     if (S.news && F.news && F.news !== S.news.generated && tryStamp('news', F.news)) await refreshNews(F.news);
     if (S.stockq && F.stockq && F.stockq !== S.stockq.at && tryStamp('stockq', F.stockq)) await refreshStockq(F.stockq);
+    // 全球市場與市場溫度（美股盤中、夜盤每 10 分鐘一輪）
+    if (F.global && F.global !== (S.global && S.global.at) && tryStamp('global', F.global)) {
+      await ensureGlobal({ v: F.global });
+      refreshTemp();
+      if (S.tab === 'home' || S.tab === 'pf' || S.tab === 'news') viewRender();
+    }
     if ((S.stocks && F.stocks && F.stocks !== S.stocks.at && tryStamp('stocks', F.stocks))
       || (S.holdIdx && F.hold && F.hold !== S.holdIdx.at && tryStamp('hold', F.hold))) {
       bus.emit('holddata');
@@ -1745,6 +1799,8 @@ async function boot() {
   computePF();
   if (!cached) maybeBoot();
   render();
+  // 全球市場與市場溫度：不擋開機，抓到之後把用到它的畫面換新（溫度只提醒、不改股數，所以不用重算部位）
+  ensureGlobal({ force: true }).then(() => { refreshTemp(); if (S.tab === 'home' || S.tab === 'pf' || S.tab === 'news') viewRender(); });
   refreshEvals();
   runPlans();   // 定期定額：到期的每一期自動記一筆預估（國泰規則）
   const h = location.hash.replace('#', '');
@@ -1753,6 +1809,7 @@ async function boot() {
   else if (h === 'tm') openTM(false);
   else if (h === 'cases') openCase(null, false);
   else if (h === 'coach') openCoach(null, false);
+  else if (h === 'temp') openTemp(false);
   else if (h && S.rows.has(h)) openDetail(h, false);
   // 畫面開著時每分鐘看一次後台的版本檔，哪一份資料變了就重抓那一份（見 syncTick）；網路恢復時馬上看一次
   setInterval(() => { if (document.visibilityState === 'visible') syncTick(); }, SYNC_MS);

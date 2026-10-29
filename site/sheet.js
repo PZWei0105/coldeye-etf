@@ -155,13 +155,20 @@ function myPositionHTML(x) {
 }
 
 const KIND_ICON = { pro: ICON.ok, con: ICON.no, warn: ICON.bang, info: ICON.dot, stat: ICON.chart };
+/** 隱藏金額時，建議句子裡你的金額（約虧多少、預估可領多少）和平均成本遮掉；「每單位 X 元」的配息與百分比照常顯示 */
+function maskLine(t) {
+  if (!settings.privacy) return t;
+  return String(t)
+    .replace(/平均成本從 [\d,.]+ 變成 [\d,.]+/g, '平均成本會改變')
+    .replace(/(每單位 )?([\d,]+(?:\.\d+)?)\s*元/g, (m, unit) => (unit ? m : '•••• 元'));
+}
 function adviceHTML(row, x, a) {
   const tone = { add: 'go', hold: 'mute', full: 'mute', none: 'mute', hold_off: 'warn', pause: 'warn', trim: 'warn2', rebalance: 'warn2' }[a.key] || 'mute';
   let plan = '';
   if (a.plan) plan = planHTML(a);
   let sell = '';
   if (a.sell && a.sell.n > 0) sell = sellHTML(a.sell, x);
-  const lines = a.lines.map((l) => `<li class="ln ${l.kind}"><span class="ic">${KIND_ICON[l.kind] || ICON.dot}</span><span>${esc(l.text)}</span>${l.kind === 'stat' && a.ev ? evidenceBars(a.ev) : ''}</li>`).join('');
+  const lines = a.lines.map((l) => `<li class="ln ${l.kind}"><span class="ic">${KIND_ICON[l.kind] || ICON.dot}</span><span>${esc(maskLine(l.text))}</span>${l.kind === 'stat' && a.ev ? evidenceBars(a.ev) : ''}</li>`).join('');
   return `<section class="panel advice hud tone-${tone}${tone === 'warn2' ? ' hazard' : ''}" aria-label="冷眼建議">
     <div class="adv-top"><div class="adv-h"><span class="adv-k">冷眼建議</span><span class="adv-label">${esc(a.label)}</span><span class="adv-by">${a.held ? '規則訊號 × 你的紀律' : '如果要買：規則訊號 × 你的紀律'}</span></div></div>
     ${sell}${plan}
@@ -176,23 +183,22 @@ function evidenceBars(ev) {
     <div class="evi-r base"><span>任何一天</span><span class="evi-t"><i style="width:${w(ev.base)}%"></i></span><b class="num">${(ev.base * 100).toFixed(0)}%</b></div>
     <div class="evi-n">${esc(ev.catName)}，${fmt.n(ev.n)} 次，20 個交易日後上漲的比例</div></div>`;
 }
-const LIMIT_TEXT = {
-  cash: '分到的可用現金（現金分 3 份，每次加碼最多用 1 份）',
-  cap: '單檔比重上限',
-  risk: '單筆最多虧損的金額',
-};
 function planHTML(a) {
   const p = a.plan;
+  const row = S.rows.get(S.openCode);
   const T = ctxFor(S.openCode).T;
   if (!(T > 0)) return '<div class="plan empty-plan">在「部位」輸入可投入現金或持股後，這裡會算出建議買多少。</div>';
+  // 這一檔在不在加碼計畫裡（你持有的＋關注的）：不在的話，是用計畫分完之後剩下的錢與空間算「如果另外買這檔」
+  const inPlan = !!(S.alloc && S.alloc.adv.has(S.openCode));
+  const note = inPlan ? '' : '<div class="plan-sub">這檔不在加碼計畫裡（不是持有或關注的）：這是「如果另外加買這檔」，用一份可動用的錢、扣掉加碼計畫已經用掉的同類型與單一公司空間來算。</div>';
   if (!(p.n > 0)) {
-    const why = p.limit === 'cash' ? (p.cash > 0 ? '分到的現金不夠買 1 股' : '可投入現金是 0，先到「部位」設定現金') : p.limit === 'cap' ? '比重已到上限' : '單筆風險預算太小';
-    return `<div class="plan empty-plan">${a.key === 'hold' ? '想加碼的話：' : ''}目前建議 0 股（${why}）。${p.ideal > 0 ? `依紀律最多 ${sharesOf(p.ideal)}。` : ''}</div>`;
+    return `<div class="plan empty-plan">${a.key === 'hold' ? '想加碼的話：' : ''}目前建議 0 股（${esc(PF.planWhy(p, { cat: row && row.k }))}）。${p.ideal > 0 && p.limit === 'cash' ? `依紀律最多 ${sharesOf(p.ideal)}。` : ''}</div>${note}`;
   }
   const amt = p.parts.reduce((s, t) => s + t.sh * t.px, 0);
   return `<div class="plan">
     <div class="plan-h">${a.key === 'hold' ? '想加碼的話，小額就好：' : ''}這次最多 <b class="num">${sharesOf(p.n)}</b>，約 <b class="num">${money(amt)}</b> 元</div>
-    <div class="plan-sub">受限於${LIMIT_TEXT[p.limit]}${p.small ? (p.smallWhy === 'conf' ? '；信心不到 70，再減半' : '；觀點中性，再減半') : ''}${p.ideal > p.n && p.limit === 'cash' ? `。依紀律最多 ${sharesOf(p.ideal)}` : ''}</div>
+    <div class="plan-sub">${esc(PF.planWhy(p, { cat: row && row.k }))}${p.ideal > p.n && p.limit === 'cash' ? `。依紀律最多 ${sharesOf(p.ideal)}` : ''}${p.coNote === 'pending' ? '。成分股明細還在載入，單一公司的上限還沒算進來' : ''}</div>
+    ${note}
     <ol class="tranche">${p.parts.map((t, i) => `<li><span class="t-k">第 ${i + 1} 批</span><span class="t-w">${i === 0 ? `現價附近 <b class="num">${fmt.px(t.px)}</b>` : t.lim != null ? `拉回到 <b class="num">${fmt.px(t.lim)}</b>，或${i === 1 ? '一週後' : '兩週後'}` : esc(t.when)}</span><span class="t-n num">${sharesOf(t.sh)}</span></li>`).join('')}</ol>
     <div class="plan-stop">${ICON.warn}<span><span data-term="stop">出場線</span> <b class="num">${fmt.px(p.stop)}</b>（${esc(p.stopName)}）：買齊後收盤跌破就出場，約虧 <b class="num">${money(p.lossAtStop)}</b> 元${T > 0 ? `（總資產 ${(p.lossAtStop / T * 100).toFixed(2)}%）` : ''}</span></div>
     <div class="plan-after">買齊後${isNum(p.newAvg) && a.held ? `平均成本 <b class="num">${settings.privacy ? '••••' : fmt.px(p.newAvg)}</b>、` : ''}占總資產 <b class="num">${fmt.r(p.newW, 1, false)}</b></div>

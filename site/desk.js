@@ -5,7 +5,7 @@
 import {
   $, $$, esc, isNum, clamp, S, PF, settings, saveSettings, book, isPaper, store, journal, saveJournal, alerts, saveAlerts, newId,
   fmt, money, sharesOf, dirCls, catName, ICON, quote, ensureHist, ensureDetail, ensureTrack, heldOf, adviceFor, today, twParts,
-  toast, bus, taiexNow, quoteWhen,
+  toast, bus, taiexNow, quoteWhen, marketTemp,
 } from './core.js';
 import { openModal, closeModal } from './forms.js';
 import * as A from './aide.js';
@@ -907,9 +907,21 @@ export function openAsk(kind, o = {}) {
         const b = benchValue(book.start, dv ? dv.d : [], dv ? dv.s : [], bq ? bq.px : null, (bq && bq.date) || td);
         if (b) bench = { ret: P.totals.T / book.start.cash0 - 1, b: b.ret, days: PF.daysBetween(book.start.d, td) + 1 };
       }
+      // 加碼計畫（照順序分到的那幾檔）與市場溫度：沒打開「附上金額」只寫占總資產的比例
+      const plan = [];
+      if (S.alloc) {
+        for (const c of S.alloc.order) {
+          const a = S.alloc.adv.get(c);
+          const r = S.rows.get(c);
+          if (!a || !r || !a.plan || !(a.plan.n > 0)) continue;
+          plan.push({ name: r.n, code: c, label: a.label, w: P.totals.T > 0 ? a.plan.spend / P.totals.T : null, amt: a.plan.spend, sh: a.plan.n, why: PF.planWhy(a.plan, { cat: r.k }), stop: a.plan.stop });
+        }
+      }
+      const dep = P.deploy || null;
       return A.packPf({
         short: st.short, when: whenText(), profileName: PF.PROFILES[settings.risk].name, profileLoss: PF.PROFILES[settings.risk].loss,
         totals: P.totals, holdings, stress, audit: A.auditPf(P, settings.risk, td, stress), showAmt: st.amt, question: st.q.trim(), bookName: bookName(), bench, market: marketNow(),
+        plan, deploy: dep ? { usable: dep.usable, emergency: dep.emergency || 0, dca: (dep.dca && dep.dca.total) || 0 } : null, temp: marketTemp(),
       });
     }
     if (kind === 'market') {

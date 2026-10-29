@@ -2,7 +2,7 @@
 import {
   $, $$, esc, isNum, S, PF, settings, saveSettings, book, saveBook, alerts, saveAlerts, newId, fmt, money,
   catName, toast, buzz, bus, ICON, quote, today, store, isPaper, replaceBook, otherBook, setBooks, twParts, journal, saveJournal,
-  savePlans,
+  savePlans, normReserve,
 } from './core.js';
 import { TAGS as WHY_TAGS, EMO_TAGS, sanitizeJournal } from './aide.js';
 import * as FX from './fx.js';
@@ -393,6 +393,8 @@ export function openCashForm() {
       <p class="m-desc">準備拿來買 ETF、但還沒買的錢。冷眼用「持股市值＋這筆現金」當作你的總資產，計算比重上限與每次最多買多少。只存在這支手機。</p>
       <label class="field"><span>金額（元）</span><input class="input num big" id="c-amt" inputmode="numeric" value="${book.cash || ''}" placeholder="0"></label>
       <div class="quick">${[50000, 100000, 300000, 500000].map((v) => `<button type="button" class="pill" data-q="${v}">${v / 10000} 萬</button>`).join('')}</div>
+      <label class="field"><span>其中的緊急預備金（元，不拿去加碼）</span><input class="input num" id="c-res" inputmode="numeric" value="${settings.reserve || ''}" placeholder="0"></label>
+      <p class="m-desc small">加碼計畫會先扣掉緊急預備金、再扣掉定期定額接下來 31 天要扣的錢，剩下的才分給可以加碼的 ETF。</p>
       <div class="m-actions"><button type="button" class="btn ghost" data-close>取消</button><button type="submit" class="btn primary">儲存</button></div>
     </form>`, { label: '可投入的現金' });
   const amt = $('#c-amt', card);
@@ -401,8 +403,13 @@ export function openCashForm() {
     e.preventDefault();
     const v = toInt(amt.value);
     if (!(v >= 0)) { amt.focus(); return; }
+    const res = $('#c-res', card);
+    const rv = res.value.trim() === '' ? 0 : toInt(res.value);
+    if (!(rv >= 0)) { res.focus(); return; }
     book.cash = Math.round(v);
     saveBook();
+    settings.reserve = normReserve(rv);
+    saveSettings();
     closeModal();
     buzz();
     toast('現金已更新');
@@ -518,7 +525,7 @@ function backupObject() {
     ...(paper && paper.start ? { paper } : {}),
     alerts,
     journal: journal.items,
-    prefs: { watch: settings.watch, risk: settings.risk, fee: settings.fee, name: settings.name, rules: settings.rules, plans: settings.plans, dcaSkip: settings.dcaSkip, dcaNoAsk: settings.dcaNoAsk },
+    prefs: { watch: settings.watch, risk: settings.risk, fee: settings.fee, name: settings.name, rules: settings.rules, reserve: settings.reserve || 0, plans: settings.plans, dcaSkip: settings.dcaSkip, dcaNoAsk: settings.dcaNoAsk },
   });
 }
 export function openBackup() {
@@ -598,7 +605,7 @@ export function openBackup() {
     saveAlerts();
     if (obj.prefs) {
       // readBackup 已經逐欄檢查過（代號、稱呼、紀律、風險屬性、手續費）
-      for (const k of ['watch', 'risk', 'fee', 'name', 'rules']) if (obj.prefs[k] != null) settings[k] = obj.prefs[k];
+      for (const k of ['watch', 'risk', 'fee', 'name', 'rules', 'reserve']) if (obj.prefs[k] != null) settings[k] = obj.prefs[k];
       saveSettings();
       // 定期定額計畫換成備份裡的（逐欄檢查、舊版轉新版，同一個 id 只留一個）；刪掉的那幾期、說過「不是同一筆」的合併（只會更少重複）
       const pr = obj.prefs;

@@ -4,7 +4,7 @@
    副官只檢查、只記錄，不替你決定買賣。所有門檻都在這個檔案的常數裡，設定頁「副官怎麼檢查」照抄這裡。 */
 import {
   daysBetween, addDays, tradeCost, taxCat, taxRateOf, premBand, PROFILES, capOf, sharesText, CAT_NAMES, signalEvidence,
-  hotWhy, BOND_TAX_FREE_UNTIL, OVER_TOL,
+  hotWhy, BOND_TAX_FREE_UNTIL, OVER_TOL, planWhy,
 } from './pf.js';
 
 const isNum = (x) => typeof x === 'number' && isFinite(x);
@@ -252,12 +252,13 @@ export function aideCheck(x) {
     if (!sell) {
       const a = x.adv;
       if (!(ctx.T > 0)) push(info('plan', `還沒有輸入現金或持股（${x.bookName || '部位'}），副官沒辦法幫你算可以買多少。`));
+      else if (a && a.key === 'full' && a.plan && (a.plan.limit === 'cat' || a.plan.limit === 'co')) push(warn('plan', `${planWhy(a.plan, { cat: row.k })}：照紀律不再加碼。`));
       else if (a && (a.key === 'full' || a.key === 'rebalance')) push(warn('plan', `比重已經到你設定的上限（${catN(row.k)}單檔 ${pctU(capOf(ctx.profile, row.k))}）：照紀律不再加碼。`));
       else if (a && a.plan && a.plan.n > 0) {
         const amt = a.plan.parts.reduce((s, t) => s + t.sh * t.px, 0);
         push(withTp(ok('plan', `依你的紀律（${x.bookName || '部位'}），這次最多 ${sharesText(a.plan.n)}${x.privacy ? '' : `（約 ${ntS(amt)} 元）`}、分三批；出場線 ${pxS(a.plan.stop)}。`),
           `依你的紀律（${x.bookName || '部位'}），這次最多買到約占總資產 ${pctU(amt / ctx.T, 1)}、分三批；出場線 ${pxS(a.plan.stop)}。`));
-      } else if (a && a.plan) push(info('plan', `依你的紀律（${x.bookName || '部位'}），目前建議 0 股（${a.plan.limit === 'cash' ? '分到的現金不夠' : a.plan.limit === 'cap' ? '比重已到上限' : '單筆風險預算太小'}）。`));
+      } else if (a && a.plan) push(info('plan', `依你的紀律（${x.bookName || '部位'}），目前建議 0 股（${planWhy(a.plan, { cat: row.k })}）。`));
       if (hold && isNum(hold.pnlPct) && hold.pnlPct < 0 && row.st < 0) push(warn('avgdown', `帳面虧損 ${pctS(hold.pnlPct)}，而且規則偏空：往下買是攤平，不是加碼。`));
     } else if (hold) {
       if (isNum(q.px)) {
@@ -820,6 +821,14 @@ export function packPf(p) {
   L.push('持股（比重｜類別與我的上限｜未實現｜冷眼依紀律的建議｜規則觀點）：');
   for (const h of p.holdings) L.push(`・${h.name}（${h.code}）｜${pctU(h.w, 1)}｜${catN(h.cat)}，上限 ${pctU(h.cap)}｜${pctS(h.pnlPct)}｜${h.label || '—'}｜${h.st == null ? '資料不足' : `${ST_T[String(h.st)]}／${PS_T[h.ps] || '—'}`}${p.showAmt && isNum(h.sh) ? `｜${sharesText(h.sh)}，平均成本 ${pxS(h.avg)}，市值約 ${ntS(h.mv)} 元` : ''}`);
   if (p.audit && p.audit.length) { L.push('', SEP('副官巡檢（固定規則）')); const mark = { ok: '✓', info: '・', warn: '⚠', stop: '⛔' }; for (const i of p.audit) L.push(`${mark[i.lvl]} ${i.t}`); }
+  if (p.plan && (p.plan.length || p.deploy)) {
+    L.push('', SEP('冷眼的加碼計畫（固定規則：可動用的錢＝現金－緊急預備金－定期定額接下來要扣的，照紀律分給可以加碼的 ETF）'));
+    const t = p.totals;
+    if (p.deploy) L.push(p.showAmt ? `可動用的錢約 ${ntS(p.deploy.usable)} 元（緊急預備金 ${ntS(p.deploy.emergency)}、定期定額保留 ${ntS(p.deploy.dca)}）` : `可動用的錢約占總資產 ${pctU(t.T > 0 ? p.deploy.usable / t.T : null, 1)}`);
+    if (!p.plan.length) L.push('這次沒有分到加碼的 ETF。');
+    for (const x of p.plan) L.push(`・${x.name}（${x.code}）｜${x.label}｜這次最多約占總資產 ${pctU(x.w, 1)}${p.showAmt ? `（約 ${ntS(x.amt)} 元、${sharesText(x.sh)}）` : ''}｜${x.why}｜出場線 ${pxS(x.stop)}`);
+  }
+  if (p.temp) L.push(`市場溫度：${p.temp.level}（${p.temp.flags.length ? p.temp.flags.map((f) => f.t).join('、') : '沒有警訊'}；固定規則數 7 個警訊，只提醒風險、不改加碼股數）`);
   if (p.market) { L.push(''); L.push(...marketLines(p.market)); }
   if (p.question) L.push('', SEP('我想問'), p.question);
   return L.join('\n');

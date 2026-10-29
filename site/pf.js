@@ -36,6 +36,15 @@ export const DIV_SOON_DAYS = 21;           // 21 天內除息才提醒
 export const CONF_FULL = 70;               // 信心 70 以上才給完整股數，否則減半
 export const CASH_SLICES = 3;              // 可用現金分 3 份，每次加碼最多用 1 份（同時超過 3 檔可加碼時平均分）
 
+// ------------------------------------------------------------------ 加碼計畫：可動用的錢、單一公司、同類型、溢價（allocAdds）
+// 單一公司：把每檔 ETF 拆開（投信投顧公會基金投資明細）加總，你透過 ETF 間接押在同一家公司的錢，最多占總資產多少。
+// 透視頁 20% 的琥珀提醒照舊（XR.oneCo），這裡是加碼時的上限：保守 20%、穩健 30%、積極 40%。
+export const CO_CAP = { cons: 0.2, mid: 0.3, aggr: 0.4 };
+export const CO_MIN = 0.005;               // 在這檔 ETF 裡占不到 0.5% 的公司不檢查（影響太小）
+export const DCA_RESERVE_DAYS = 31;        // 定期定額接下來 31 天要扣的錢先保留，不拿去加碼（扣款失敗連 3 次國泰會全部終止）
+export const PREM_CUT = [1, 2];            // 盤中溢價超過警戒線的 1 倍：股數減半；2 倍：先不買（警戒線見 premBand）
+export const coCapOf = (profile) => CO_CAP[profile] ?? CO_CAP.mid;
+
 export const CAT_NAMES = {
   broad: '市值型', div: '高股息', theme: '產業主題', overseas: '海外股票', bond: '債券',
   lev: '槓桿型', inv: '反向型', fut: '期貨／商品', active: '主動式',
@@ -514,11 +523,22 @@ export function advise(H, ctx) {
     }
   }
 
-  // ---- 加碼／買進計畫（觀點中性、或信心不到 70，股數再減半）
+  // ---- 加碼／買進計畫（觀點中性、或信心不到 70，股數再減半；盤中溢價太高再減半或先不買）
   if (key === 'add' || key === 'hold') {
     const weak = key === 'add' && !(isNum(r.cf) && r.cf >= CONF_FULL);
-    out.plan = planAdd(H, ctx, { small: key === 'hold' || weak, why: key === 'hold' ? 'neutral' : weak ? 'conf' : null });
-    if (weak) out.label = held ? '可小額加碼' : '可小額分批買進';
+    const p = planAdd(H, ctx, { small: key === 'hold' || weak, why: key === 'hold' ? 'neutral' : weak ? 'conf' : null });
+    out.plan = p;
+    if (key === 'add' && (weak || p.cuts.includes('prem'))) out.label = held ? '可小額加碼' : '可小額分批買進';
+    if (!(p.n > 0) && (p.limit === 'cat' || p.limit === 'co') && T > 0) {
+      // 同類型合計、或透過 ETF 間接持有的某一家公司已經到上限：這一檔再好也不加
+      if (key === 'add') { out.key = 'full'; out.label = held ? '續抱' : '先不買'; }
+      add('info', planWhy(p, { catName }) + '。');
+    } else if (p.cuts.includes('prem0')) {
+      if (key === 'add') { out.key = 'hold_off'; out.label = held ? '先不加碼' : '先不買'; }
+      add('con', `盤中溢價 ${p.prem.toFixed(2)}%，超過警戒線 ${warn}% 的 ${PREM_CUT[1]} 倍：先不買，等溢價回到 ${warn}% 以內再說。`);
+    } else if (p.cuts.includes('prem') && p.n > 0) {
+      add('warn', `盤中溢價 ${p.prem.toFixed(2)}%，超過警戒線 ${warn}%：股數先減半。`);
+    }
   }
   // ---- 減碼計畫
   if (held && (key === 'trim' || key === 'rebalance')) {
@@ -572,7 +592,57 @@ export function hotWhy(r, px) {
   return out.join('、') || '技術指標偏熱';
 }
 
-/** 加碼計畫：依「單筆最多虧多少」「單檔上限」「分到的可用現金」三個條件取最小，分三批。 */
+/** 加碼計畫的減半原因（白話） */
+export const CUT_TEXT = { conf: '信心不到 70，減半', neutral: '觀點中性，減半', prem: '溢價超過警戒線，減半' };
+/** 加碼計畫的現金分成幾份（同時超過 CASH_SLICES 檔拿到計畫時平均分） */
+export const planSlices = (p) => (p && p.cash > 0 && p.cashShare > 0 ? Math.max(CASH_SLICES, Math.round(p.cash / p.cashShare)) : CASH_SLICES);
+/** 有股數時「受限於什麼」（不含減半原因） */
+export function planLimitText(p, o = {}) {
+  if (!p) return '';
+  const catName = o.catName || CAT_NAMES[o.cat] || '同類型';
+  const pc = (x) => `${Math.round(x * 100)}%`;
+  return {
+    cash: `分到的現金（可動用的錢分 ${planSlices(p)} 份，每檔最多 1 份）`,
+    cap: `這一檔的比重上限 ${pc(p.cap)}`,
+    cat: `${catName}合計的上限 ${pc(p.cap)}`,
+    co: `單一公司的上限（${p.coName || '同一家公司'}）`,
+    risk: '單筆最多虧損的金額',
+  }[p.limit] || '';
+}
+/**
+ * 加碼計畫的股數是被哪一個條件卡住的（白話；冷眼建議、加碼計畫卡、今日行動、副官共用）。
+ * 0 股時說「為什麼是 0」，有股數時說「受限於什麼」＋減半的原因。o.catName／o.cat：這一類的名稱或代號。
+ */
+export function planWhy(p, o = {}) {
+  if (!p) return '';
+  const catName = o.catName || CAT_NAMES[o.cat] || '同類型';
+  const pc = (x) => `${Math.round(x * 100)}%`;
+  if (!(p.n > 0)) {
+    if (p.cuts && p.cuts.includes('prem0')) return `溢價超過警戒線 ${PREM_CUT[1]} 倍，先不買`;
+    switch (p.limit) {
+      case 'cash':
+        if (!(p.cashAll > 0)) return '還沒設定可投入現金';
+        if (!(p.cash > 0)) return '現金扣掉緊急預備金、定期定額接下來要扣的錢，沒有可以動用的';
+        return '分到的可動用現金不夠買 1 股';
+      case 'cap': return `這一檔已經到比重上限 ${pc(p.cap)}`;
+      case 'cat': return `${catName}合計已經到上限 ${pc(p.cap)}`;
+      case 'co': return `透過 ETF 間接持有的${p.coName || '同一家公司'}已經到單一公司上限 ${pc(p.coCap ?? CO_CAP.mid)}`;
+      default: return '單筆最多虧損的預算太小（離出場線太遠）';
+    }
+  }
+  return `受限於${planLimitText(p, o)}${(p.cuts || []).filter((c) => CUT_TEXT[c]).map((c) => '；' + CUT_TEXT[c]).join('')}`;
+}
+
+/**
+ * 加碼計畫（一檔）：股數取這幾個的最小值，再分三批——
+ *  risk 單筆最多虧多少（總資產 × 風險屬性）÷ 每股跌到出場線的最壞虧損（含來回手續費、證交稅）
+ *  cap  這一檔的比重上限還剩多少
+ *  cat  同類型合計上限還剩多少（ctx.room.cat；加碼計畫裡排在前面的已經扣掉）
+ *  co   單一公司（穿透）上限還剩多少（ctx.room.co：這檔裡每一家公司的比例與剩下的空間）
+ *  cash 分到的可動用現金（ctx.cash 已經扣掉緊急預備金、定期定額保留款；分 3 份、同時超過 3 檔平均分）
+ * 之後：觀點中性、信心不到 70 再減半；盤中溢價超過警戒線減半、超過 2 倍先不買。
+ * 市場溫度不改股數：拿溫度去打折加碼金額，2020/4～2026/10 的回測沒有變好（pipeline/addsim.py），溫度只用來提醒風險。
+ */
 export function planAdd(H, ctx, opt = {}) {
   const r = H.row;
   const px = H.px;
@@ -593,14 +663,32 @@ export function planAdd(H, ctx, opt = {}) {
   const perRisk = Math.max(px - stop, tick(px)) + px * FEE_RATE * feeDisc + stop * (FEE_RATE * feeDisc + 0.001);
   const byRisk = Math.floor(budget / perRisk);
   const byCap = Math.floor(Math.max(0, cap * T - mv) / px);
+  const room = ctx.room || {};
+  const byCat = isNum(room.cat) ? Math.floor(Math.max(0, room.cat) / px) : Infinity;
+  let byCo = Infinity;
+  let coName = null;
+  let coW = null;
+  for (const c of room.co || []) {
+    if (!(c.w >= CO_MIN)) continue;
+    const k = Math.floor(Math.max(0, c.room) / (c.w * px));
+    if (k < byCo) { byCo = k; coName = c.name; coW = c.w; }
+  }
   const cash = ctx.cash || 0;
   const cashShare = isNum(ctx.cashShare) ? ctx.cashShare : cash / CASH_SLICES;
-  const disc = (ctx.fee && ctx.fee.disc) ?? 1;
-  const byCash = Math.floor(cashShare / (px * (1 + FEE_RATE * disc)));
-  const ideal = Math.max(0, Math.min(byRisk, byCap));
+  const byCash = Math.floor(Math.max(0, cashShare) / (px * (1 + FEE_RATE * feeDisc)));
+  // 先看紀律（比重、同類型、單一公司、虧損預算）最多幾股，再看分到的現金夠不夠
+  const lims = [['cap', byCap], ['cat', byCat], ['co', byCo], ['risk', byRisk]];
+  let ideal = Math.max(0, Math.min(...lims.map((x) => x[1])));
+  let limit = lims.find((x) => x[1] <= ideal)[0];
   let n = Math.min(ideal, byCash);
-  const limit = n === byCash && byCash < ideal ? 'cash' : byCap <= byRisk ? 'cap' : 'risk';
-  if (opt.small) n = Math.floor(n / 2);
+  if (byCash < ideal) limit = 'cash';
+  const cuts = [];
+  const cut = (f, why) => { n = Math.floor(n * f); ideal = Math.floor(ideal * f); cuts.push(why); };
+  if (opt.small) cut(0.5, opt.why === 'conf' ? 'conf' : 'neutral');
+  const [warn] = premBand(r);
+  const prem = 'prem' in opt ? opt.prem : H.prem;
+  if (isNum(prem) && prem > warn * PREM_CUT[1]) cut(0, 'prem0');
+  else if (isNum(prem) && prem > warn * PREM_CUT[0]) cut(0.5, 'prem');
   n = Math.max(0, n);
   // 分三批：第一批現價附近；第二、三批等拉回價，沒等到就照時間買（回測顯示挑時機沒有明顯優勢，避免一直追不到）
   const p1 = tickRound(px);
@@ -634,9 +722,117 @@ export function planAdd(H, ctx, opt = {}) {
   const newCost = (H.cost || 0) + spend;
   return {
     n, parts, stop, stopName, spend, fees, lossAtStop, budget, cap, limit, small: !!opt.small, smallWhy: opt.why || null,
-    byRisk, byCap, byCash, cash, cashShare, ideal: opt.small ? Math.floor(ideal / 2) : ideal,
+    cuts, prem: isNum(prem) ? prem : null, warn,
+    byRisk, byCap, byCat: isFinite(byCat) ? byCat : null, byCo: isFinite(byCo) ? byCo : null, coName, coW,
+    coNote: room.coNote || null, coCap: coCapOf(ctx.profile), byCash, cash, cashAll: isNum(ctx.cashAll) ? ctx.cashAll : cash, cashShare, ideal,
     newAvg: newSh > 0 ? newCost / newSh : null,
     newW: T > 0 ? (mv + n * px) / T : null,
+  };
+}
+
+/** 成分股明細選哪一份：每季 1% 以上的明細不比每月前十大舊 staleQ 個月以上就用每季（比較完整），和透視一樣 */
+export function holdList(obj, staleQ = 2) {
+  if (!obj) return null;
+  const m = obj.m, q = obj.q;
+  const months = (a, b) => (+String(a).slice(0, 4) - +String(b).slice(0, 4)) * 12 + (+String(a).slice(4) - +String(b).slice(4));
+  if (q && (!m || months(m.p, q.p) <= staleQ)) return { ...q, k: 'q' };
+  return m ? { ...m, k: 'm' } : null;
+}
+const isCompany = (kind) => kind === 'tse' || kind === 'otc' || kind === 'f';
+
+/**
+ * 你現在透過 ETF 間接持有每一家公司多少錢（金額，不是比例）。
+ * holdings：[{ code, mv }]；lists：{ 代號: holdList 的結果 | null | undefined }
+ * 回傳 { amt: { 公司 key: { name, amt } }, pending: [還沒載入明細的代號] }
+ */
+export function companyExposure(holdings, lists) {
+  const amt = {};
+  const pending = [];
+  for (const x of holdings || []) {
+    if (!(x.mv > 0)) continue;
+    const L = lists[x.code];
+    if (L === undefined) { pending.push(x.code); continue; }
+    for (const it of (L && L.h) || []) {
+      if (!isCompany(it[2]) || !isNum(it[3])) continue;
+      const key = it[0] || it[1];
+      if (!amt[key]) amt[key] = { name: it[1], amt: 0 };
+      amt[key].amt += x.mv * it[3] / 100;
+    }
+  }
+  return { amt, pending };
+}
+
+/**
+ * 加碼計畫（全部）：把可動用的錢分給候選的 ETF（你持有的＋關注的），一檔一檔排；
+ * 排在前面的用掉的同類型、同一家公司的空間，後面就少了（不會兩檔各算一次，加起來超過上限）。
+ * cands：[{ code, H }]（H 是 advise 的輸入）
+ * base：advise 的 ctx（T、cash＝可動用的錢、cashAll＝全部現金、reserve＝deployOf 的拆解、profile、fee、today）＋
+ *   stats(code)：這一檔類別的回測統計；catMV：{ 類型: 目前市值 }；coAmt：companyExposure(...).amt；
+ *   lists：{ 代號: holdList 的結果 | null（確定沒有明細）| undefined（還沒載入）}
+ * 順序：可加碼的（信心高的先）→ 續抱裡「想加碼的話」那種（分數高的先）→ 其他；同分照代號。
+ * 回傳 { adv: Map(代號 → advise 結果), order, share（每檔分到的現金上限）, n（拿到計畫的檔數）, rooms(row) }
+ */
+export function allocAdds(cands, base) {
+  const T = base.T || 0;
+  // 成分股明細：候選的在 base.lists；不在候選裡的（從雷達打開的）用 base.listOf 去找
+  const listOf = (code) => (base.lists && code in base.lists ? base.lists[code] : typeof base.listOf === 'function' ? base.listOf(code) : undefined);
+  const coCap = coCapOf(base.profile);
+  const statsOf = (code) => (typeof base.stats === 'function' ? base.stats(code) : null);
+  const mkRooms = () => {
+    const cat = {};
+    const co = new Map();
+    return {
+      cat, co,
+      of(row, code) {
+        const k = row ? row.k : null;
+        if (cat[k] == null) cat[k] = capOf(base.profile, k) * T - ((base.catMV || {})[k] || 0);
+        const L = listOf(code);
+        const list = [];
+        for (const it of (L && L.h) || []) {
+          if (!isCompany(it[2]) || !isNum(it[3])) continue;
+          const key = it[0] || it[1];
+          if (!co.has(key)) co.set(key, coCap * T - (((base.coAmt || {})[key] || {}).amt || 0));
+          list.push({ key, name: it[1], w: it[3] / 100, room: co.get(key) });
+        }
+        return { cat: cat[k], co: L ? list : null, coNote: L === undefined ? 'pending' : L === null ? 'none' : null };
+      },
+      use(row, code, plan) {
+        if (!plan || !(plan.n > 0)) return;
+        const amt = plan.n * (plan.parts[0] ? plan.parts[0].px : 0);
+        const k = row ? row.k : null;
+        cat[k] -= amt;
+        const L = listOf(code);
+        for (const it of (L && L.h) || []) {
+          if (!isCompany(it[2]) || !isNum(it[3])) continue;
+          const key = it[0] || it[1];
+          if (co.has(key)) co.set(key, co.get(key) - amt * it[3] / 100);
+        }
+      },
+    };
+  };
+  const ctxOf = (code, room, share) => ({ ...base, stats: statsOf(code), room, cashShare: share });
+  // 第一輪：有幾檔會拿到加碼計畫（決定現金分幾份）
+  const r0 = mkRooms();
+  const first = cands.map((c) => ({ c, a: advise(c.H, ctxOf(c.code, r0.of(c.H.row, c.code), (base.cash || 0) / CASH_SLICES)) }));
+  const n = first.filter((x) => x.a.plan && x.a.plan.n > 0).length;
+  const share = (base.cash || 0) / Math.max(CASH_SLICES, n);
+  // 第二輪：照順序分，用掉的空間扣掉
+  const rank = (x) => (x.a.key === 'add' ? 0 : x.a.key === 'hold' ? 1 : 2);
+  const sorted = first.slice().sort((x, y) => rank(x) - rank(y)
+    || (rank(x) === 0 ? ((y.c.H.row && y.c.H.row.cf) || 0) - ((x.c.H.row && x.c.H.row.cf) || 0) : 0)
+    || (((y.c.H.row && y.c.H.row.sc) || 0) - ((x.c.H.row && x.c.H.row.sc) || 0))
+    || (x.c.code < y.c.code ? -1 : x.c.code > y.c.code ? 1 : 0));
+  const R = mkRooms();
+  const adv = new Map();
+  for (const { c } of sorted) {
+    const a = advise(c.H, ctxOf(c.code, R.of(c.H.row, c.code), share));
+    adv.set(c.code, a);
+    R.use(c.H.row, c.code, a.plan);
+  }
+  return {
+    adv, order: sorted.map((x) => x.c.code), share, n,
+    /** 不在候選裡的一檔（例如從雷達打開的）：用加碼計畫分完之後剩下的空間算「如果另外買這檔」 */
+    adviseOther(H, code) { return advise(H, ctxOf(code, R.of(H.row, code), share)); },
   };
 }
 
@@ -648,8 +844,9 @@ export function simulateAdd(H, sh, px, ctx) {
   const c = tradeCost('buy', sh, px, tcat, ctx.today, ctx.fee);
   const T0 = ctx.T || 0;
   const mvAfter = (H.sh + sh) * (H.px || px);
-  // 買進後總資產：現金轉成股票不變；現金不夠的部分是新投入的錢
-  const T = T0 > 0 ? T0 + Math.max(0, c.net - (ctx.cash || 0)) : 0;
+  // 買進後總資產：現金轉成股票不變；現金（全部，含緊急預備金）不夠的部分是新投入的錢
+  const cashAll = isNum(ctx.cashAll) ? ctx.cashAll : (ctx.cash || 0);
+  const T = T0 > 0 ? T0 + Math.max(0, c.net - cashAll) : 0;
   const prof = PROFILES[ctx.profile] || PROFILES.mid;
   const cap = capOf(ctx.profile, cat);
   const newSh = H.sh + sh;
@@ -670,6 +867,31 @@ export function simulateAdd(H, sh, px, ctx) {
   }
   if (newW != null) chk(newW <= cap + 1e-9, `買進後占總資產 ${pctS(newW)}，你的上限 ${pctS(cap, 0)}`);
   else chk(null, '還沒輸入現金或持股，無法檢查比重與單筆風險');
+  // 同類型合計（例如 0050 和 006208 都是市值型，合起來也不能超過上限）：同一類還有別檔時才另外列
+  if (T > 0 && ctx.catMV && cat) {
+    const others = (ctx.catMV[cat] || 0) - H.sh * (H.px || px);
+    if (others > 1) {
+      const catW = (others + mvAfter) / T;
+      chk(catW <= cap + 1e-9, `買進後${CAT_NAMES[cat] || '同類型'}合計占總資產 ${pctS(catW)}，同類型上限 ${pctS(cap, 0)}`);
+    }
+  }
+  // 單一公司（穿透）：這檔 ETF 裡的每一家公司，加上你透過其他 ETF 已經間接持有的
+  if (T > 0 && r && (ctx.lists || ctx.listOf)) {
+    const L = ctx.lists && r.c in ctx.lists ? ctx.lists[r.c] : typeof ctx.listOf === 'function' ? ctx.listOf(r.c) : undefined;
+    if (L === undefined) chk(null, '成分股明細還在載入：單一公司的上限這次沒有檢查');
+    else if (L && L.h) {
+      const coCap = coCapOf(ctx.profile);
+      let worst = null;
+      for (const it of L.h) {
+        if (!isCompany(it[2]) || !isNum(it[3]) || it[3] / 100 < CO_MIN) continue;
+        const key = it[0] || it[1];
+        const had = ((ctx.coAmt || {})[key] || {}).amt || 0;
+        const w = (had + c.amount * it[3] / 100) / T;
+        if (!worst || w > worst.w) worst = { name: it[1], w };
+      }
+      if (worst) chk(worst.w <= coCap + 1e-9, `買進後透過 ETF 間接持有的${worst.name}占總資產 ${pctS(worst.w)}，單一公司上限 ${pctS(coCap, 0)}`);
+    }
+  }
   let stop = null;
   if (r) {
     if (r.st > 0 && isNum(r.iv) && r.iv < px) stop = r.iv;
@@ -684,8 +906,16 @@ export function simulateAdd(H, sh, px, ctx) {
       chk(risk <= budget + 1e-9, `跌到出場線 ${pxS(stop)} 約虧 ${ntS(risk)} 元，你的單筆上限 ${ntS(budget)} 元（總資產 ${pctS(prof.loss)}）`);
     }
   }
-  if (ctx.cash > 0) chk(c.net <= ctx.cash + 1e-9, c.net <= ctx.cash ? `需要 ${ntS(c.net)} 元，可用現金 ${ntS(ctx.cash)} 元` : `需要 ${ntS(c.net)} 元，超過可用現金 ${ntS(ctx.cash)} 元`);
-  else chk(null, '還沒設定可投入現金，無法檢查資金是否足夠');
+  // 可動用的錢＝現金扣掉緊急預備金、定期定額接下來要扣的（ctx.reserve 是 core.js 的 deployOf）
+  const rs = ctx.reserve || null;
+  const held = rs ? (rs.emergency || 0) + ((rs.dca && rs.dca.total) || 0) : 0;
+  if (cashAll > 0) {
+    const usable = isNum(ctx.cash) ? ctx.cash : cashAll;
+    const tail = held > 0 ? `（現金 ${ntS(cashAll)} 元，扣掉${rs.emergency > 0 ? `緊急預備金 ${ntS(rs.emergency)} 元` : ''}${rs.emergency > 0 && rs.dca && rs.dca.total > 0 ? '、' : ''}${rs.dca && rs.dca.total > 0 ? `定期定額接下來要扣的 ${ntS(rs.dca.total)} 元` : ''}）` : '';
+    if (c.net <= usable + 1e-9) chk(true, `需要 ${ntS(c.net)} 元，可動用 ${ntS(usable)} 元${tail}`);
+    else if (c.net <= cashAll + 1e-9) chk(false, `需要 ${ntS(c.net)} 元，超過可動用的 ${ntS(usable)} 元：會用到${rs && rs.emergency > 0 ? '緊急預備金' : ''}${rs && rs.emergency > 0 && rs.dca && rs.dca.total > 0 ? '或' : ''}${rs && rs.dca && rs.dca.total > 0 ? '定期定額要扣的錢（扣款失敗不補扣，連續 3 次會被終止）' : ''}`);
+    else chk(false, `需要 ${ntS(c.net)} 元，超過現金 ${ntS(cashAll)} 元`);
+  } else chk(null, '還沒設定可投入現金，無法檢查資金是否足夠');
   if (H.sh > 0 && isNum(H.avg) && px < H.avg && r && r.st < 0) chk(false, '偏空時往下買是攤平，不是加碼');
   if (cat === 'lev' || cat === 'inv') chk(null, '槓桿／反向型只適合短線');
   const fails = checks.filter((x) => x.ok === false).length;
@@ -810,6 +1040,7 @@ export function readBackup(obj) {
     if (typeof p.name === 'string') out.name = p.name.replace(/[<>&"'`]/g, '').trim().slice(0, 8) || 'PZ';
     if (Array.isArray(p.rules)) out.rules = p.rules.filter((r) => typeof r === 'string' && r.trim()).map((r) => r.trim().slice(0, 60)).slice(0, 20);
     for (const k of ['plans', 'dcaSkip', 'dcaNoAsk']) if (Array.isArray(p[k])) out[k] = p[k].slice(0, 3000);
+    if (okNum(p.reserve) && p.reserve >= 0) out.reserve = Math.min(Math.round(p.reserve), 1e10);
     obj.prefs = out;
   }
   return obj;
