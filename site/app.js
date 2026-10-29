@@ -1266,7 +1266,7 @@ function drawSettings() {
         <div class="seg">${Object.entries(PF.PROFILES).map(([k, p]) => `<button data-risk="${k}" aria-pressed="${settings.risk === k}">${p.name}</button>`).join('')}</div></div>
       <div class="tbl-wrap"><table class="t caps"><thead><tr><th>類型</th><th class="r">保守</th><th class="r">穩健</th><th class="r">積極</th></tr></thead><tbody>${capRows}<tr class="co"><td><span data-term="cocap">單一公司（穿透）</span></td>${['cons', 'mid', 'aggr'].map((p) => `<td class="r num${p === settings.risk ? ' on' : ''}">${(PF.CO_CAP[p] * 100).toFixed(0)}%</td>`).join('')}</tr></tbody></table></div>
       <p class="small muted pad-x">每一類的上限同時是「單檔上限」和「同一類合計的上限」（例如 0050、006208 合起來也不能超過市值型的上限）；單一公司是把你的 ETF 拆開、透過 ETF 間接持有同一家公司的上限。</p>
-      <div class="srow"><div><div class="h" data-term="reserve">緊急預備金</div><div class="d">不拿去加碼的錢（生活費、臨時要用的）。加碼計畫先扣掉它、再扣掉定期定額接下來 ${PF.DCA_RESERVE_DAYS} 天要扣的錢，剩下的才分給 ETF。只用在真實部位</div></div><input class="input short num" id="s-reserve" inputmode="numeric" value="${settings.reserve || 0}"></div>
+      <div class="srow"><div><div class="h" data-term="reserve">緊急預備金</div><div class="d">不拿去加碼的錢（生活費、臨時要用的）。加碼計畫先扣掉它、再扣掉定期定額接下來一個月要扣的錢，剩下的才分給 ETF。只用在真實部位${settings.privacy ? '。隱藏金額開著：金額不顯示，按「修改」在現金那裡改' : ''}</div></div>${settings.privacy ? '<button class="btn small" id="s-reserve-edit">修改</button>' : `<input class="input short num" id="s-reserve" inputmode="numeric" value="${settings.reserve || 0}">`}</div>
       <div class="srow col"><div><div class="h">我的紀律</div><div class="d">加碼試算時會列出來，下單前對一次</div></div>
         <ul class="rules-ed">${(settings.rules || []).map((r, i) => `<li><span>${esc(r)}</span><button class="mini-btn" data-rr="${i}" aria-label="刪除這條">${ICON.x}</button></li>`).join('')}</ul>
         <div class="addrow"><input class="input" id="s-rule" maxlength="40" placeholder="新增一條，例如：除息前不追高"><button class="btn small" id="s-rule-add">新增</button></div>
@@ -1346,7 +1346,10 @@ function bindSettings() {
     if (ok(n)) { settings.fee[key] = n; saveSettings(); computePF(); render(); toast('交易成本已更新'); }
     e.target.value = settings.fee[key];
   });
-  $('#s-reserve', sh).addEventListener('change', (e) => {
+  const resEdit = $('#s-reserve-edit', sh);
+  if (resEdit) resEdit.addEventListener('click', () => openCashForm());
+  const resIn = $('#s-reserve', sh);
+  if (resIn) resIn.addEventListener('change', (e) => {
     const raw = String(e.target.value).replace(/[^0-9.]/g, '');
     settings.reserve = normReserve(raw === '' ? 0 : Number(raw));
     saveSettings();
@@ -1446,7 +1449,7 @@ function posRulesHTML() {
   return `<p><b>移動防守線</b>近 22 個交易日最高收盤，減 3 倍 ATR（平均真實波幅）。價格創高就跟著上移；下跌時多半停在原地，但波動變大、或高點超過 22 個交易日時也會往下移；收盤跌破代表前一段上漲已經中斷。</p>
     <p><b>部位訊號</b>依序判斷，先符合先決定：① 觀點偏空且收盤跌破防守線 → 減碼；② 觀點偏空、跌破防守線、注意／處置中、或溢價超過警戒 → 先不加碼；③ 觀點偏多但短線漲多（RSI ≥ 75、爆量上漲、或比月線高出 2 倍 ATR）→ 漲多分批；④ 觀點偏多 → 可加碼；⑤ 其他 → 續抱。</p>
     <p><b>加上你的部位</b>先看注意／處置，再看減碼訊號，接著檢查比重：超過該類型上限 2 個百分點以上就建議調節。</p>
-    <p><b>加碼計畫</b>可動用的錢＝現金 − 緊急預備金 − 定期定額接下來 ${PF.DCA_RESERVE_DAYS} 天要扣的錢（國泰扣款失敗不補扣、連續 3 次會終止，所以先留著；模擬倉沒有這兩項）。可動用的錢分給你持有的和關注的 ETF，照順序：訊號「可加碼」的先（信心高的先），再來是「續抱」裡想小額加碼的。每一檔的股數取這幾個的最小值：① 單筆最多虧損（${P.cons.name} ${(P.cons.loss * 100).toFixed(1)}%、${P.mid.name} ${(P.mid.loss * 100).toFixed(0)}%、${P.aggr.name} ${(P.aggr.loss * 100).toFixed(0)}% 的總資產）÷ 每股到出場線的最壞虧損（含來回手續費與證交稅）；② 這一檔的上限剩下的空間；③ 同一類合計的上限剩下的空間（上限和單檔一樣，例如 0050 和 006208 合起來也不能超過市值型的上限）；④ 單一公司的上限（把 ETF 拆開，透過 ETF 間接持有同一家公司：${P.cons.name} ${PF.CO_CAP.cons * 100}%、${P.mid.name} ${PF.CO_CAP.mid * 100}%、${P.aggr.name} ${PF.CO_CAP.aggr * 100}% 的總資產；在這檔裡占不到 ${PF.CO_MIN * 100}% 的公司不算）；⑤ 分到的可動用現金（分 ${PF.CASH_SLICES} 份；同時有超過 ${PF.CASH_SLICES} 檔會拿到加碼計畫時平均分）。排在前面的用掉了同類型、同一家公司的空間，後面的就少，不會兩檔各算一次。之後：觀點中性、或信心不到 ${PF.CONF_FULL}，股數減半；盤中溢價超過警戒線（台股 ETF 0.5%，海外、債券、期貨 1%）減半、超過 ${PF.PREM_CUT[1]} 倍先不買。市場溫度不改股數（回測沒有變好），只提醒風險。</p>
+    <p><b>加碼計畫</b>可動用的錢＝現金 − 緊急預備金 − 定期定額接下來一個月要扣的錢（今天起到下個月同一天之前，每個扣款日一期；國泰扣款失敗不補扣、連續 3 次會終止，所以先留著）− 上次更新現金之後定期定額已經扣走的（現金是你自己填的，扣款之後記得更新；模擬倉沒有這幾項）。可動用的錢分 ${PF.CASH_SLICES} 份，分給你持有的和關注的 ETF，照順序每一檔最多拿 1 份：訊號「可加碼」的先（信心高的先），再來是「續抱」裡想小額加碼的；實際花掉的從可動用的錢扣掉，分完就停，排在後面的只拿得到剩下的。每一檔的股數取這幾個的最小值：① 單筆最多虧損（${P.cons.name} ${(P.cons.loss * 100).toFixed(1)}%、${P.mid.name} ${(P.mid.loss * 100).toFixed(0)}%、${P.aggr.name} ${(P.aggr.loss * 100).toFixed(0)}% 的總資產）÷ 每股到出場線的最壞虧損（含來回手續費與證交稅）；② 這一檔的上限剩下的空間；③ 同一類合計的上限剩下的空間（上限和單檔一樣，例如 0050 和 006208 合起來也不能超過市值型的上限）；④ 單一公司的上限（把 ETF 拆開，透過 ETF 間接持有同一家公司：${P.cons.name} ${PF.CO_CAP.cons * 100}%、${P.mid.name} ${PF.CO_CAP.mid * 100}%、${P.aggr.name} ${PF.CO_CAP.aggr * 100}% 的總資產；在這檔裡占不到 ${PF.CO_MIN * 100}% 的公司不算；你持有的 ETF 還沒拿到成分股明細時會標出來）；⑤ 分到的錢（三批各自的手續費、最低收費都算進去，不會超過）。排在前面的用掉了同類型、同一家公司的空間，後面的就少，不會兩檔各算一次。之後：觀點中性、或信心不到 ${PF.CONF_FULL}，股數減半；溢價（盤中用即時的，其他時候用最近一次收盤的）超過警戒線（台股 ETF 0.5%，海外、債券、期貨 1%）減半、超過 ${PF.PREM_CUT[1]} 倍先不買。市場溫度不改股數（回測沒有變好），只提醒風險。</p>
     <p><b>分三批</b>第一批現價附近（除不盡的零頭放這批）；第二、三批等拉回價，沒等到就一週、兩週後照時間買——回測顯示挑時機的優勢很小，這樣可以避免一直追不到。「跌到出場線約虧多少」用三批都以現價成交的最壞情況計算。</p>
     <p><b>出場線</b>偏多時用作廢線，其他用移動防守線。<b>減碼幅度</b>市值型、高股息、海外、債券先減三分之一；產業主題、主動式、期貨先減一半；槓桿與反向全部出場。</p>
     <p><b>成本不影響方向</b>平均成本只用來算損益、損益兩平與「跌到防守線還剩多少獲利」，不會讓規則變成攤平建議。</p>
@@ -1601,12 +1604,15 @@ bus.on((what, data) => {
   }
 });
 const holdTried = new Map();
+let holdRetry = null;
 function holdFetch(codes) {
   const now = Date.now();
   const todo = (codes || []).filter((c) => !(holdTried.get(c) > now - 60000));
   if (!todo.length) return;
   for (const c of todo) holdTried.set(c, now);
   Promise.all(todo.map((c) => ensureHold(c).catch(() => undefined))).then((res) => {
+    // 這次抓不到的（逾時、網路斷掉）：一分鐘多一點之後重算一次，重算會再請一次（不然要等下一次有別的原因重算）
+    if (res.some((r) => r === undefined) && !holdRetry && !S.offline) holdRetry = setTimeout(() => { holdRetry = null; if (S.summary) computePF(); }, 65000);
     if (!res.some((r) => r !== undefined)) return;
     computePF();
     viewRender();

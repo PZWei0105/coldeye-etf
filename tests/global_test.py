@@ -35,7 +35,7 @@ check('Cboe 報價：價格、前一天收盤、美東日期與時間', q == {'p
 n = G.parse_nasdaq_info({'data': {'primaryData': {'lastSalePrice': '11,487.01', 'percentageChange': '-1.69%',
                                                   'lastTradeTimestamp': 'Oct 29, 2026 1:51 PM ET'},
                                   'keyStats': {'previousclose': {'value': '11,684.00'}}, 'marketStatus': 'Open'}})
-check('Nasdaq 即時：千分位、下午 1:51 → 13:51、盤中', n == {'px': 11487.01, 'prev': 11684.0, 'pct': -1.69, 'd': 20261029, 't': '13:51', 'open': True}, n)
+check('Nasdaq 即時：千分位、下午 1:51 → 13:51、盤中', n == {'px': 11487.01, 'prev': 11684.0, 'pct': -1.69, 'd': 20261029, 't': '13:51', 'open': True, 'status': 'open'}, n)
 h = G.parse_nasdaq_hist({'data': {'tradesTable': {'rows': [{'date': '10/28/2026', 'close': '11,684.00'}, {'date': '01/02/2019', 'close': '1,165.30'}]}}})
 check('Nasdaq 歷史：照日期排序', h == [(20190102, 1165.3), (20261028, 11684.0)], h)
 f = G.parse_cbc_fx({'data': {'dataSets': [['20260929', '31.876', '157.38'], ['20260930', '31.852', '156.89'], ['20260930', 'x', '1']]}})
@@ -60,6 +60,9 @@ check('Cboe 美東 09:10 的 VIX（盤前）、台灣 21:25：不算盤中', G.u
 check('收盤：Cboe 美東 16:14', G.is_close({'t': '16:14'}))
 check('收盤：VIX 盤前（美東 05:30）不是收盤', not G.is_close({'t': '05:30'}))
 check('收盤：Nasdaq 狀態不是盤中', G.is_close({'open': False, 't': None}) and not G.is_close({'open': True, 't': '13:51'}))
+check('收盤：Nasdaq 盤前（Pre-Market）不算收盤（日期可能已經是新的一天）', not G.is_close({'open': False, 'status': 'pre-market', 't': None})
+      and G.is_close({'open': False, 'status': 'after-hours', 't': None}) and G.is_close({'open': False, 'status': 'closed', 't': None}))
+check('收盤：Cboe 晚上延長時段（美東 20:15）的報價不算收盤，不會蓋掉那天的收盤', not G.is_close({'t': '20:15'}) and G.is_close({'t': '16:59'}))
 
 # ---- 休市中、而且休市後已經抓過的報價不再抓（對來源客氣）
 qa = lambda h, m, d=30: {'at': at(2026, 10, d, h, m).isoformat(timespec='minutes')}  # noqa: E731
@@ -91,6 +94,19 @@ check('VIX 35 以上：直接算雨', panic['level'] == '雨' and panic['n'] == 
 night = G.market_temp({'night': -2.1})
 check('台指期夜盤大跌只提醒、不算警訊（沒有歷史可以回測）', night['n'] == 0 and night['notes'] and '夜盤' in night['notes'][0]['t'], night)
 check('門檻：五成以下的 ETF 在季線之下不算警訊', G.market_temp({'breadth': 0.55})['n'] == 0)
+
+# ---- 季線之下的比例用還原價：除息、分割那天不會被當成跌破季線
+import datetime as _dt
+_d0 = _dt.date(2026, 1, 5)
+days = [int((_d0 + _dt.timedelta(days=i)).strftime('%Y%m%d')) for i in range(70)]
+flat = [100.0] * 62 + [95.0] * 8          # 第 63 天除息 5 元：原始價格掉到 95，總報酬沒變
+split = [200.0] * 62 + [50.0] * 8         # 第 63 天 1 拆 4
+daily = {'D': {'d': days, 'o': flat[:], 'c': flat[:]}, 'S': {'d': days, 'o': split[:], 'c': split[:]}}
+divs = {'D': [[days[62], 5.0]]}
+raw = G.breadth_series(daily, {})
+adj = G.breadth_series(daily, {}, divs=divs)
+check('季線比例：原始價格會把除息、分割當成跌破季線', raw[days[65]] == (2, 2), raw[days[65]])
+check('季線比例：還原之後除息、分割都不算跌破', adj[days[65]] == (0, 2), adj[days[65]])
 check('新台幣 20 日貶 2% 以上、美債殖利率 20 日升 0.5 個百分點以上：各算一個', G.market_temp({'twd': {'r20': 2.4}, 'ust': 0.6})['n'] == 2)
 
 # ---- 不偷看：台灣 d 收盤時，美股、匯率、美債只用 d 之前的

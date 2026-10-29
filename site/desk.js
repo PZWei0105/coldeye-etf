@@ -921,7 +921,7 @@ export function openAsk(kind, o = {}) {
       return A.packPf({
         short: st.short, when: whenText(), profileName: PF.PROFILES[settings.risk].name, profileLoss: PF.PROFILES[settings.risk].loss,
         totals: P.totals, holdings, stress, audit: A.auditPf(P, settings.risk, td, stress), showAmt: st.amt, question: st.q.trim(), bookName: bookName(), bench, market: marketNow(),
-        plan, deploy: dep ? { usable: dep.usable, emergency: dep.emergency || 0, dca: (dep.dca && dep.dca.total) || 0 } : null, temp: marketTemp(),
+        plan, deploy: dep ? { usable: dep.usable, emergency: dep.emergency || 0, dca: ((dep.dca && dep.dca.total) || 0) + ((dep.spent && dep.spent.total) || 0) } : null, temp: marketTemp(),
       });
     }
     if (kind === 'market') {

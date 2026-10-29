@@ -1,6 +1,6 @@
 /* 冷眼 — 共用核心：狀態、設定、資料載入、格式、圖示、小元件。 */
 import * as PF from './pf.js';
-import { breadth, normPlan, planSkipKeys, normSkips, normNoAsk, calClosed, dcaReserve } from './calc.js';
+import { breadth, normPlan, planSkipKeys, normSkips, normNoAsk, calClosed, dcaReserve, dcaSpent } from './calc.js';
 import * as FX from './fx.js';
 
 export { PF };
@@ -494,6 +494,8 @@ export function computePF() {
   const colors = PF.assignColors(book, codes);
   if (JSON.stringify(colors) !== JSON.stringify(book.colors || {})) { book.colors = colors; saveBook(); }
   for (const x of P.holdings) x.slot = colors[x.code] ?? null;
+  // 真實部位的現金是哪天更新的（cashD）：這個功能之前填的現金，當作今天的數字（之後定期定額自動入帳扣的錢才算得出來）
+  if (!isPaper() && book.cash > 0 && !book.cashD) { book.cashD = td; saveBook(); }
   // 加碼計畫：可動用的錢（現金減掉緊急預備金、定期定額保留款）分給你持有和關注的 ETF，
   // 同類型、同一家公司（穿透）的空間一起算，不會兩檔各算一次（pf.js 的 allocAdds）
   P.deploy = deployOf(P);
@@ -511,21 +513,29 @@ export function computePF() {
   S.alloc = A;
   S.adv = new Map(P.holdings.map((x) => [x.code, A.adv.get(x.code)]));
   P.nAdd = A.n;
-  P.cashShare = A.share;
+  P.slice = A.slice;
+  P.left = A.left;
   P.lists = base.lists;
+  P.coPending = base.coPending;
   S.P = P;
   // 單一公司（穿透）要用成分股明細：還沒載入的請 app.js 去抓（xray.js 的 ensureHold），抓到之後重算一次
   const pend = Object.keys(base.lists).filter((c) => base.lists[c] === undefined && S.rows.has(c));
   if (pend.length) bus.emit('needhold', pend);
   return P;
 }
-/** 可動用的錢：現金減掉緊急預備金、定期定額接下來 31 天要扣的（都只算真實部位；模擬倉的現金全部可以用） */
+/**
+ * 可動用的錢：現金減掉緊急預備金、定期定額接下來一個月要扣的、上次更新現金之後定期定額已經扣走的
+ * （都只算真實部位；模擬倉的現金由交易自動算，全部可以用）
+ */
 export function deployOf(P) {
   const cash = P ? P.totals.cash : 0;
-  if (isPaper()) return { cash, emergency: 0, dca: { total: 0, items: [] }, usable: cash };
+  const none = { total: 0, items: [] };
+  if (isPaper()) return { cash, emergency: 0, dca: none, spent: none, usable: cash };
   const emergency = settings.reserve || 0;
-  const dca = dcaReserve(settings.plans, book.lots, today(), PF.DCA_RESERVE_DAYS, S.cal, settings.dcaSkip);
-  return { cash, emergency, dca, usable: Math.max(0, cash - emergency - dca.total) };
+  const td = today();
+  const dca = dcaReserve(settings.plans, book.lots, td, { months: PF.DCA_RESERVE_MONTHS }, S.cal, settings.dcaSkip);
+  const spent = dcaSpent(book.lots, book.cashD, td);
+  return { cash, emergency, dca, spent, usable: Math.max(0, cash - emergency - dca.total - spent.total) };
 }
 /** 成分股明細（透視的快取 S.hold）：明細／null（確定沒有）／undefined（還沒載入） */
 export function listOf(code) {
@@ -572,7 +582,8 @@ export function holdingInput(x) {
 export function ctxFor(code, P = S.P, cashShare) {
   const base = addBase(P);
   return {
-    ...base, cashShare: cashShare ?? (P && isNum(P.cashShare) ? P.cashShare : base.cash / PF.CASH_SLICES),
+    ...base, slice: P && isNum(P.slice) ? P.slice : base.cash / PF.CASH_SLICES,
+    cashShare: cashShare ?? (P && isNum(P.slice) && isNum(P.left) ? Math.min(P.slice, P.left) : base.cash / PF.CASH_SLICES),
     stats: base.stats(code),
   };
 }

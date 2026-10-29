@@ -767,6 +767,7 @@ tr.mine td { background: var(--aurora-wash); }
 .plan-h { font-size: 15px; }
 .plan-h b { font-size: 17px; font-weight: 700; }
 .plan-sub { font-size: 12.5px; color: var(--frost-3); margin-top: -4px; }
+.plan-sub.warn { color: var(--amber); }
 .plan-after { font-size: 13px; color: var(--frost-2); }
 .plan-after b { color: var(--frost); }
 .empty-plan { font-size: 13.5px; color: var(--frost-2); }
@@ -1874,6 +1875,7 @@ body.nofx .xr-map.scan .xr-tile, body.nofx .xpf.scanning .xp-row { animation: no
 .ap-eq .ap-use { color: var(--aurora); font-weight: 700; }
 .ap-eq .ap-use b { color: var(--aurora); font-size: 18px; }
 .ap-empty { margin: 0; font-size: 13.5px; color: var(--frost-2); }
+.ap-pend { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--amber); padding-left: 10px; border-left: 2px solid color-mix(in srgb, var(--amber) 60%, transparent); }
 .ap-list { display: grid; gap: 6px; }
 .ap-row {
   display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; grid-template-areas: "dot name amt" "dot sub sh" "dot why why";

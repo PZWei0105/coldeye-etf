@@ -37,11 +37,38 @@ export function renderDetail(code, det = S.detail[code]) {
   if (!sh || sh.hidden || S.openCode !== code) return;
   const row = S.rows.get(code);
   const y = sh.scrollTop;
+  // 重畫（例如成分股明細晚到、資料更新）時，試算框裡打到一半的數量、自己改過的價格、買賣與股／張不要洗掉
+  const calc = calcState(sh);
   sh.innerHTML = sheetTop(code, row) + `<div class="sheet-body">${detailHTML(row, det)}</div>`;
   bindTop(code);
   bindDetail(code, row, det);
+  restoreCalc(sh, calc);
   animateNeedles(sh);
   sh.scrollTop = y;
+}
+function calcState(sh) {
+  const q = $('#c-qty', sh);
+  if (!q) return null;
+  const px = $('#c-px', sh);
+  const on = (sel) => { const b = $(`${sel}[aria-pressed="true"]`, sh); return b ? b : null; };
+  const cm = on('[data-cm]');
+  const cu = on('[data-cu]');
+  const act = document.activeElement;
+  return {
+    qty: q.value, px: px && px.dataset.dirty ? px.value : null,
+    cm: cm ? cm.dataset.cm : null, cu: cu ? cu.dataset.cu : null,
+    focus: act && (act.id === 'c-qty' || act.id === 'c-px') ? act.id : null,
+  };
+}
+function restoreCalc(sh, st) {
+  if (!st || !$('#c-qty', sh)) return;
+  if (st.cm === 'sell') { const b = $('[data-cm="sell"]', sh); if (b) b.click(); }
+  if (st.cu === 'lot') { const b = $('[data-cu="lot"]', sh); if (b) b.click(); }
+  const px = $('#c-px', sh);
+  if (st.px != null && px) { px.value = st.px; px.dataset.dirty = '1'; }
+  const q = $('#c-qty', sh);
+  if (st.qty) { q.value = st.qty; q.dispatchEvent(new Event('input')); }
+  if (st.focus) { const el = $('#' + st.focus, sh); if (el) { el.focus({ preventScroll: true }); try { el.setSelectionRange(el.value.length, el.value.length); } catch {} } }
 }
 export function closeDetail(fromPop = false) {
   if (modalOpen()) closeModal();
@@ -155,10 +182,14 @@ function myPositionHTML(x) {
 }
 
 const KIND_ICON = { pro: ICON.ok, con: ICON.no, warn: ICON.bang, info: ICON.dot, stat: ICON.chart };
-/** 隱藏金額時，建議句子裡你的金額（約虧多少、預估可領多少）和平均成本遮掉；「每單位 X 元」的配息與百分比照常顯示 */
+/**
+ * 隱藏金額時，建議句子、試算清單裡你的金額（約虧多少、預估可領多少、可動用多少）和平均成本遮掉；
+ * 「會不會扣二代健保」也拿掉（會透露那次配息有沒有 2 萬元）；「每單位 X 元」的配息與百分比照常顯示
+ */
 function maskLine(t) {
   if (!settings.privacy) return t;
   return String(t)
+    .replace(/；單次 2 萬元以上[^。]*/g, '')
     .replace(/平均成本從 [\d,.]+ 變成 [\d,.]+/g, '平均成本會改變')
     .replace(/(每單位 )?([\d,]+(?:\.\d+)?)\s*元/g, (m, unit) => (unit ? m : '•••• 元'));
 }
@@ -190,15 +221,18 @@ function planHTML(a) {
   if (!(T > 0)) return '<div class="plan empty-plan">在「部位」輸入可投入現金或持股後，這裡會算出建議買多少。</div>';
   // 這一檔在不在加碼計畫裡（你持有的＋關注的）：不在的話，是用計畫分完之後剩下的錢與空間算「如果另外買這檔」
   const inPlan = !!(S.alloc && S.alloc.adv.has(S.openCode));
-  const note = inPlan ? '' : '<div class="plan-sub">這檔不在加碼計畫裡（不是持有或關注的）：這是「如果另外加買這檔」，用一份可動用的錢、扣掉加碼計畫已經用掉的同類型與單一公司空間來算。</div>';
+  const note = inPlan ? '' : '<div class="plan-sub">這檔不在加碼計畫裡（不是持有或關注的）：這是「如果另外加買這檔」，用加碼計畫分完之後剩下的可動用的錢（最多一份）、扣掉計畫已經用掉的同類型與單一公司空間來算。</div>';
+  // 你持有的其他 ETF 還沒拿到成分股明細：單一公司的上限還沒把它們算進來
+  const pend = (p.coPend || []).filter((c) => S.rows.has(c));
+  const pendNote = pend.length && p.n > 0 ? `<div class="plan-sub warn">你持有的 ${esc(pend.join('、'))} 的成分股明細還沒拿到（載入中，或這次抓不到、稍後會再試）：單一公司的上限還沒把它們算進來，這個數字可能偏高。</div>` : '';
   if (!(p.n > 0)) {
     return `<div class="plan empty-plan">${a.key === 'hold' ? '想加碼的話：' : ''}目前建議 0 股（${esc(PF.planWhy(p, { cat: row && row.k }))}）。${p.ideal > 0 && p.limit === 'cash' ? `依紀律最多 ${sharesOf(p.ideal)}。` : ''}</div>${note}`;
   }
   const amt = p.parts.reduce((s, t) => s + t.sh * t.px, 0);
   return `<div class="plan">
     <div class="plan-h">${a.key === 'hold' ? '想加碼的話，小額就好：' : ''}這次最多 <b class="num">${sharesOf(p.n)}</b>，約 <b class="num">${money(amt)}</b> 元</div>
-    <div class="plan-sub">${esc(PF.planWhy(p, { cat: row && row.k }))}${p.ideal > p.n && p.limit === 'cash' ? `。依紀律最多 ${sharesOf(p.ideal)}` : ''}${p.coNote === 'pending' ? '。成分股明細還在載入，單一公司的上限還沒算進來' : ''}</div>
-    ${note}
+    <div class="plan-sub">${esc(PF.planWhy(p, { cat: row && row.k }))}${p.ideal > p.n && p.limit === 'cash' ? `。依紀律最多 ${sharesOf(p.ideal)}` : ''}${p.coNote === 'pending' ? '。這檔的成分股明細還沒拿到，單一公司的上限還沒算進來' : ''}</div>
+    ${pendNote}${note}
     <ol class="tranche">${p.parts.map((t, i) => `<li><span class="t-k">第 ${i + 1} 批</span><span class="t-w">${i === 0 ? `現價附近 <b class="num">${fmt.px(t.px)}</b>` : t.lim != null ? `拉回到 <b class="num">${fmt.px(t.lim)}</b>，或${i === 1 ? '一週後' : '兩週後'}` : esc(t.when)}</span><span class="t-n num">${sharesOf(t.sh)}</span></li>`).join('')}</ol>
     <div class="plan-stop">${ICON.warn}<span><span data-term="stop">出場線</span> <b class="num">${fmt.px(p.stop)}</b>（${esc(p.stopName)}）：買齊後收盤跌破就出場，約虧 <b class="num">${money(p.lossAtStop)}</b> 元${T > 0 ? `（總資產 ${(p.lossAtStop / T * 100).toFixed(2)}%）` : ''}</span></div>
     <div class="plan-after">買齊後${isNum(p.newAvg) && a.held ? `平均成本 <b class="num">${settings.privacy ? '••••' : fmt.px(p.newAvg)}</b>、` : ''}占總資產 <b class="num">${fmt.r(p.newW, 1, false)}</b></div>
@@ -304,7 +338,7 @@ function bindCalc(row, x) {
         <div><span>${x ? '新平均成本' : '成本'}</span><b class="num">${settings.privacy ? '••••' : fmt.px(r.newAvg)}</b></div>
         <div><span>損益兩平</span><b class="num">${settings.privacy ? '••••' : fmt.px(r.be)}</b></div></div>
       <div class="verdict-line">${verdict}</div>
-      <ul class="checks">${r.checks.map((c) => `<li class="${c.ok === true ? 'ok' : c.ok === false ? 'no' : 'na'}"><span class="ic">${c.ok === true ? ICON.ok : c.ok === false ? ICON.no : ICON.dot}</span><span>${esc(c.text)}</span></li>`).join('')}</ul>`;
+      <ul class="checks">${r.checks.map((c) => `<li class="${c.ok === true ? 'ok' : c.ok === false ? 'no' : 'na'}"><span class="ic">${c.ok === true ? ICON.ok : c.ok === false ? ICON.no : ICON.dot}</span><span>${esc(maskLine(c.text))}</span></li>`).join('')}</ul>`;
   };
   $$('[data-cm]', box).forEach((b) => b.addEventListener('click', () => {
     mode = b.dataset.cm;
@@ -317,7 +351,7 @@ function bindCalc(row, x) {
     run();
   }));
   $('#c-qty', box).addEventListener('input', run);
-  $('#c-px', box).addEventListener('input', run);
+  $('#c-px', box).addEventListener('input', (e) => { e.target.dataset.dirty = '1'; run(); });
 }
 
 // ------------------------------------------------------------------ 交易紀錄

@@ -1,6 +1,6 @@
 /* 冷眼 — 加碼計畫與市場溫度。
-   - 加碼計畫卡（部位分頁的第二張）：可動用的錢＝現金－緊急預備金－定期定額接下來 31 天要扣的，
-     照順序分給可以加碼的 ETF（你持有的＋關注的，pf.js 的 allocAdds）；每一檔旁邊標「可加碼多少」（planTagHTML）。
+   - 加碼計畫卡（部位分頁的第二張）：可動用的錢＝現金－緊急預備金－定期定額接下來一個月要扣的（－上次更新現金之後已經扣的），
+     分 3 份、照順序（可加碼的先、信心高的先）每一檔最多一份（pf.js 的 allocAdds）；每一檔旁邊標「可加碼多少」（planTagHTML）。
    - 全球市場與市場溫度（#temp）：後台 data/global.json（Cboe、Nasdaq、央行、期交所、美國財政部，pipeline/globalmkt.py）。
      溫度只提醒、不改股數；回測一律並列：溫度 vs 任何一天、照冷眼加碼 vs 每月定期定額（pipeline/addsim.py）。
    不連 AI、不替你決定買賣；畫面上每個數字都標日期或時間。 */
@@ -25,9 +25,33 @@ const pc1 = (x) => (isNum(x) ? `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x 
 const pc0 = (x) => (isNum(x) ? `${Math.round(x * 100)}%` : '—');
 const ptS = (x, d = 2) => (isNum(x) ? `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x).toFixed(d)}%` : '—');   // 已經是百分比
 const hm = (iso) => { const m = /T(\d{2}):(\d{2})/.exec(String(iso || '')); return m ? `${m[1]}:${m[2]}` : ''; };
-const ymS = (d) => { const s = String(d || ''); return s.length === 8 ? `${s.slice(0, 4)}/${+s.slice(4, 6)}` : '—'; };
+// 後台 global.json 的日期一律先轉成整數再寫（不把字串原樣放進畫面）
+const day8 = (d) => { const n = +d; return Number.isInteger(n) && n >= 19000101 && n <= 21001231 ? n : null; };
+const ymS = (d) => { const n = day8(d); return n ? `${Math.floor(n / 10000)}/${Math.floor(n / 100) % 100}` : '—'; };
+const dyS = (d) => { const n = day8(d); return n ? fmt.dy(n) : '—'; };
 /** 加碼金額：隱藏金額時改寫成占總資產幾 % */
 const amtOf = (x, T) => (settings.privacy ? (T > 0 ? `總資產 ${(x / T * 100).toFixed(1)}%` : '••••') : `≈ ${compact(x)}`);
+
+// ------------------------------------------------------------------ 回測的比較句子（照數字寫，不寫死）
+/** 冷眼加碼 vs 定期定額：最大跌幅（負數，越接近 0 越小）、期末、溫度打折 */
+function simCmp(r) {
+  const dd = r.rules.mdd - r.dca.mdd;
+  const fin = r.dca.final > 0 ? r.rules.final / r.dca.final : 1;
+  const tp = r.rules_temp && r.rules.final > 0 ? r.rules_temp.final / r.rules.final : null;
+  return {
+    dd: dd >= 0.1 ? '小很多' : dd >= 0.02 ? '比較小' : dd > -0.02 ? '差不多' : '比較大',
+    fin: fin < 0.9 ? '少' : fin > 1.1 ? '多' : '差不多',
+    tmp: tp == null ? null : Math.abs(tp - 1) < 0.02 ? '幾乎一樣' : tp > 1 ? '多' : '少',
+    tradeoff: dd >= 0.02 && fin < 0.9,
+  };
+}
+/** 加碼計畫卡上的一句 */
+function simShort(r) {
+  const c = simCmp(r);
+  const keep = '定期定額要扣的錢先留著、不拿來算加碼，加碼計畫管的是額外的錢。';
+  if (c.tradeoff) return `這段期間大多是多頭：錢放著沒買就少賺，冷眼換到的是比較小的跌幅。所以${keep}`;
+  return `冷眼的最大跌幅${c.dd === '差不多' ? '和定期定額差不多' : c.dd}，期末${c.fin === '差不多' ? '和定期定額差不多' : `比定期定額${c.fin}`}。${keep}`;
+}
 
 // ------------------------------------------------------------------ 市場溫度的小徽章
 const WX = {
@@ -46,7 +70,7 @@ export function tempBadgeHTML(t, o = {}) {
 function shortWhy(p) {
   if (p.cuts && p.cuts.includes('prem0')) return '溢價太高';
   switch (p.limit) {
-    case 'cash': return !(p.cashAll > 0) ? '未設現金' : !(p.cash > 0) ? '沒有可動用的錢' : '錢不夠 1 股';
+    case 'cash': return !(p.cashAll > 0) ? '未設現金' : !(p.cash > 0) ? '沒有可動用的錢' : PF.planShort(p) ? '錢分給前面的了' : '錢不夠 1 股';
     case 'cap': return '到比重上限';
     case 'cat': return '同類到上限';
     case 'co': return '公司到上限';
@@ -66,7 +90,8 @@ export function planTagHTML(a, T = (S.P && S.P.totals.T) || 0) {
 export function planCardHTML(P) {
   if (!P || !(P.totals.T > 0) || !S.alloc) return '';
   const T = P.totals.T;
-  const dep = P.deploy || { cash: P.totals.cash, emergency: 0, dca: { total: 0, items: [] }, usable: P.totals.cash };
+  const none = { total: 0, items: [] };
+  const dep = P.deploy || { cash: P.totals.cash, emergency: 0, dca: none, spent: none, usable: P.totals.cash };
   const A = S.alloc;
   const funded = [];
   const rest = [];
@@ -80,32 +105,33 @@ export function planCardHTML(P) {
   const used = funded.reduce((t, x) => t + x.a.plan.spend, 0);
   const held = new Map(P.holdings.map((x) => [x.code, x]));
   const colorOf = (code) => (held.has(code) ? slotVar(held.get(code).slot) : 'var(--glacier)');
-  // 現金去哪了：加碼計畫（每一檔）｜剩下沒動的｜定期定額保留｜緊急預備金
+  // 現金去哪了：加碼計畫（每一檔）｜剩下沒動的｜定期定額（上次更新現金之後已經扣的＋接下來要扣的）｜緊急預備金
   const cash = Math.max(0, dep.cash);
-  const dcaT = Math.min(cash, (dep.dca && dep.dca.total) || 0);
-  const emg = Math.min(Math.max(0, cash - dcaT), dep.emergency || 0);
+  const spentT = Math.min(cash, (dep.spent && dep.spent.total) || 0);
+  const dcaT = Math.min(Math.max(0, cash - spentT), (dep.dca && dep.dca.total) || 0);
+  const emg = Math.min(Math.max(0, cash - spentT - dcaT), dep.emergency || 0);
   const left = Math.max(0, dep.usable - used);
   // 隱藏金額時，提示文字只寫占現金的比例
   const vs = (v) => (settings.privacy ? `${cash > 0 ? Math.round(v / cash * 100) : 0}%` : compact(v));
   const seg = (v, cls, style, title) => (v > 0 ? `<span class="${cls}" style="flex:${v.toFixed(0)} 1 0;${style || ''}" title="${esc(title)}"></span>` : '');
-  const bar = cash > 0 ? `<div class="ap-bar" role="img" aria-label="現金的用途：加碼計畫 ${vs(used)}、剩下 ${vs(left)}、定期定額保留 ${vs(dcaT)}、緊急預備金 ${vs(emg)}">${
+  const bar = cash > 0 ? `<div class="ap-bar" role="img" aria-label="現金的用途：加碼計畫 ${vs(used)}、剩下 ${vs(left)}、定期定額 ${vs(dcaT + spentT)}、緊急預備金 ${vs(emg)}">${
     funded.map((x) => seg(x.a.plan.spend, 'f', `background:${colorOf(x.code)}`, `${x.row.n} ${vs(x.a.plan.spend)}`)).join('')
-  }${seg(left, 'left', '', `剩下沒動 ${vs(left)}`)}${seg(dcaT, 'dca', '', `定期定額保留 ${vs(dcaT)}`)}${seg(emg, 'emg', '', `緊急預備金 ${vs(emg)}`)}</div>` : '';
+  }${seg(left, 'left', '', `剩下沒動 ${vs(left)}`)}${seg(dcaT + spentT, 'dca', '', `定期定額 ${vs(dcaT + spentT)}`)}${seg(emg, 'emg', '', `緊急預備金 ${vs(emg)}`)}</div>` : '';
   const paper = isPaper();
   const dcaItems = (dep.dca && dep.dca.items) || [];
   const lastD = dcaItems.length ? dcaItems[dcaItems.length - 1].d : null;
+  const nSpent = ((dep.spent && dep.spent.items) || []).length;
   const eq = cash > 0 ? `<div class="ap-eq">
       <span>現金 <b class="num">${money(dep.cash)}</b></span>
       ${!paper ? `<span>− <button class="link num" id="ap-res" data-term="reserve">緊急預備金 ${money(dep.emergency || 0)}</button></span>` : ''}
       ${!paper && dcaT > 0 ? `<span>− <span data-term="deploy">定期定額保留</span> <b class="num">${money(dcaT)}</b><small>（${dcaItems.length} 期，到 ${fmt.d(lastD)}）</small></span>` : ''}
+      ${!paper && spentT > 0 ? `<span>− <button class="link" id="ap-spent" data-term="deploy">定期定額已經扣的</button> <b class="num">${money(spentT)}</b><small>（上次更新現金之後 ${nSpent} 期；更新現金後就不用扣）</small></span>` : ''}
       <span class="ap-use">＝ <span data-term="deploy">可動用</span> <b class="num">${money(dep.usable)}</b></span>
     </div>` : '<p class="ap-empty">現金是 0：在上面點現金金額，輸入準備拿來加碼的錢，冷眼就會算出每一檔可以加碼多少。</p>';
-  // 每一檔都卡在「分到的現金」時，原因寫一次在上面就好；每一列只寫它自己的（別的上限、減半）
-  const allCash = funded.length > 1 && funded.every((x) => x.a.plan.limit === 'cash');
-  const share = funded.length ? funded[0].a.plan.cashShare : 0;
+  // 分到的錢是「一份」的，原因寫在上面那一句；每一列只寫它自己的（別的上限、只拿到剩下的、減半）
   const rowHTML = (x) => {
     const p = x.a.plan;
-    const why = [allCash ? null : `受限於${PF.planLimitText(p, { cat: x.row.k })}`, ...(p.cuts || []).filter((c) => PF.CUT_TEXT[c]).map((c) => PF.CUT_TEXT[c])].filter(Boolean);
+    const why = [p.limit === 'cash' && !PF.planShort(p) ? null : `受限於${PF.planLimitText(p, { cat: x.row.k })}`, ...(p.cuts || []).filter((c) => PF.CUT_TEXT[c]).map((c) => PF.CUT_TEXT[c])].filter(Boolean);
     return `<button class="ap-row" data-code="${x.code}">
       <i class="ap-dot" style="background:${colorOf(x.code)}"></i>
       <span class="ap-name">${esc(x.row.n)}</span>
@@ -115,30 +141,31 @@ export function planCardHTML(P) {
       <span class="ap-why">${why.length ? esc(why.join('；')) + '；' : ''}出場線 <b class="num">${fmt.px(p.stop)}</b></span>
     </button>`;
   };
-  const restWhy = (x) => {
-    const a = x.a;
-    if (a.plan) return a.plan.n > 0 ? '' : PF.planWhy(a.plan, { cat: x.row.k });
-    // 只拿「不利」或「小心」的那一句（這兩種句子不寫金額；隱藏金額時也不會露出你的錢）
-    const con = a.lines.find((l) => l.kind === 'con' || l.kind === 'warn');
-    return con ? con.text.replace(/。$/, '') : '';
-  };
-  const restHTML = rest.length ? `<details class="ap-rest"><summary>沒有分到的 ${rest.length} 檔，為什麼</summary><ul>${rest.map((x) => `<li><button data-code="${x.code}"><span class="ap-name">${esc(x.row.n)}<small class="num">${x.code}</small></span>${actChip(x.a)}<span class="ap-why">${esc(restWhy(x))}</span></button></li>`).join('')}</ul></details>` : '';
+  const restHTML = rest.length ? `<details class="ap-rest"${funded.length ? '' : ' open'}><summary>沒有分到的 ${rest.length} 檔，為什麼</summary><ul>${rest.map((x) => `<li><button data-code="${x.code}"><span class="ap-name">${esc(x.row.n)}<small class="num">${x.code}</small></span>${actChip(x.a)}<span class="ap-why">${esc(PF.noPlanWhy(x.a, x.row))}</span></button></li>`).join('')}</ul></details>` : '';
+  // 你持有的 ETF 還沒拿到成分股明細：單一公司的上限還沒把它們算進去（拿到之後會自動重算）
+  const pend = (P.coPending || []).filter((c) => S.rows.has(c));
+  const pendHTML = pend.length && funded.length ? `<p class="ap-pend">${esc(pend.join('、'))} 的成分股明細還沒拿到（載入中，或這次抓不到、稍後會再試）：單一公司的上限還沒把它們算進去，上面的金額可能偏高，拿到之後會自動重算。</p>` : '';
   const t = S.global && S.global.temp;
   const tempLine = t ? `<button class="ap-temp" id="ap-temp">${tempBadgeHTML(t)}<span><b>市場溫度：${esc(t.level)}</b>${t.flags.length ? `（${esc(t.flags.map((f) => f.t).join('、'))}）` : '（沒有警訊）'}${t.notes && t.notes.length ? `；${esc(t.notes.map((z) => z.t).join('、'))}` : ''}。只提醒風險、不改股數</span>${ICON.chev}</button>`
     : '<button class="ap-temp" id="ap-temp"><span class="muted">全球市場與市場溫度</span>' + ICON.chev + '</button>';
   const sim = S.global && S.global.sim && S.global.sim.res && S.global.sim.res['0050'];
-  const simHTML = sim ? `<button class="ap-bt" id="ap-bt" aria-label="看加碼計畫的回測">
+  const simHTML = sim && sim.dca && sim.rules ? `<button class="ap-bt" id="ap-bt" aria-label="看加碼計畫的回測">
       <span class="ap-bt-h">回測：每月存 ${compact(sim.monthly)}元（${ymS(sim.from)}～${ymS(sim.to)}，0050）</span>
       <span class="ap-bt-r"><span>每月定期定額</span><b class="num">${compact(sim.dca.final)}</b><small>最大跌幅 ${pc1(sim.dca.mdd)}</small></span>
       <span class="ap-bt-r me"><span>照冷眼的加碼計畫</span><b class="num">${compact(sim.rules.final)}</b><small>最大跌幅 ${pc1(sim.rules.mdd)}・平均留 ${pc0(sim.rules.cash)} 現金</small></span>
-      <span class="ap-bt-n">這段期間大多是多頭：錢放著沒買就少賺，冷眼換到的是比較小的跌幅。所以定期定額要扣的錢先留著、不拿來算加碼，加碼計畫管的是額外的錢。</span>
+      <span class="ap-bt-n">${esc(simShort(sim))}</span>
     </button>` : '';
-  const total = funded.length ? `<p class="ap-sum">${allCash ? `可動用的錢分 <b class="num">${PF.planSlices(funded[0].a.plan)}</b> 份，每一檔最多拿 1 份${settings.privacy ? '' : `（約 <b class="num">${money(share)}</b>）`}，再照紀律、信心、溢價調整。` : ''}合計 <b class="num">${esc(amtOf(used, T))}</b>（${funded.length} 檔）${settings.privacy ? '' : `，剩 <b class="num">${money(left)}</b> 不動`}。順序：可加碼的先、信心高的先。</p>`
-    : (cash > 0 ? `<p class="ap-sum">${dep.usable > 0 ? '這次沒有可以加碼的：每一檔不是訊號不建議，就是到了上限。' : '可動用的錢是 0：現金都留給緊急預備金和定期定額了。'}</p>` : '');
+  const slice = isNum(A.slice) ? A.slice : 0;
+  const rule = `可動用的錢分 <b class="num">${PF.CASH_SLICES}</b> 份${settings.privacy ? '' : `（一份約 <b class="num">${money(slice)}</b>）`}，照順序每一檔最多拿 1 份：可加碼的先、信心高的先，分完就停；再照紀律、信心、溢價調整。`;
+  const plans0 = rest.filter((x) => x.a.plan);
+  const tooSmall = plans0.length > 0 && plans0.every((x) => x.a.plan.limit === 'cash' && !(x.a.plan.cuts || []).includes('prem0'));
+  const total = funded.length ? `<p class="ap-sum">${rule}合計 <b class="num">${esc(amtOf(used, T))}</b>（${funded.length} 檔）${settings.privacy ? '' : `，剩 <b class="num">${money(left)}</b> 不動`}。</p>`
+    : (cash > 0 ? `<p class="ap-sum">${!(dep.usable > 0) ? '可動用的錢是 0：現金都留給緊急預備金和定期定額了。' : tooSmall ? `可動用的錢太少：分 ${PF.CASH_SLICES} 份之後，一份不夠買 1 股。` : '這次沒有分到可以加碼的，每一檔的原因寫在下面。'}</p>` : '');
   return `<div class="sec-h"><h2>加碼計畫${paper ? '（模擬倉）' : ''}</h2><span class="aside" data-term="plan">依你的紀律・${esc(PF.PROFILES[settings.risk].name)}型</span></div>
     <section class="panel ap-card" aria-label="加碼計畫">
       ${bar}${eq}
       ${total}
+      ${pendHTML}
       ${funded.length ? `<div class="ap-list">${funded.map(rowHTML).join('')}</div>` : ''}
       ${restHTML}
       ${tempLine}
@@ -147,8 +174,10 @@ export function planCardHTML(P) {
 }
 export function bindPlanCard(v) {
   $$('.ap-card [data-code]', v).forEach((b) => b.addEventListener('click', () => openDetail(b.dataset.code)));
-  const res = $('#ap-res', v);
-  if (res) res.addEventListener('click', () => openCashForm());
+  for (const id of ['#ap-res', '#ap-spent']) {
+    const el = $(id, v);
+    if (el) el.addEventListener('click', () => openCashForm());
+  }
   const tb = $('#ap-temp', v);
   if (tb) tb.addEventListener('click', () => openTemp());
   const bt = $('#ap-bt', v);
@@ -186,6 +215,8 @@ const FLAG_DEF = (R) => [
   { k: 'ust', t: `美國 10 年期公債殖利率 20 個交易日升 ${R.ust_jump} 個百分點以上` },
 ];
 const RULE0 = { ma_tw: 60, ma_us: 200, breadth_low: 0.6, vix_hi: 25, vix_panic: 35, twd_weak: 2, ust_jump: 0.5, night_drop: -1.5 };
+/** 後台的門檻：只收數字（不是數字就用預設），畫面上不會出現後台給的其他文字 */
+const ruleOf = (rule) => Object.fromEntries(Object.entries(RULE0).map(([k, v]) => [k, rule && Number.isFinite(+rule[k]) ? +rule[k] : v]));
 /** 每一個警訊現在的數字（亮不亮看後台算好的 temp.flags） */
 function flagValue(G, k) {
   const ix = G.idx || {};
@@ -231,14 +262,14 @@ function drawTemp(anim = false, at = null) {
     return;
   }
   const t = G.temp;
-  const R = { ...RULE0, ...(G.rule || {}) };
+  const R = ruleOf(G.rule);
   const litSet = new Set(t.flags.map((f) => f.k));
   // 七個警訊照固定順序列（位置不跳），環上亮的格數＝警訊數
   const flags = FLAG_DEF(R).map((d) => ({ ...d, on: litSet.has(d.k) }));
   const asof = t.asof || {};
   const hero = `<section class="mt-hero ${LV_CLS[t.level] || ''}">
       <div class="mt-dial">${ringSVG(t.flags.length, 7, anim && settings.fx !== false)}<div class="mt-c"><b class="mt-lv">${esc(t.level)}</b><span class="mt-n num">${t.flags.length}／7 警訊</span></div></div>
-      <div class="mt-say"><h2>${t.level === '晴' ? '風險訊號不多' : t.level === '陰' ? '有幾個風險訊號' : '風險訊號很多'}</h2>
+      <div class="mt-say"><h2>${t.level === '晴' ? '風險訊號不多' : t.level === '陰' ? '有幾個風險訊號' : t.flags.length >= 4 ? '風險訊號很多' : `VIX 到了 ${R.vix_panic} 以上（市場恐慌）`}</h2>
         <p>${t.flags.length ? esc(t.flags.map((f) => f.t).join('、')) + '。' : '七個警訊都沒有亮。'}${t.notes && t.notes.length ? ` ${esc(t.notes.map((z) => z.t).join('、'))}。` : ''}</p>
         <p class="mt-asof">台灣看 ${fmt.d(asof.tw)} 收盤；美股、VIX 看美東 ${fmt.d(asof.us)} 收盤；匯率看 ${fmt.d(asof.twd)}。只提醒風險，<b>不改加碼股數</b>。</p></div>
     </section>`;
@@ -266,27 +297,37 @@ function drawTemp(anim = false, at = null) {
   let btHTML = '';
   if (bt) {
     const rowsB = ['任何一天', '晴', '陰', '雨'].filter((k) => bt[k]).map((k) => { const x = bt[k]; return `<tr class="${k === t.level ? 'now' : ''}${k === '任何一天' ? ' base' : ''}"><td>${k === '任何一天' ? '任何一天' : `${tempBadgeHTML({ level: k, flags: [] }, { n: false })}`}</td><td class="r num">${fmt.n(x.n)}</td><td class="r num">${pc1(x.avg)}</td><td class="r num">${pc0(x.up)}</td><td class="r num">${pc1(x.p10)}</td><td class="r num">${pc1(x.mdd)}</td></tr>`; }).join('');
-    const yes = bt['雨'] && bt['晴'] && bt['雨'].p10 < bt['晴'].p10;
+    const h = Number.isInteger(+G.bt.h) ? +G.bt.h : 20;
     const rn = bt['雨'], cl = bt['晴'];
-    btHTML = `<div class="sec-h"><h2>溫度準不準</h2><span class="aside">0050，之後 ${G.bt.h} 個交易日</span></div>
+    let read = '這段期間的資料還分不出明顯差別。';
+    if (rn && cl && isNum(rn.p10) && isNum(cl.p10) && isNum(rn.up)) {
+      const gap = cl.p10 - rn.p10;
+      const sep = gap >= 0.05 ? '溫度分得出風險高低（最差的情況差很多）' : gap > 0.01 ? '雨的最差情況比晴差一些' : null;
+      if (sep) read = `雨的日子之後 ${h} 個交易日，上漲的比例 ${pc0(rn.up)}、最差 10% 的情況 ${pc1(rn.p10)}；晴是 ${pc0(cl.up)}、${pc1(cl.p10)}。${sep}，但雨之後${rn.up >= 0.5 ? '一樣有一半以上的時候是漲的' : '上漲的比例不到一半'}——它不是叫你賣，是提醒你接下來波動可能比較大。`;
+    }
+    btHTML = `<div class="sec-h"><h2>溫度準不準</h2><span class="aside">0050，之後 ${h} 個交易日</span></div>
       <section class="panel tbl-wrap"><table class="t mt-bt"><thead><tr><th>那一天</th><th class="r">天數</th><th class="r">平均</th><th class="r">上漲</th><th class="r">最差10%</th><th class="r">期間跌幅</th></tr></thead><tbody>${rowsB}</tbody></table>
-      <p class="small muted pad-x mt-note">${fmt.dy(G.bt.from)}～${fmt.dy(G.bt.to)} 每個交易日用「那天收盤時已經知道的資料」算溫度（不偷看），再看買 0050 之後 ${G.bt.h} 個交易日的含息報酬；「期間跌幅」是那段時間最低點離買進價多遠（平均）。${yes ? `雨的日子之後 ${G.bt.h} 個交易日，上漲的比例 ${pc0(rn.up)}、最差 10% 的情況 ${pc1(rn.p10)}；晴是 ${pc0(cl.up)}、${pc1(cl.p10)}。溫度分得出風險高低（最差的情況差很多），但雨之後一樣有一半以上的時候是漲的——它不是叫你賣，是提醒你接下來波動可能比較大。` : '這段期間的資料還分不出明顯差別。'}</p></section>`;
+      <p class="small muted pad-x mt-note">${dyS(G.bt.from)}～${dyS(G.bt.to)} 每個交易日用「那天收盤時已經知道的資料」算溫度（不偷看），再看買 0050 之後 ${h} 個交易日的含息報酬；「期間跌幅」是那段時間最低點離買進價多遠（平均）。${read}</p></section>`;
   }
   // 加碼計畫的回測
   const sim = G.sim && G.sim.res;
   let simHTML = '';
   if (sim && Object.keys(sim).length) {
-    const blocks = Object.values(sim).map((r) => `<tr class="grp"><td colspan="5"><b>${esc(r.name || r.code)}</b> <span class="num">${esc(r.code)}</span><small>${fmt.dy(r.from)}～${fmt.dy(r.to)}，每月存 ${compact(r.monthly)}元，共投入 ${compact(r.dca.invested)}元</small></td></tr>
-      ${[['dca', '每月定期定額'], ['rules', '冷眼加碼計畫'], ['rules_temp', '＋溫度打折']].map(([k, nm]) => { const x = r[k]; return `<tr class="${k === 'rules' ? 'me' : ''}"><td>${nm}</td><td class="r num">${compact(x.final)}</td><td class="r num">${pc1(x.mdd)}</td><td class="r num">${pc1(x.p10)}</td><td class="r num">${pc0(x.cash)}</td></tr>`; }).join('')}`).join('');
+    const blocks = Object.values(sim).map((r) => `<tr class="grp"><td colspan="5"><b>${esc(r.name || r.code)}</b> <span class="num">${esc(r.code)}</span><small>${dyS(r.from)}～${dyS(r.to)}，每月存 ${compact(r.monthly)}元，共投入 ${compact(r.dca.invested)}元</small></td></tr>
+      ${[['dca', '每月定期定額'], ['rules', '冷眼加碼計畫'], ['rules_temp', '＋溫度打折']].filter(([k]) => r[k]).map(([k, nm]) => { const x = r[k]; return `<tr class="${k === 'rules' ? 'me' : ''}"><td>${nm}</td><td class="r num">${compact(x.final)}</td><td class="r num">${pc1(x.mdd)}</td><td class="r num">${pc1(x.p10)}</td><td class="r num">${pc0(x.cash)}</td></tr>`; }).join('')}`).join('');
     const r = sim['0050'] || Object.values(sim)[0];
+    const c = simCmp(r);
+    const caps = G.sim.caps && typeof G.sim.caps === 'object' ? G.sim.caps : null;
+    const pcN = (x) => (isNum(x) ? `${Math.round(x * 100)}%` : '—');
+    const capTxt = caps ? `單檔上限照穩健型（${Object.entries(caps).filter(([k]) => PF.CAT_NAMES[k]).map(([k, v]) => `${PF.CAT_NAMES[k]} ${pcN(v)}`).join('、')}）` : '單檔上限 60%';
     simHTML = `<div class="sec-h" id="mt-sim"><h2>加碼計畫的回測</h2><span class="aside">照冷眼建議 vs 每月固定金額</span></div>
       <section class="panel tbl-wrap"><table class="t mt-sim"><thead><tr><th>做法</th><th class="r">期末</th><th class="r">最大跌幅</th><th class="r">最差10%</th><th class="r">現金</th></tr></thead><tbody>${blocks}</tbody></table>
       <div class="prose pad mt-read"><p>「最大跌幅」是這個做法的報酬從最高點跌下來最深的一次（不受存錢影響）；「最差10%」是任何一段 20 個交易日裡最差的 10%；「現金」是平均有多少比例的錢留著沒買。</p>
-        <p>每個月第一個交易日存一筆錢：定期定額當天全部買；冷眼的加碼計畫把錢先放著，只在訊號「可加碼／漲多分批」的日子照紀律買（單筆最多虧總資產 1%、單檔上限 60%、現金分 3 份、信心不到 70 減半），「減碼」時賣三分之一。用那天收盤時已經知道的資料，不偷看。</p>
-        <p>結果很清楚：照冷眼的加碼計畫，<b>最大跌幅 ${pc1(r.rules.mdd)}</b>，比定期定額的 ${pc1(r.dca.mdd)} 小很多；但平均留了 <b>${pc0(r.rules.cash)}</b> 的現金，這段期間大多是多頭，<b>期末 ${compact(r.rules.final)}，比定期定額的 ${compact(r.dca.final)} 少</b>。加上市場溫度打折（陰減半、雨剩四分之一）期末 ${compact(r.rules_temp.final)}，幾乎一樣——所以冷眼不拿溫度改股數。</p>
+        <p>每個月第一個交易日存一筆錢：定期定額當天全部買；冷眼的加碼計畫把錢先放著，訊號「可加碼／漲多分批」的日子照紀律買，觀點中性的「續抱」日子買一半（單筆最多虧總資產 1%、${capTxt}、現金分 3 份、信心不到 70 減半），「減碼」時賣三分之一、超過上限賣回上限。用那天收盤時已經知道的資料，不偷看；用收盤價成交、含息。和 App 現在的算法不完全一樣：只有一檔、出場線一律用移動防守線，沒有算手續費、單一公司上限和溢價（沒有歷史的成分股明細與盤中溢價）。</p>
+        <p>結果：照冷眼的加碼計畫，<b>最大跌幅 ${pc1(r.rules.mdd)}</b>，${c.dd === '差不多' ? '和' : '比'}定期定額的 ${pc1(r.dca.mdd)} ${c.dd}；平均留了 <b>${pc0(r.rules.cash)}</b> 的現金，<b>期末 ${compact(r.rules.final)}，${c.fin === '差不多' ? '和' : '比'}定期定額的 ${compact(r.dca.final)} ${c.fin}</b>${c.tradeoff ? '（這段期間大多是多頭，錢放著沒買就少賺）' : ''}。${r.rules_temp ? `加上市場溫度打折（陰減半、雨剩四分之一）期末 ${compact(r.rules_temp.final)}，${c.tmp === '幾乎一樣' ? '和沒打折的幾乎一樣' : `比沒打折的${c.tmp}`}${c.tmp === '多' ? '；冷眼目前還是不拿溫度改股數（第一次回測沒有變好，結果改變時要連最大跌幅、最差 10% 一起重新評估）' : '——所以冷眼不拿溫度改股數'}。` : ''}</p>
         <p>這代表：加碼計畫不是用來取代定期定額的。冷眼把定期定額接下來要扣的錢先留著、不拿來算加碼；加碼計畫管的是額外的錢，它的好處是不追高、跌的時候比較少，代價是多頭的時候少賺。過去的結果不代表未來。</p></div></section>`;
   }
-  const srcs = Object.values(G.src || {}).map((s) => `<li><a href="${esc(s.u)}" target="_blank" rel="noopener">${esc(s.n)}</a></li>`).join('');
+  const srcs = Object.values(G.src || {}).filter((s) => s && typeof s.n === 'string').map((s) => (typeof s.u === 'string' && /^https:\/\//.test(s.u) ? `<li><a href="${esc(s.u)}" target="_blank" rel="noopener">${esc(s.n)}</a></li>` : `<li>${esc(s.n)}</li>`)).join('');
   sh.innerHTML = top + `<div class="sheet-body tool mt">
     ${hero}${flagList}${ixHTML}${btHTML}${simHTML}
     <section class="panel"><details class="rules"><summary>市場溫度怎麼判斷</summary><div class="in prose">${tempRulesHTML(G.rule)}</div></details></section>
@@ -300,7 +341,7 @@ function drawTemp(anim = false, at = null) {
 
 /** 設定頁「市場溫度怎麼判斷」（照後台 global.json 的 rule 寫，門檻改了會跟著變） */
 export function tempRulesHTML(rule) {
-  const R = { ...RULE0, ...(rule || (S.global && S.global.rule) || {}) };
+  const R = ruleOf(rule || (S.global && S.global.rule));
   return `<p><b>七個警訊</b>（固定門檻）：① 加權指數收在季線（${R.ma_tw} 日均線）之下；② ${Math.round(R.breadth_low * 100)}% 以上的 ETF（不含反向型）收在自己的季線之下；③ S&P 500 在 ${R.ma_us} 日均線之下；④ 費城半導體在 ${R.ma_us} 日均線之下；⑤ VIX ${R.vix_hi} 以上；⑥ 新台幣 20 個交易日貶值 ${R.twd_weak}% 以上；⑦ 美國 10 年期公債殖利率 20 個交易日上升 ${R.ust_jump} 個百分點以上。</p>
     <p><b>等級</b>0～1 個晴、2～3 個陰、4 個以上雨；VIX ${R.vix_panic} 以上直接算雨。台指期夜盤跌超過 ${Math.abs(R.night_drop)}% 只在台股開盤前提醒，不算進警訊（沒有歷史可以回測）。</p>
     <p><b>不偷看</b>台灣這一側用收盤資料；美股、VIX、匯率、美債用前一天以前的（美股在台灣收盤之後才開盤，匯率下午才公布），回測也用同樣的算法。</p>

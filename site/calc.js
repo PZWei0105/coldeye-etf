@@ -873,21 +873,35 @@ export function calClosed(cal, d) {
   return (Array.isArray(cal.holidays) && cal.holidays.includes(d)) || (Array.isArray(cal.closed) && cal.closed.includes(d));
 }
 
+/** 下個月的同一天（那個月沒有這一天就用月底）：yyyymmdd */
+export function addMonth(d, k = 1) {
+  let y = Math.floor(d / 10000), m = Math.floor(d / 100) % 100 + k;
+  while (m > 12) { m -= 12; y += 1; }
+  return y * 10000 + m * 100 + Math.min(d % 100, daysIn(y, m));
+}
 /**
  * 定期定額接下來要扣的錢（加碼計畫先保留，不拿去加碼：扣款失敗不補扣，連續 3 次失敗國泰會終止全部台股定期定額）。
- * 從今天（含）到 days 天後，每個還在扣的計畫的每一期：原本的扣款日遇到週末、休市日（cal：證交所開休市日期表）順延，
- * 還沒記進交易紀錄（自動入帳或你核對、連結過的那一期）、也不是你刪掉的那幾期（skip：`代號|原本扣款日`）。
+ * span：{ months: 1 }＝今天（含）起到下個月同一天之前（每個扣款日剛好一期），數字＝今天起到 span 天後（含）。
+ * 這段期間內，每個還在扣的計畫的每一期：原本的扣款日遇到週末、休市日（cal：證交所開休市日期表）順延，
+ * 還沒記進交易紀錄（同一檔、同一個原本扣款日：自動入帳或你核對、連結過的那一期，和自動入帳一樣用代號比對）、
+ * 也不是你刪掉的那幾期（skip：`代號|原本扣款日`）。
  * plans：normPlan 過的計畫；lots：真實部位的交易。回傳 { total, items: [{ c, plan, s: 原本扣款日, d: 預計扣款日, amt }] }（照 d 排序）
  */
-export function dcaReserve(plans, lots, today, days, cal = null, skip = []) {
+export function dcaReserve(plans, lots, today, span, cal = null, skip = []) {
   const items = [];
   if (!okDay8(today)) return { total: 0, items };
-  const hi = addDays(today, days);
-  const done = new Set((lots || []).filter(isDcaLot).map((l) => `${l.dca.plan}|${l.dca.s}`));
+  // 期間的最後一天（含）：下個月有同一天就到它的前一天；沒有（例如 1/31 → 2 月）就到下個月底
+  let hi;
+  if (span && typeof span === 'object') {
+    const nx = addMonth(today, span.months || 1);
+    hi = nx % 100 === today % 100 ? addDays(nx, -1) : nx;
+  } else hi = addDays(today, span);
+  const done = new Set((lots || []).filter(isDcaLot).map((l) => `${l.c}|${l.dca.s}`));
   const sk = new Set(skip || []);
   const open = (d) => isWeekday(d) && !calClosed(cal, d);
   for (const p of plans || []) {
-    if (!p || (p.end && p.end < today)) continue;
+    // 已經停扣的計畫跳過；舊版轉過來的（sb）停扣看原本的扣款日，停扣前的那一期可能順延到今天以後，所以多看 15 天
+    if (!p || (p.end && (p.sb === true ? addDays(p.end, 15) < today : p.end < today))) continue;
     const pd = planDays(p);
     if (!pd.length) continue;
     // 從上個月開始看：上個月底的扣款日遇到連假，可能順延到今天以後
@@ -900,9 +914,11 @@ export function dcaReserve(plans, lots, today, days, cal = null, skip = []) {
         const s = y * 10000 + m * 100 + day;
         let d = s;
         for (let k = 0; k < 15 && !open(d); k++) d = addDays(d, 1);
-        if (d < today || d > hi) continue;
+        // 還沒扣（順延後的成交日在今天以後）、原本的扣款日在這段期間內（順延到期間之後的也算：扣款日在期間內，錢要先留著）
+        if (d < today || s > hi) continue;
         if (p.sb === true ? (s < p.start || (p.end && s > p.end)) : (d < p.start || (p.end && d > p.end))) continue;
-        if (done.has(`${p.id}|${s}`) || sk.has(`${p.c}|${s}`)) continue;
+        if (done.has(`${p.c}|${s}`) || sk.has(`${p.c}|${s}`)) continue;
+        done.add(`${p.c}|${s}`);   // 同一檔、同一天的兩個計畫（重疊）只留一期，和自動入帳一樣
         items.push({ c: p.c, plan: p.id, s, d, amt: p.amt });
       }
       m += 1;
@@ -910,5 +926,20 @@ export function dcaReserve(plans, lots, today, days, cal = null, skip = []) {
     }
   }
   items.sort((a, b) => a.d - b.d || a.s - b.s);
+  return { total: items.reduce((t, x) => t + x.amt, 0), items };
+}
+/**
+ * 上次更新現金（cashD）之後，定期定額已經扣走的錢：真實部位的現金是你自己填的，自動入帳不會改它；
+ * 那一期記進交易紀錄之後就不在 dcaReserve 裡，所以這裡要另外扣，可動用的錢才不會多出一期。
+ * 成交日在 cashD 之後、今天（含）以前的定期定額交易（每一筆花的錢＝股數 × 價格＋手續費）。cashD 沒有時不扣。
+ */
+export function dcaSpent(lots, cashD, today) {
+  const items = [];
+  if (!okDay8(cashD) || !okDay8(today)) return { total: 0, items };
+  for (const l of lots || []) {
+    if (!isDcaLot(l) || l.side !== 'buy' || !(l.d > cashD) || l.d > today) continue;
+    items.push({ c: l.c, d: l.d, amt: Math.round(l.sh * l.px + (l.fee || 0)) });
+  }
+  items.sort((a, b) => a.d - b.d);
   return { total: items.reduce((t, x) => t + x.amt, 0), items };
 }

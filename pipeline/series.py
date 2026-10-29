@@ -99,53 +99,13 @@ class Series:
 
     # ---------- 還原 ----------
     def _adjust(self):
-        n = self.n
-        factor = [1.0] * n      # 乘在 i 之前（含 i-1）價格上的累積因子
-        # 除息日當天沒有成交（颱風休市、冷門 ETF）時，價格的落差出現在下一個有成交的交易日，就在那天還原
-        div_by_date = {}
-        for d, cash in self.divs:
-            if cash and cash > 0:
-                j = bisect.bisect_left(self.dates, d)
-                if 0 < j < n:
-                    bar = self.dates[j]
-                    div_by_date[bar] = div_by_date.get(bar, 0.0) + cash
-        # 由後往前累積
-        cum = 1.0
-        adj_f = [1.0] * n
-        vol_f = [1.0] * n
-        cum_v = 1.0
-        for i in range(n - 1, 0, -1):
-            adj_f[i] = cum
-            vol_f[i] = cum_v
-            prev_c = self.raw_c[i - 1]
-            o = self.raw_o[i]
-            d = self.dates[i]
-            step = 1.0
-            # 分割／反分割：開盤相對前收的跳空超過 ±45%（台股漲跌幅 10%，海外 ETF 也極少見）
-            if prev_c and o and (o / prev_c < 1 / 1.45 or o / prev_c > 1.45):
-                ratio = prev_c / o
-                nice = _nice_ratio(ratio)
-                if nice:
-                    step *= 1 / nice
-                    cum_v *= nice
-                    self.splits.append((d, nice))
-            if d in div_by_date and prev_c:
-                cash = div_by_date[d]
-                # 分割當天同時除息的情形極少見，以分割後價格計
-                base = prev_c * step
-                if base > cash:
-                    step *= (base - cash) / base
-            cum *= step
-        adj_f[0] = cum
-        vol_f[0] = cum_v
+        adj_f, vol_f, self.splits = adjust_factors(self.dates, self.raw_o, self.raw_c, self.divs)
         self.adj = adj_f
         self.o = [x * f for x, f in zip(self.raw_o, adj_f)]
         self.h = [x * f for x, f in zip(self.raw_h, adj_f)]
         self.l = [x * f for x, f in zip(self.raw_l, adj_f)]
         self.c = [x * f for x, f in zip(self.raw_c, adj_f)]
         self.v_adj = [x * f for x, f in zip(self.v, vol_f)]
-        self.splits.reverse()
-        del factor
 
     def _align(self, data, k):
         out = [None] * self.n
@@ -229,6 +189,53 @@ class Series:
     def raw_price_factor(self, i):
         """把還原價換回當天的實際成交價格。"""
         return 1 / self.adj[i] if self.adj[i] else 1.0
+
+
+def adjust_factors(dates, raw_o, raw_c, divs):
+    """還原因子（以目前價格為基準，由後往前累積）：分割／反分割與除息。Series 與市場溫度的「ETF 在季線之下的比例」共用。
+    dates／raw_o／raw_c：有收盤的那幾天（由舊到新）；divs：[(除息日, 每單位現金)]（排序過）。
+    回傳 (價格因子, 成交量因子, 分割 [(yyyymmdd, 比例)]，由舊到新)。"""
+    n = len(dates)
+    # 除息日當天沒有成交（颱風休市、冷門 ETF）時，價格的落差出現在下一個有成交的交易日，就在那天還原
+    div_by_date = {}
+    for d, cash in divs or []:
+        if cash and cash > 0:
+            j = bisect.bisect_left(dates, d)
+            if 0 < j < n:
+                bar = dates[j]
+                div_by_date[bar] = div_by_date.get(bar, 0.0) + cash
+    # 由後往前累積
+    cum = 1.0
+    adj_f = [1.0] * n
+    vol_f = [1.0] * n
+    cum_v = 1.0
+    splits = []
+    for i in range(n - 1, 0, -1):
+        adj_f[i] = cum
+        vol_f[i] = cum_v
+        prev_c = raw_c[i - 1]
+        o = raw_o[i]
+        d = dates[i]
+        step = 1.0
+        # 分割／反分割：開盤相對前收的跳空超過 ±45%（台股漲跌幅 10%，海外 ETF 也極少見）
+        if prev_c and o and (o / prev_c < 1 / 1.45 or o / prev_c > 1.45):
+            ratio = prev_c / o
+            nice = _nice_ratio(ratio)
+            if nice:
+                step *= 1 / nice
+                cum_v *= nice
+                splits.append((d, nice))
+        if d in div_by_date and prev_c:
+            cash = div_by_date[d]
+            # 分割當天同時除息的情形極少見，以分割後價格計
+            base = prev_c * step
+            if base > cash:
+                step *= (base - cash) / base
+        cum *= step
+    adj_f[0] = cum
+    vol_f[0] = cum_v
+    splits.reverse()
+    return adj_f, vol_f, splits
 
 
 def _nice_ratio(r):

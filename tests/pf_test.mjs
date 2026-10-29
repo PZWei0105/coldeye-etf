@@ -209,6 +209,66 @@ t('加碼計畫：沒有可動用的錢時說清楚是緊急預備金、定期�
   assert.ok(pf.planWhy(b.plan).includes('還沒設定可投入現金'));
 });
 
+t('加碼計畫：照順序分（可加碼的先），觀點中性的關注 ETF 不會把可加碼的那幾檔稀釋掉', () => {
+  // 可動用 30 萬：2 檔可加碼＋6 檔觀點中性（續抱）。可加碼的各拿一份（10 萬），中性的拿剩下的（每檔最多半份）
+  const adds = ['A1', 'A2'].map((c, i) => mkRow(c, ['broad', 'div'][i], { cf: 90 - i }));
+  const neu = ['N1', 'N2', 'N3', 'N4', 'N5', 'N6'].map((c) => mkRow(c, 'theme', { ps: 'hold', st: 0, cf: null, sc: 0.1 }));
+  const cands = [...neu, ...adds].map((r) => ({ code: r.c, H: H0(r) }));
+  const R = pf.allocAdds(cands, base0({ T: 10000000 }));
+  assert.deepEqual(R.order.slice(0, 2), ['A1', 'A2']);
+  for (const c of ['A1', 'A2']) {
+    const p = R.adv.get(c).plan;
+    assert.ok(p.spend > 99000 && p.spend <= 100000 + 1e-6, `${c} ${p.spend}`);   // 一份 10 萬，不會因為中性的那 6 檔被稀釋
+    assert.equal(p.limit, 'cash');
+    assert.equal(pf.planShort(p), false);
+  }
+  const spend = [...R.adv.values()].reduce((t, a) => t + (a.plan && a.plan.n > 0 ? a.plan.spend : 0), 0);
+  assert.ok(spend <= 300000 + 1e-6 && spend > 290000, spend);           // 分完：剩下的給中性的，不會留一大塊沒用
+  const neuP = neu.map((r) => R.adv.get(r.c).plan);
+  assert.ok(neuP[0].n > 0 && neuP[0].spend <= 50000 + 1e-6, neuP[0].spend);    // 中性的：半份
+  const last = neuP[neuP.length - 1];
+  assert.equal(last.n, 0);                                                  // 錢分完了：排在最後的沒有
+  assert.ok(pf.planWhy(last).includes('排在前面'), pf.planWhy(last));
+  assert.ok(R.left >= 0 && R.left < 10000, R.left);
+});
+
+t('加碼計畫：三批各自的最低手續費算進去，總花費不會超過分到的錢', () => {
+  // 一份 60,100 元、每股 20 元、2.8 折：不算最低收費會買 3,003 股（三批各 1,001 股＝1 張＋1 股零股，各收 20＋1 元）
+  const A = mkRow('A', 'broad', { cf: 90, dl: 18, iv: 18.5, atr: 0.3, pb: 19.5 });
+  const fee = { disc: 0.28, min: 20, minOdd: 1 };
+  const R = pf.allocAdds([{ code: 'A', H: H0(A, 20) }], base0({ T: 10000000, cash: 180300, cashAll: 180300, fee }));
+  const p = R.adv.get('A').plan;
+  assert.ok(p.n > 0);
+  assert.ok(p.spend <= 60100 + 1e-6, `${p.n} 股、花 ${p.spend}`);
+  assert.equal(p.limit, 'cash');
+});
+
+t('加碼計畫：可動用的錢很少時，照順序買得起的先買；後面的原因寫「分給排在前面的」，一份不夠買 1 股另外寫', () => {
+  // 可動用 450 元、4 檔可加碼、每股 120 元：一份 150 元，前 3 檔各 1 股，第 4 檔沒有
+  const rows = ['A', 'B', 'C', 'D'].map((c, i) => mkRow(c, ['broad', 'div', 'theme', 'overseas'][i], { cf: 90 - i, dl: 100, iv: 110, atr: 2, pb: 118 }));
+  const R = pf.allocAdds(rows.map((r) => ({ code: r.c, H: H0(r, 120) })), base0({ T: 1000000, cash: 450, cashAll: 450 }));
+  const ns = rows.map((r) => R.adv.get(r.c).plan.n);
+  assert.deepEqual(ns, [1, 1, 1, 0]);
+  assert.ok(pf.planWhy(R.adv.get('D').plan).includes('排在前面'), pf.planWhy(R.adv.get('D').plan));
+  // 可動用 300 元：一份 100 元，一股都買不起
+  const R2 = pf.allocAdds(rows.map((r) => ({ code: r.c, H: H0(r, 120) })), base0({ T: 1000000, cash: 300, cashAll: 300 }));
+  assert.ok(rows.every((r) => R2.adv.get(r.c).plan.n === 0));
+  assert.ok(pf.planWhy(R2.adv.get('A').plan).includes('一份不夠買 1 股'), pf.planWhy(R2.adv.get('A').plan));
+});
+
+t('加碼計畫：沒有分到的原因不會空白（到比重上限、資料不足），而且不寫金額', () => {
+  const full = { key: 'full', label: '續抱', lines: [{ kind: 'pro', text: '占總資產 60.0%，上限 60%（穩健型、市值型）。' }, { kind: 'info', text: '比重已經到你設定的上限，續抱、不再加碼。' }], plan: null };
+  assert.ok(pf.noPlanWhy(full, { k: 'broad' }).includes('上限'));
+  const none = { key: 'none', lines: [], plan: null };
+  assert.ok(pf.noPlanWhy(none, { young: 30 }).includes('30 個交易日'));
+  const off = { key: 'hold_off', lines: [{ kind: 'con', text: '規則觀點偏空（分數 -0.80）。' }], plan: null };
+  assert.equal(pf.noPlanWhy(off, {}), '規則觀點偏空（分數 -0.80）');
+  // 你持有的 ETF 還沒拿到成分股明細：計畫照樣算，但記下來（畫面會提醒）
+  const A = mkRow('A', 'broad', { cf: 90 });
+  const p = pf.allocAdds([{ code: 'A', H: H0(A) }], base0({ coPending: ['X', 'A'] })).adv.get('A').plan;
+  assert.deepEqual(p.coPend, ['X']);
+});
+
 t('加碼試算：同類型合計、單一公司、可動用的錢都檢查', () => {
   const A = mkRow('A', 'broad');
   const lists = { A: { h: [['2330', '台積電', 'tse', 50]] } };

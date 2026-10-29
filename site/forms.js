@@ -394,7 +394,7 @@ export function openCashForm() {
       <label class="field"><span>金額（元）</span><input class="input num big" id="c-amt" inputmode="numeric" value="${book.cash || ''}" placeholder="0"></label>
       <div class="quick">${[50000, 100000, 300000, 500000].map((v) => `<button type="button" class="pill" data-q="${v}">${v / 10000} 萬</button>`).join('')}</div>
       <label class="field"><span>其中的緊急預備金（元，不拿去加碼）</span><input class="input num" id="c-res" inputmode="numeric" value="${settings.reserve || ''}" placeholder="0"></label>
-      <p class="m-desc small">加碼計畫會先扣掉緊急預備金、再扣掉定期定額接下來 31 天要扣的錢，剩下的才分給可以加碼的 ETF。</p>
+      <p class="m-desc small">加碼計畫會先扣掉緊急預備金、再扣掉定期定額接下來一個月要扣的錢，剩下的才分給可以加碼的 ETF。定期定額扣款、買賣之後，記得回來更新這個金額。</p>
       <div class="m-actions"><button type="button" class="btn ghost" data-close>取消</button><button type="submit" class="btn primary">儲存</button></div>
     </form>`, { label: '可投入的現金' });
   const amt = $('#c-amt', card);
@@ -407,6 +407,7 @@ export function openCashForm() {
     const rv = res.value.trim() === '' ? 0 : toInt(res.value);
     if (!(rv >= 0)) { res.focus(); return; }
     book.cash = Math.round(v);
+    book.cashD = today();   // 現金是今天更新的：之前定期定額扣的錢已經算在這個數字裡
     saveBook();
     settings.reserve = normReserve(rv);
     saveSettings();
@@ -516,12 +517,12 @@ const toB64 = (s) => { const bytes = new TextEncoder().encode(s); let bin = ''; 
 const fromB64 = (b) => new TextDecoder().decode(Uint8Array.from(atob(b), (c) => c.charCodeAt(0)));
 
 function backupObject() {
-  const cur = { cash: book.cash, lots: book.lots, colors: book.colors, ...(book.start ? { start: book.start } : {}) };
+  const cur = { cash: book.cash, lots: book.lots, colors: book.colors, ...(book.cashD ? { cashD: book.cashD } : {}), ...(book.start ? { start: book.start } : {}) };
   const other = otherBook();
   const real = isPaper() ? (other || { cash: 0, lots: [], colors: {} }) : cur;
   const paper = isPaper() ? cur : other;
   return PF.makeBackup({
-    pf: { cash: real.cash || 0, lots: real.lots || [], colors: real.colors || {} },
+    pf: { cash: real.cash || 0, lots: real.lots || [], colors: real.colors || {}, ...(real.cashD ? { cashD: real.cashD } : {}) },
     ...(paper && paper.start ? { paper } : {}),
     alerts,
     journal: journal.items,
@@ -598,7 +599,8 @@ export function openBackup() {
       go.textContent = `確定還原？真實部位：備份 ${obj.pf.lots.length} 筆取代目前 ${nReal} 筆${paperOk(obj) ? `；模擬倉：備份 ${obj.paper.lots.length} 筆取代目前 ${nPaper} 筆` : obj.paper ? '；模擬倉有備份之後的新交易，維持現狀' : '（模擬倉不變）'}${planTxt}${jn ? `；決策日記補回 ${jn} 筆（不會刪掉現有的）` : ''}`;
       return;
     }
-    const real = { cash: obj.pf.cash || 0, lots: obj.pf.lots, colors: obj.pf.colors || {} };
+    // 現金是哪天更新的（readBackup 檢查過）：沒有就當作今天（之後定期定額自動入帳扣的錢才算得出來）
+    const real = { cash: obj.pf.cash || 0, lots: obj.pf.lots, colors: obj.pf.colors || {}, cashD: obj.pf.cashD || today() };
     const withPaper = paperOk(obj);
     setBooks(withPaper ? { real, paper: obj.paper } : { real });
     alerts.splice(0, alerts.length, ...(obj.alerts || []));

@@ -150,8 +150,9 @@ def parse_nasdaq_info(js):
     if m.group(4):
         h = int(m.group(4)) % 12 + (12 if m.group(6) == 'PM' else 0)
         t = f'{h:02d}:{m.group(5)}'
+    status = str(data.get('marketStatus') or '').strip().lower()
     return {'px': px, 'prev': prev, 'pct': _num(p.get('percentageChange')), 'd': d, 't': t,
-            'open': str(data.get('marketStatus') or '').lower() == 'open'}
+            'open': status == 'open', 'status': status}
 
 
 def parse_cbc_fx(js, start=START):
@@ -351,11 +352,13 @@ def _us_closed(now):
 
 
 def is_close(q):
-    """這筆報價是不是那一天的收盤：Nasdaq 看市場狀態（收盤後的時間戳沒有幾點）；Cboe 看最後成交時間（美東 16:00 以後；
-    2026/10/30 實測收盤後 S&P 500 是 16:14、VIX 是 16:15）。VIX 美東清晨 03:15 起有盤前報價，那個不是收盤。"""
+    """這筆報價是不是那一天的收盤：Nasdaq 看市場狀態（收盤後的時間戳沒有幾點；盤前 Pre-Market 不算，日期可能已經是新的一天）；
+    Cboe 看最後成交時間在美東 16:00～16:59（2026/10/30 實測收盤後 S&P 500 是 16:14、VIX 是 16:15）。
+    VIX 美東清晨 03:15 起有盤前報價、晚上可能有延長時段的報價，那些都不是收盤，不能蓋掉那天的收盤。"""
     if 'open' in q:
-        return not q['open']
-    return bool(q.get('t') and q['t'] >= '16:00')
+        return not q['open'] and q.get('status') != 'pre-market'
+    t = q.get('t') or ''
+    return '16:00' <= t < '17:00'
 
 
 def us_open(q, now):
@@ -445,22 +448,33 @@ def ust_change(yields, d, k=20):
     return yields[ks[-1]]['y10'] - yields[ks[-1 - k]]['y10']
 
 
-def breadth_series(daily, meta_cat, n=60):
-    """每一天收在自己季線之下的 ETF 比例（不含反向型；那天有成交、而且有滿 n 天收盤的才算）→ {d: (之下的檔數, 總檔數)}"""
+def breadth_series(daily, meta_cat, n=60, divs=None):
+    """每一天收在自己季線之下的 ETF 比例（不含反向型；那天有成交、而且有滿 n 個交易日收盤的才算）→ {d: (之下的檔數, 總檔數)}。
+    用還原價（分割、除息還原，和單檔分析的季線一樣：series.py 的 adjust_factors）：除息、分割那天不會被當成跌破季線。
+    divs：state['divs']（{代號: [[除息日, 每單位現金], ...]}）；None 時用原始收盤（只給測試比較用）。"""
+    from collections import deque
+    from .series import adjust_factors
     out = {}
     for code, s in (daily or {}).items():
         if meta_cat.get(code) == 'inv':
             continue
-        win = []
+        ds, os_, cs = s.get('d') or [], s.get('o') or [], s.get('c') or []
+        # 和 Series 一樣：照日期排、去掉沒有收盤價的日子（停牌）；沒有開盤價用收盤價
+        rows = sorted((d, (os_[i] if i < len(os_) and os_[i] else c), c) for i, (d, c) in enumerate(zip(ds, cs)) if c is not None and c > 0)
+        if not rows:
+            continue
+        dates = [r[0] for r in rows]
+        closes = [r[2] for r in rows]
+        if divs is not None:
+            f, _, _ = adjust_factors(dates, [r[1] for r in rows], closes, sorted(tuple(x) for x in (divs.get(code) or [])))
+            closes = [c * k for c, k in zip(closes, f)]
+        win = deque()
         run = 0.0
-        for d, c in zip(s.get('d') or [], s.get('c') or []):
-            if not c:
-                win, run = [], 0.0
-                continue
+        for d, c in zip(dates, closes):
             win.append(c)
             run += c
             if len(win) > n:
-                run -= win.pop(0)
+                run -= win.popleft()
             if len(win) == n:
                 b, t = out.get(d, (0, 0))
                 out[d] = (b + (1 if c < run / n else 0), t + 1)
@@ -514,7 +528,7 @@ def temp_evidence(state, codes=('0050',), start=20200401, H=20, br=None):
     gs = {k: (g.get('s') or {}).get(k) or {} for k in ('spx', 'sox', 'vix', 'twd')}
     meta = state['meta'] or {}
     meta_cat = {c: (m or {}).get('cat') for c, m in meta.items()}
-    br = br if br is not None else breadth_series(state['daily'], meta_cat)
+    br = br if br is not None else breadth_series(state['daily'], meta_cat, divs=state['divs'] or {})
     tx = {'d': state['taiex']['d'], 'c': state['taiex']['c']}
     days = [d for d in tx['d'] if d >= start]
     rows = [(d, temp_on(d, tx, br, gs, state['yields'])[0]) for d in days]
@@ -583,7 +597,7 @@ def build_out(state, summary=None, now=None):
     # 台灣這一側：加權指數、ETF 收在季線之下的比例（和回測同一個算法）；美股、匯率、美債用最新一天之前的資料
     tx = {'d': (state['taiex'] or {}).get('d') or [], 'c': (state['taiex'] or {}).get('c') or []}
     meta_cat = {c: (m or {}).get('cat') for c, m in (state['meta'] or {}).items()}
-    br = breadth_series(state['daily'], meta_cat)
+    br = breadth_series(state['daily'], meta_cat, divs=state['divs'] or {})
     last_td = tx['d'][-1] if tx['d'] else None
     q = g.get('q') or {}
     night = q.get('txf_night')

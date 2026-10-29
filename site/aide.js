@@ -822,7 +822,7 @@ export function packPf(p) {
   for (const h of p.holdings) L.push(`・${h.name}（${h.code}）｜${pctU(h.w, 1)}｜${catN(h.cat)}，上限 ${pctU(h.cap)}｜${pctS(h.pnlPct)}｜${h.label || '—'}｜${h.st == null ? '資料不足' : `${ST_T[String(h.st)]}／${PS_T[h.ps] || '—'}`}${p.showAmt && isNum(h.sh) ? `｜${sharesText(h.sh)}，平均成本 ${pxS(h.avg)}，市值約 ${ntS(h.mv)} 元` : ''}`);
   if (p.audit && p.audit.length) { L.push('', SEP('副官巡檢（固定規則）')); const mark = { ok: '✓', info: '・', warn: '⚠', stop: '⛔' }; for (const i of p.audit) L.push(`${mark[i.lvl]} ${i.t}`); }
   if (p.plan && (p.plan.length || p.deploy)) {
-    L.push('', SEP('冷眼的加碼計畫（固定規則：可動用的錢＝現金－緊急預備金－定期定額接下來要扣的，照紀律分給可以加碼的 ETF）'));
+    L.push('', SEP('冷眼的加碼計畫（固定規則：可動用的錢＝現金－緊急預備金－定期定額要扣的；分 3 份，照順序每一檔最多 1 份：可加碼的先、信心高的先，再照紀律算股數）'));
     const t = p.totals;
     if (p.deploy) L.push(p.showAmt ? `可動用的錢約 ${ntS(p.deploy.usable)} 元（緊急預備金 ${ntS(p.deploy.emergency)}、定期定額保留 ${ntS(p.deploy.dca)}）` : `可動用的錢約占總資產 ${pctU(t.T > 0 ? p.deploy.usable / t.T : null, 1)}`);
     if (!p.plan.length) L.push('這次沒有分到加碼的 ETF。');

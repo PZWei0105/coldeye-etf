@@ -191,6 +191,36 @@ t('加碼計畫的定期定額保留款：接下來 31 天要扣的每一期（�
   assert.deepEqual(r3.items.map((x) => [x.s, x.d]), [[20261030, 20261102]]);
 });
 
+t('定期定額保留款「接下來一個月」：每個扣款日剛好一期（30 天的月份不會在扣款前一天保留兩期）', () => {
+  const M = { months: 1 };
+  const p6 = [C.normPlan({ id: 'p1', c: '0050', days: [6], amt: 3000, start: 20250101 }, 20261030)];
+  assert.deepEqual(C.dcaReserve(p6, [], 20261105, M, null, []).items.map((x) => x.s), [20261106]);   // 11 月 30 天：12/6 不算
+  assert.deepEqual(C.dcaReserve(p6, [], 20261106, M, null, []).items.map((x) => x.s), [20261106]);   // 扣款當天也只有一期
+  assert.deepEqual(C.dcaReserve(p6, [], 20261107, M, null, []).items.map((x) => x.s), [20261206]);
+  // 1/31 起：2 月沒有 31 號，到 2 月底（2/28 那一期要算）；1/28 起：2/28 不算（剛好一個月後）
+  const p28 = [C.normPlan({ id: 'p2', c: '0050', days: [28, 31], amt: 1000, start: 20250101 }, 20261030)];
+  assert.deepEqual(C.dcaReserve(p28, [], 20270131, M, null, []).items.map((x) => x.s), [20270131, 20270228]);
+  assert.deepEqual(C.dcaReserve(p28, [], 20270128, M, null, []).items.map((x) => x.s), [20270128, 20270131]);
+  // 舊版轉過來的（sb）：停扣日看原本的扣款日；停扣前那一期順延到今天，還是要保留
+  const sb = [C.normPlan({ id: 'p3', c: '0056', days: [1], amt: 2000, start: 20250101, end: 20261101, sb: true }, 20261030)];
+  assert.deepEqual(C.dcaReserve(sb, [], 20261102, M, null, []).items.map((x) => [x.s, x.d]), [[20261101, 20261102]]);   // 11/1 週日 → 11/2
+  // 已經記的那一期用「代號＋原本扣款日」比對（和自動入帳一樣）：記在舊計畫的也算
+  const lots = [{ id: 'x', c: '0050', side: 'buy', d: 20261106, sh: 30, px: 100, dca: { plan: 'old', s: 20261106, est: true } }];
+  assert.deepEqual(C.dcaReserve(p6, lots, 20261105, M, null, []).items, []);
+});
+
+t('上次更新現金之後，定期定額已經扣走的錢：自動入帳不改你填的現金，所以另外扣；更新現金後就不扣', () => {
+  const lots = [
+    { id: 'a', c: '0050', side: 'buy', d: 20261106, sh: 30, px: 99.5, fee: 1, dca: { plan: 'p1', s: 20261106, est: true } },
+    { id: 'b', c: '0050', side: 'buy', d: 20261026, sh: 30, px: 98, fee: 1, dca: { plan: 'p1', s: 20261026, est: false } },
+    { id: 'c', c: '0050', side: 'buy', d: 20261106, sh: 1000, px: 99 },   // 自己記的一般交易：不算在這裡
+  ];
+  const r = C.dcaSpent(lots, 20261030, 20261110);
+  assert.deepEqual(r.items.map((x) => [x.d, x.amt]), [[20261106, 2986]]);
+  assert.equal(C.dcaSpent(lots, 20261106, 20261110).total, 0);           // 扣款那天之後更新過現金
+  assert.equal(C.dcaSpent(lots, null, 20261110).total, 0);               // 不知道現金是哪天更新的：不扣
+});
+
 t('國泰生效規則：送出後 1 個交易日生效、再下一個交易日才扣得到；市場交易日用好幾檔聯集（不會漏掉單一檔停止交易的日子）', () => {
   const cal = weekdays(20261001, 20261023, [20261009]);
   assert.equal(C.dcaCutover(20261005, cal), 20261007);      // 國泰的例子：週一送出、週二生效、週三扣得到
