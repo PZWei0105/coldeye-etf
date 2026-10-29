@@ -1,1 +1,1 @@
-{"job": "global", "note": "推到 main 時要執行的工作：probe / backfill / eod / intraday / deploy / global / night"}
+{"job": "probe", "note": "推到 main 時要執行的工作：probe / backfill / eod / intraday / deploy / global / night"}

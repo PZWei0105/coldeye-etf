@@ -639,3 +639,18 @@ def probe_global(http):
         meta = repr(e)[:300]
     return {'hist': hist, 'quotes': quotes, 'errors': {**e1, **e2}, 'cbc': meta,
             'at': dt.datetime.utcnow().isoformat() + 'Z'}
+
+
+def probe_bot(http):
+    """實測臺灣銀行的美元牌告（最近三個月）：原始回應的開頭、狀態、解析結果"""
+    out = {}
+    for name, url in (('l3m', BOT_FX), ('day', 'https://rate.bot.com.tw/xrt/flcsv/0/day')):
+        try:
+            r = http.get(url, timeout=40)
+            raw = r.content
+            out[name] = {'status': r.status_code, 'ct': r.headers.get('content-type'), 'size': len(raw),
+                         'head': raw[:1200].decode('utf-8-sig', errors='replace'),
+                         'parsed': parse_bot_csv(raw.decode('utf-8-sig', errors='replace'))[-5:]}
+        except Exception as e:  # noqa: BLE001
+            out[name] = repr(e)[:400]
+    return out

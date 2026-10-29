@@ -1,7 +1,32 @@
 [
  {
-  "name": "global",
-  "py": "globalmkt:probe_global",
+  "name": "bot_l3m_usd",
+  "url": "https://rate.bot.com.tw/xrt/flcsv/0/L3M/USD",
+  "headers": {
+   "Accept": "text/csv,text/plain,*/*"
+  }
+ },
+ {
+  "name": "bot_l3m_usd_1",
+  "url": "https://rate.bot.com.tw/xrt/flcsv/0/L3M/USD/1",
+  "headers": {
+   "Accept": "text/csv,text/plain,*/*"
+  }
+ },
+ {
+  "name": "bot_day",
+  "url": "https://rate.bot.com.tw/xrt/flcsv/0/day",
+  "headers": {
+   "Accept": "text/csv,text/plain,*/*"
+  }
+ },
+ {
+  "name": "bot_quote_l3m_html",
+  "url": "https://rate.bot.com.tw/xrt/quote/l3m/USD"
+ },
+ {
+  "name": "global_bot_parse",
+  "py": "globalmkt:probe_bot",
   "gap": 1.0
  }
 ]
