@@ -41,8 +41,10 @@ check('Nasdaq 歷史：照日期排序', h == [(20190102, 1165.3), (20261028, 11
 f = G.parse_cbc_fx({'data': {'dataSets': [['20260929', '31.876', '157.38'], ['20260930', '31.852', '156.89'], ['20260930', 'x', '1']]}})
 check('央行匯率：第 1 欄是新台幣、格式不對的不收', f == [(20260929, 31.876), (20260930, 31.852)], f)
 check('央行匯率：不在 20～50 之間就當作格式變了', G.parse_cbc_fx({'data': {'dataSets': [['20260930', '157.38']]}}) == [])
-b = G.parse_bot_csv('資料日期,幣別,匯率,現金,即期\n20261029,USD,本行買入,31.555,31.905,31.86,本行賣出,32.225,32.005,31.98\n')
-check('臺灣銀行牌告：即期買賣中價', b == [(20261029, 31.955)], b)
+CBC_HTML = ('<table><tr><th>標題(日期)</th><th>NTD/USD</th></tr><tr><td><a href="#">2026/10/29</a></td><td>32.492</td></tr>'
+            '<tr><td>2026/10/28</td><td> 32.418 </td></tr><tr><td>2026/10/27</td><td>3.2452</td></tr></table>')
+b = G.parse_cbc_rate_html(CBC_HTML)
+check('央行網站每天的收盤匯率：日期、匯率；不在 20～50 之間的不收', b == [(20261028, 32.418), (20261029, 32.492)], b)
 tx = G.parse_taifex({'RtData': {'QuoteList': [
     {'SymbolID': 'TXF-P', 'CLastPrice': '', 'CRefPrice': '46368.33'},
     {'SymbolID': 'TXFL6-M', 'CLastPrice': '46430.00', 'CRefPrice': '46702.00', 'CDiffRate': '-0.58', 'CTotalVolume': '213', 'CDate': '20261029', 'CTime': '014804'},
@@ -114,8 +116,8 @@ class FakeHttp:
         self.calls.append(url)
         if 'VIX_History' in url:
             return FakeResp(text='DATE,OPEN,HIGH,LOW,CLOSE\n10/28/2026,1,1,1,16.91\n')
-        if 'L3M' in url:
-            return FakeResp(text='20261029,USD,本行買入,31.5,31.9,本行賣出,32.2,32.0\n')
+        if 'lp-645-1-' in url:
+            return FakeResp(text=CBC_HTML if '-1-20.html' in url else '<table></table>')
         raise RuntimeError('unexpected ' + url)
 
     def json(self, url, **kw):
@@ -143,9 +145,10 @@ class FakeHttp:
 st = {'global': {}}
 http = FakeHttp()
 r = G.update(st, http, now=at(2026, 10, 30, 7, 45))
-check('早上 07:45：歷史抓了（spx、vix、ndx、sox、央行、臺灣銀行）', set(r['history']) == {'spx', 'vix', 'ndx', 'sox', 'twd', 'twd_bot'}, r)
+check('早上 07:45：歷史抓了（spx、vix、ndx、sox、央行統計資料庫、央行網站每天的匯率）', set(r['history']) == {'spx', 'vix', 'ndx', 'sox', 'twd', 'twd_cbc'}, r)
 check('收盤後的報價補進歷史：S&P 500 10/29', st['global']['s']['spx']['d'][-1] == 20261029 and st['global']['s']['spx']['c'][-1] == 7720.39)
-check('臺灣銀行的最近三個月蓋在央行上', st['global']['s']['twd']['d'] == [20260930, 20261029], st['global']['s']['twd'])
+check('央行網站每天的匯率接在統計資料庫（一個月更新一次）後面', st['global']['s']['twd']['d'] == [20260930, 20261028, 20261029], st['global']['s']['twd'])
+check('來源都成功：今天的歷史不再抓', st['global'].get('hist_day') == '20261030', st['global'].get('hist_day'))
 check('台指期夜盤存在 q', st['global']['q']['txf_night']['pct'] == -1.37)
 n0 = len(http.calls)
 r = G.update(st, http, now=at(2026, 10, 30, 9, 5), history=False)

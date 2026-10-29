@@ -3,7 +3,7 @@
 來源（官方一手；2026/10/30 PZ 同意把來源名單擴大到這幾個）：
 - Cboe 芝加哥選擇權交易所（VIX 的編製者、S&P 500 指數選擇權的交易所）：VIX 歷史收盤、S&P 500 歷史、兩者的延遲報價
 - Nasdaq 那斯達克（那斯達克 100、費城半導體指數的編製者）：歷史收盤與延遲報價
-- 中央銀行：新台幣對美元匯率日資料（BP01D01，每天 16:00 銀行間即期匯率）
+- 中央銀行：新台幣對美元匯率日資料（統計資料庫 BP01D01，一個月更新一次）＋央行網站每天的「新臺幣/美元銀行間收盤匯率」（最近 60 天）
 - 臺灣期貨交易所 MIS：台指期一般（日盤）、盤後（夜盤）行情
 - 美國財政部：10 年期公債殖利率（既有的 state['yields']）
 GitHub Actions 上實測過（2026/10/30 probe）；FRED（聖路易聯準銀行）從 GitHub Actions 連不上，沒有用。
@@ -29,8 +29,10 @@ NQ_INFO = 'https://api.nasdaq.com/api/quote/{sym}/info?assetclass=index'
 NQ_HEADERS = {'Accept': 'application/json, text/plain, */*', 'Origin': 'https://www.nasdaq.com',
               'Referer': 'https://www.nasdaq.com/'}
 CBC_FX = 'https://cpx.cbc.gov.tw/API/DataAPI/Get?FileName=BP01D01'
-# 央行的日資料一個月才更新一次（2026/10/30 實測最新是 9/30），最近三個月用臺灣銀行牌告的美元即期買賣中價補上
-BOT_FX = 'https://rate.bot.com.tw/xrt/flcsv/0/L3M/USD'
+# 央行的日資料（BP01D01）一個月才更新一次（2026/10/30 實測最新是 9/30）；央行網站「新臺幣/美元銀行間收盤匯率」
+# 每天更新（一頁 20 天），抓最近 3 頁補上。臺灣銀行的牌告從 GitHub Actions 會被機器人驗證擋下，沒有用。
+CBC_FX_PAGE = 'https://www.cbc.gov.tw/tw/lp-645-1-{page}-20.html'
+CBC_FX_PAGES = 3
 TAIFEX_MIS = 'https://mis.taifex.com.tw/futures/api/getQuoteList'
 TAIFEX_HEADERS = {'Content-Type': 'application/json;charset=UTF-8', 'Origin': 'https://mis.taifex.com.tw',
                   'Referer': 'https://mis.taifex.com.tw/futures/AfterHoursSession/EquityIndices/FuturesDomestic/'}
@@ -39,7 +41,7 @@ SOURCES = {
     'cboe': ('Cboe 芝加哥選擇權交易所 VIX、S&P 500', 'https://www.cboe.com/tradable_products/vix/vix_historical_data/'),
     'nasdaq': ('Nasdaq 那斯達克 100、費城半導體指數', 'https://www.nasdaq.com/market-activity/index/sox'),
     'cbc_fx': ('中央銀行 新台幣對美元匯率（日資料）', 'https://cpx.cbc.gov.tw/Data/DataMain?pxfilename=BP01D01.px'),
-    'bot_fx': ('臺灣銀行 美元牌告匯率（最近三個月）', 'https://rate.bot.com.tw/xrt/history/USD'),
+    'cbc_fx_daily': ('中央銀行 新臺幣/美元銀行間收盤匯率（每天）', 'https://www.cbc.gov.tw/tw/lp-645-1.html'),
     'taifex': ('臺灣期貨交易所 台指期行情（含夜盤）', 'https://mis.taifex.com.tw/futures/'),
 }
 NAMES = {'spx': 'S&P 500', 'ndx': '那斯達克 100', 'sox': '費城半導體', 'vix': 'VIX 恐慌指數', 'twd': '新台幣（每美元）'}
@@ -170,18 +172,17 @@ def parse_cbc_fx(js, start=START):
     return sorted(set(out))
 
 
-def parse_bot_csv(text):
-    """臺灣銀行 L3M/USD 歷史牌告（CSV）：每列 [日期, USD, 本行買入, 現金, 即期, …, 本行賣出, 現金, 即期, …] → [(yyyymmdd, 即期買賣中價)]"""
+def parse_cbc_rate_html(text):
+    """央行網站「新臺幣/美元銀行間收盤匯率」列表頁：表格每列 [YYYY/MM/DD, 匯率] → [(yyyymmdd, 匯率)]；不在 20～50 之間的不收"""
     out = []
-    for line in (text or '').splitlines():
-        r = [x.strip() for x in line.split(',')]
-        if len(r) < 6 or not re.match(r'^\d{8}$', r[0]) or r[1] != 'USD' or '本行買入' not in r or '本行賣出' not in r:
+    for row in re.findall(r'<tr[^>]*>(.*?)</tr>', text or '', re.S):
+        cells = [re.sub(r'<[^>]+>', '', c).strip() for c in re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', row, re.S)]
+        if len(cells) < 2:
             continue
-        ib, isl = r.index('本行買入'), r.index('本行賣出')
-        b = _num(r[ib + 2]) if ib + 2 < len(r) else None
-        a = _num(r[isl + 2]) if isl + 2 < len(r) else None
-        if b and a and 20 < b < 50 and 20 < a < 50:
-            out.append((int(r[0]), round((a + b) / 2, 4)))
+        m = re.match(r'^(\d{4})/(\d{1,2})/(\d{1,2})$', cells[0])
+        v = _num(cells[1])
+        if m and v is not None and 20 < v < 50:
+            out.append((int(m.group(1)) * 10000 + int(m.group(2)) * 100 + int(m.group(3)), v))
     return sorted(set(out))
 
 
@@ -228,7 +229,8 @@ def fetch_history(http):
         'ndx': lambda: parse_nasdaq_hist(http.json(NQ_HIST.format(sym='NDX', start='2019-01-01'), headers=NQ_HEADERS)),
         'sox': lambda: parse_nasdaq_hist(http.json(NQ_HIST.format(sym='SOX', start='2019-01-01'), headers=NQ_HEADERS)),
         'twd': lambda: parse_cbc_fx(http.json(CBC_FX, timeout=60)),
-        'twd_bot': lambda: parse_bot_csv(http.get(BOT_FX, timeout=40).content.decode('utf-8-sig', errors='replace')),
+        'twd_cbc': lambda: sorted({x for k in range(1, CBC_FX_PAGES + 1)
+                                   for x in parse_cbc_rate_html(http.get(CBC_FX_PAGE.format(page=k), timeout=40).text)}),
     }
     for k, fn in jobs.items():
         try:
@@ -324,8 +326,8 @@ def update(state, http, now=None, history=None):
         hist, e1 = fetch_history(http)
         errors.update({f'h_{k}': v for k, v in e1.items()})
         for k, xs in hist.items():
-            # 臺灣銀行的最近三個月蓋在央行的日資料上（央行一個月才更新一次）
-            _merge(g['s'].setdefault('twd' if k == 'twd_bot' else k, {'d': [], 'c': []}), xs)
+            # 央行網站每天的收盤匯率（最近 60 天）蓋在央行統計資料庫的日資料上（一個月才更新一次）
+            _merge(g['s'].setdefault('twd' if k == 'twd_cbc' else k, {'d': [], 'c': []}), xs)
             got_h.append(k)
         if hist and not e1:
             g['hist_day'] = now.strftime('%Y%m%d')   # 有一個來源失敗：下一輪會存 state 的（收盤後那幾輪）再抓一次
@@ -639,18 +641,3 @@ def probe_global(http):
         meta = repr(e)[:300]
     return {'hist': hist, 'quotes': quotes, 'errors': {**e1, **e2}, 'cbc': meta,
             'at': dt.datetime.utcnow().isoformat() + 'Z'}
-
-
-def probe_bot(http):
-    """實測臺灣銀行的美元牌告（最近三個月）：原始回應的開頭、狀態、解析結果"""
-    out = {}
-    for name, url in (('l3m', BOT_FX), ('day', 'https://rate.bot.com.tw/xrt/flcsv/0/day')):
-        try:
-            r = http.get(url, timeout=40)
-            raw = r.content
-            out[name] = {'status': r.status_code, 'ct': r.headers.get('content-type'), 'size': len(raw),
-                         'head': raw[:1200].decode('utf-8-sig', errors='replace'),
-                         'parsed': parse_bot_csv(raw.decode('utf-8-sig', errors='replace'))[-5:]}
-        except Exception as e:  # noqa: BLE001
-            out[name] = repr(e)[:400]
-    return out
