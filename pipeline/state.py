@@ -22,13 +22,14 @@ FILES = {
     'cal': 'cal.json',              # 證交所市場開休市日期（給沙盤）{年: {at, rows:[[日期, 名稱]]}}
     'after': 'after.json',          # 盤後零股成交價／股數、盤後定價成交量（給沙盤）{日期: {代號: [價, 股, 定價股]}}
     'hold': 'holdings.json.gz',     # ETF 成分股（投信投顧公會）{m: {期間: {代號: [[股票代號, 名稱, 種類, %]]}}, q: {...}, zone, checked}
+    'global': 'global.json',        # 全球市場（globalmkt.py）{s: {spx/ndx/sox/vix/twd: {d, c}}, q: 最新報價, hist_day, at}
     'stocks': 'stocks.json',        # 成分股的官方個股資料 {d, rev, checked, s: {代號: [名稱, 市場, 產業, 收盤, 漲跌%, 本益比, 殖利率, 淨值比, 月營收年增, 累計年增]}}
 }
 
 DEFAULTS = {
     'meta': {}, 'daily': {}, 'flows': {}, 'margin': {}, 'nav': {}, 'units': {}, 'divs': {},
     'holders': {}, 'taiex': {'d': [], 'c': [], 'val': []}, 'mflows': {}, 'yields': {}, 'views': {}, 'news': [],
-    'status': {}, 'backfill': {}, 'cal': {}, 'after': {}, 'hold': {}, 'stocks': {},
+    'status': {}, 'backfill': {}, 'cal': {}, 'after': {}, 'hold': {}, 'stocks': {}, 'global': {},
 }
 
 
