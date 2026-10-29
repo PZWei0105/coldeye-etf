@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'auto / intraday / eod / backfill / probe / deploy'
+        description: 'auto / intraday / eod / backfill / probe / deploy / global / night'
         default: auto
 
 permissions:
@@ -36,6 +36,7 @@ jobs:
     outputs:
       deploy: ${{ steps.pipe.outputs.deploy }}
       next_at: ${{ steps.pipe.outputs.next_at }}
+      next_mode: ${{ steps.pipe.outputs.next_mode }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -73,7 +74,8 @@ jobs:
       - id: deploy
         uses: actions/deploy-pages@v4
 
-  # 盤中接力：GitHub 的排程忙的時候常常延遲半小時以上，所以盤中每一輪自己排好下一輪（約 5 分鐘一輪，13:36 以後停）
+  # 接力：GitHub 的排程忙的時候常常延遲半小時以上，所以每一輪自己排好下一輪：
+  # 白天盤中約 5 分鐘一輪（intraday，13:36 以後停）；晚上 15:05～05:30 每 10 分鐘一輪全球市場（night：台指期夜盤、美股盤中）
   next:
     needs: run
     if: ${{ !cancelled() && needs.run.outputs.next_at != '' }}
@@ -88,8 +90,9 @@ jobs:
             n=$(gh api "repos/${REPO}/actions/workflows/coldeye.yml/runs?status=${st}&per_page=1" --jq '.total_count' 2>/dev/null || echo 0)
             if [ "${n:-0}" -gt 0 ]; then echo "已有 ${st} 的執行，交給它接力"; exit 0; fi
           done
-          gh api -X POST "repos/${REPO}/actions/workflows/coldeye.yml/dispatches" -f ref=main -f 'inputs[mode]=intraday'
+          gh api -X POST "repos/${REPO}/actions/workflows/coldeye.yml/dispatches" -f ref=main -f "inputs[mode]=${NEXT_MODE:-intraday}"
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           NEXT_AT: ${{ needs.run.outputs.next_at }}
+          NEXT_MODE: ${{ needs.run.outputs.next_mode }}

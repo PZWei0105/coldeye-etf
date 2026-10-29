@@ -11,7 +11,7 @@ import threading
 import time
 import traceback
 
-from . import backtest, engine, gitstate, holdings, narrative, tape
+from . import addsim, backtest, engine, gitstate, globalmkt, holdings, narrative, tape
 from . import sources as src
 from .series import CATEGORY_NAMES, Series, d2i, i2d
 from .state import State
@@ -50,6 +50,13 @@ def run(mode: str) -> bool:
             intraday(state, log)
         elif mode == 'deploy':
             intraday(state, log)   # 只更新介面時，順便抓一次即時淨值
+        elif mode == 'global':
+            # 早上 07:45：美股收盤、台指期夜盤收盤，全球歷史一天抓一次（存 state）
+            intraday(state, log, global_history=None, sandtable=False)
+            step(log, 'addsim', addsim.update, state)
+        elif mode == 'night':
+            # 晚上 15:05～05:30 每 10 分鐘：台指期夜盤、美股盤中、新聞（不存 state；沙盤的五檔收盤後不會變，不抓也不推 tape）
+            intraday(state, log, sandtable=False)
         ok_build = publish(state, log, mode)
     except Exception:  # noqa: BLE001
         log['errors'].append(traceback.format_exc()[-2000:])
@@ -60,7 +67,7 @@ def run(mode: str) -> bool:
         runs = state['status'].setdefault('_runs', [])
         runs.append(log)
         state['status']['_runs'] = runs[-30:]
-        if mode != 'intraday' or log['errors'] or log.get('news_changed'):
+        if mode not in ('intraday', 'night') or log['errors'] or log.get('news_changed'):
             state.save()
             gitstate.save_branch('state', STATE_DIR, f'{mode} {now:%Y-%m-%d %H:%M}')
     return ok_build
@@ -335,6 +342,10 @@ def eod(state, log, weekly=False):
     step(log, 'sandtable_cal', tape.update_cal, state, log, http_tw)
     step(log, 'sandtable_after', tape.update_after, state, log, http_tw)
     step(log, 'sandtable_finish', tape.finish_day, state, log)
+    # 全球市場：報價每一輪、歷史一天一次
+    step(log, 'global', globalmkt.update, state, Http(1.0), history=None)
+    # 加碼計畫的回測（定期定額 vs 照冷眼的建議分批加碼）：有新的收盤資料才重算
+    step(log, 'addsim', addsim.update, state)
     # 證交所即時資料的日期（判斷今天有沒有開市用，颱風假也一樣；失敗就當作不知道）
     tx = step(log, 'mis_taiex', src.mis_quotes, http_x, ['tse_t00.tw']) or {}
     state['_extra'] = {'mis': mis, 'pre': pre, 'risk': risk, 'news': news, 'taiex_live': tx.get('t00'), 'stockq': sq}
@@ -432,7 +443,7 @@ def store_news(state, items):
     state['news'] = lst[:400]
 
 
-def intraday(state, log):
+def intraday(state, log, global_history=False, sandtable=True):
     http = Http(1.2)
     mis = step(log, 'mis_etf', src.mis_etf, http) or {}
     tx = step(log, 'mis_taiex', src.mis_quotes, http, ['tse_t00.tw']) or {}
@@ -446,8 +457,10 @@ def intraday(state, log):
     fresh = {x['url'] for x in state['news']} - before
     # 成分股的即時行情（ETF 透視的成分股小卡用）
     sq = step(log, 'stock_quotes', holdings.stock_quotes, state)
-    # 沙盤用的五檔與 tape（失敗也不影響冷眼）
-    tp = step(log, 'sandtable_tape', tape.intraday, state, log)
+    # 沙盤用的五檔與 tape（失敗也不影響冷眼）；晚上不抓（publish 照樣從 tape 分支寫出沙盤的檔案）
+    tp = step(log, 'sandtable_tape', tape.intraday, state, log) if sandtable else None
+    # 全球市場（加碼計畫的市場溫度）：報價每一輪都抓；歷史只在會存 state 的那幾輪抓
+    step(log, 'global', globalmkt.update, state, Http(1.0), history=global_history)
     state['_extra'] = {'mis': mis, 'taiex_live': tx.get('t00'), 'news_changed': bool(fresh), 'tape': tp, 'stockq': sq}
 
 
@@ -516,7 +529,7 @@ def publish(state, log, mode):
     out_dir = state.root / 'out'
     if mode in ('eod', 'weekly', 'backfill'):
         step(log, 'compute', compute, state, extra, out_dir, now)
-    elif mode == 'intraday' and extra.get('news_changed') and (out_dir / 'news.json').exists():
+    elif mode in ('intraday', 'night', 'global') and extra.get('news_changed') and (out_dir / 'news.json').exists():
         old = json.loads((out_dir / 'news.json').read_text(encoding='utf-8'))
         fresh = make_news(state, [], [], {}, now)
         old['items'] = fresh['items']
@@ -535,6 +548,10 @@ def publish(state, log, mode):
     step(log, 'sandtable_publish', tape.publish, PUBLIC / 'data', extra.get('tape'))
     live = make_live(state, extra, now, mode)
     write_json(PUBLIC / 'data' / 'live.json', live)
+    # 全球市場與市場溫度（每一輪都重寫：報價是這一輪抓的）
+    gl = step(log, 'global_out', globalmkt.build_out, state)
+    if gl:
+        write_json(PUBLIC / 'data' / 'global.json', gl)
     if extra.get('stockq'):
         write_json(PUBLIC / 'data' / 'stockq.json', extra['stockq'])
     # 各份資料的時間戳：App 每分鐘看一次這個小檔，哪一份變了就只重抓那一份（幾分鐘內就同步）
@@ -549,7 +566,8 @@ def publish(state, log, mode):
     return True
 
 
-STAMPS = (('summary', 'generated'), ('live', 'at'), ('news', 'generated'), ('stockq', 'at'), ('stocks', 'at'), ('hold', 'at'))
+STAMPS = (('summary', 'generated'), ('live', 'at'), ('news', 'generated'), ('stockq', 'at'), ('stocks', 'at'), ('hold', 'at'),
+          ('global', 'at'))
 
 
 def file_stamps(data_dir):

@@ -3,7 +3,7 @@
 使用者 PZ（痞子葳）沒有程式背景，所有回覆用繁體中文、白話。這個 repo 是他的台股 ETF 資訊 App。
 
 ## 原則（不可違反）
-- 資料只收官方一手來源（證交所、櫃買、集保、投信投顧公會（各投信依法申報的基金資料，金管會監理）、美國財政部、中央社、金管會、央行）。不要加入社群、KOL、論壇內容。
+- 資料只收官方一手來源（證交所、櫃買、集保、投信投顧公會（各投信依法申報的基金資料，金管會監理）、美國財政部、中央社、金管會、央行）。2026/10/30 PZ 同意為了「市場溫度」擴大到全球市場的一手來源：Cboe（VIX、S&P 500）、Nasdaq（那斯達克 100、費城半導體指數的編製者）、臺灣期貨交易所（台指期日盤、夜盤）、臺灣銀行牌告匯率（央行日資料一個月才更新一次，最近三個月用它補）。不要加入社群、KOL、論壇內容。
 - 證交所「ETF e添富」網站的使用條款禁止程式抓取，不要抓它。
 - 觀點與部位建議必須是固定規則、可重現；任何回測或戰績都要和「同類 ETF 一直看多／任何一天」的基準並列（依類別加權，不要用全部 ETF 混在一起的基準）。
 - 不做自動下單。
@@ -72,12 +72,13 @@
 ## 怎麼操作
 - 修改程式後推到 `main` 會觸發 workflow，執行 `control/job.json` 指定的工作；只改介面時把 job 設成 `deploy`。
 - 雲端 Claude 工作環境連不到台灣官方網站，資料一律由 GitHub Actions 抓；要實測新端點就把 job 設成 `probe` 並編輯 `control/probe.json`，結果會推到 `probe-results` 分支。
-- 手動執行：`gh workflow run` 在這個環境不能用，改用 REST：`gh api -X POST repos/PZWei0105/coldeye-etf/actions/workflows/coldeye.yml/dispatches -f ref=main -f 'inputs[mode]=backfill'`（mode：auto / intraday / eod / backfill / probe / deploy）。
+- 手動執行：`gh workflow run` 在這個環境不能用，改用 REST：`gh api -X POST repos/PZWei0105/coldeye-etf/actions/workflows/coldeye.yml/dispatches -f ref=main -f 'inputs[mode]=backfill'`（mode：auto / intraday / eod / backfill / probe / deploy / global / night）。
 - 盤中更新是「接力」：每一輪結束前由 `next` 工作等到約 5 分鐘後自己發出下一輪（`pipeline/dispatch.py` 的 `next_tick`），13:36 後或偵測到休市就停；每 10 分鐘的排程是接力斷掉時的備援。已有排隊中的執行時不會再發，避免把推送或備援擠掉。**開盤第一輪與收盤後第一次計算由 `wake.yml` 準時發出**（`pipeline/wake.py`）：GitHub 的排程常常延遲半小時到一小時——08:37–08:53 的暖身排程每天都延遲到 09:15 以後（10/21～10/27 第一筆盤中資料都在 09:15～09:20）；收盤後第一次 eod 原本靠 13:44／13:54 的盤中備援排程剛好被延遲到 14:00 以後才變成 eod，10/28 沒延遲、14:25 的排程又遲遲不來，完整分析拖到 14:49 才手動補算。所以早班（台灣 05:13、06:13、07:13）睡到 09:00:30（`dispatch.FIRST_TICK`）發出第一輪盤中更新，下午班（10:13、11:13、12:13）睡到 14:15（`CLOSE_AT`）發出 eod（14:00 以後已經有排程或手動的執行就不發）；延遲一兩個小時也來得及，同一班只有最早起來的那個在等。證交所休市表（`data/cal.json`）上的日子、週末不叫，09:30 以後不叫早班、14:40 以後不叫下午班。`wake.yml` 自己的工作不和 coldeye 共用排隊，睡覺時不擋推送；coldeye.yml 原本的排程都留著當備援。10/28 實測：09:00:31 發出、09:01:15 抓到 09:00 的開盤價、09:02:19 上線。測試：`python3 tests/wake_test.py`。
+- **全球市場（2026/10/30）**：早班先在 07:45 發 `global`（美股收盤、台指期夜盤收盤；全球歷史一天抓一次、存 state），再 09:00:30 發第一輪盤中；下午班 14:15 eod 之後 15:05 發 `night`，開始**晚上的接力**：每 10 分鐘一輪（`dispatch.next_plan`，`NIGHT_FROM` 15:05～`NIGHT_TO` 05:30，週一到週五晚上；eod、deploy、probe 結束時在這段時間也會接上），抓台指期夜盤、美股盤中（交易所延遲 15 分鐘）、新聞，不存 state（新聞有變才存）、不抓沙盤的五檔（tape 分支收盤後不會變，publish 照樣從分支寫出沙盤的檔案）。晚上沒有備援排程，所以 `wake.yml` 有**夜班看門**（21:23、01:23 起來，分別看到 01:15、05:05，兩班不重疊）：每 10 分鐘看一次，冷眼 20 分鐘以上沒有任何執行、也沒有在跑或排隊的才發一輪 `night`（`wake.relay_dead`），平常什麼都不做、不會把排隊中的收盤後計算擠掉。盤中、晚上每一輪都抓報價，但休市中、而且休市後已經抓過收盤的不再抓（`globalmkt.quiet`：美股台灣 06:00～21:20、夜盤 05:10～15:00、日盤 13:50 以後）。每一輪輸出 `data/global.json`（`globalmkt.build_out`：各指數的收盤、均線、即時報價（`d`／`t` 是交易所的日期與時間，`open` 盤中、`close` 收盤）、市場溫度 `temp`（`asof` 標台灣、美股、匯率用的是哪一天）、溫度回測 `bt`、加碼計畫回測 `sim`、規則門檻 `rule`、來源 `src`），`version.json` 的 `files.global` 是它的 `at`。加碼計畫的回測在 `pipeline/addsim.py`（每月定期定額 vs 照冷眼的建議分批加碼，有／沒有溫度；收盤後有新資料才重算，存在 state 的 `global.sim`）。
 - `live.json` 的 `date`（App 判斷「今天有沒有開市」、盤中接力判斷休市都看它）來自證交所即時成交資料本身的日期（`build.py` 的 `market_day`：加權指數 t00 的 `d` 與 tape 那一輪多數 ETF 的 `d`，取比較早的），每一檔的日期也不會比它新。不要改回用投信預估淨值檔 `all_etf.txt` 的日期：2026/10/23 颱風休市那天它有 45 檔標了「今天」，價格卻是前一天的。測試：`python3 tests/live_test.py`。
 - 執行紀錄在 `state` 分支的 `status.json` 的 `_runs`；盤中那幾輪沒有新聞變動時不寫 state（看 Actions 的執行列表）。
 - 歷史資料從 2020-01 起（`build.py` 的 `HISTORY_START`），回測包含 2022 年大跌，也包含已下市的 ETF（避免只看活下來的）。每檔的原始收盤、規則訊號取樣、分割與配息輸出在 `out/hist/{代號}.json`，給存股時光機用。
-- 本機測試：`python3 tests/local_pipeline.py`、`python3 tests/local_build.py <輸出資料夾>`（需要先有 probe 的原始回應）；部位計算：`node tests/pf_test.mjs [summary.json divs.json track.json]`、`node tests/pf_regress.mjs`；時光機、對決、熱力圖、資產走勢：`node tests/calc_test.mjs [hist/0050.json]`；副官：`node tests/aide_test.mjs [hist 資料夾] [track.json]`。今日一課與案例教室：`node tests/lessons_test.mjs [hist 資料夾]`。判斷教練與透視：`node tests/xray_test.mjs [hist 資料夾] [data 資料夾]`、`python3 tests/holdings_test.py`。語音：`node tests/voice_test.mjs`。叫醒：`python3 tests/wake_test.py`。
+- 本機測試：`python3 tests/local_pipeline.py`、`python3 tests/local_build.py <輸出資料夾>`（需要先有 probe 的原始回應）；部位計算：`node tests/pf_test.mjs [summary.json divs.json track.json]`、`node tests/pf_regress.mjs`；時光機、對決、熱力圖、資產走勢：`node tests/calc_test.mjs [hist/0050.json]`；副官：`node tests/aide_test.mjs [hist 資料夾] [track.json]`。今日一課與案例教室：`node tests/lessons_test.mjs [hist 資料夾]`。判斷教練與透視：`node tests/xray_test.mjs [hist 資料夾] [data 資料夾]`、`python3 tests/holdings_test.py`。語音：`node tests/voice_test.mjs`。叫醒：`python3 tests/wake_test.py`。全球市場與市場溫度：`python3 tests/global_test.py [state 資料夾] [probe 的 raw/global.json]`；溫度回測 `python3 tests/temp_backtest.py <state 資料夾> [global 歷史]`、加碼金額回測 `python3 tests/add_sim.py <state 資料夾> [global 歷史] [代號] [每月金額]`。
 - probe 可以直接跑 pipeline 裡的函式：`control/probe.json` 寫 `{"name": "x", "py": "holdings:probe_full"}`，回傳值存成 `raw/x.json`（新來源先用這個在 GitHub Actions 上實測整段流程）。
 
 ## 介面設計（機甲 HUD）
