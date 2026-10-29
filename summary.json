@@ -1,0 +1,107 @@
+{
+ "started": "2026-10-29T21:26:05.730676Z",
+ "python": "3.12.15",
+ "results": [
+  {
+   "name": "tpefx_home",
+   "url": "https://www.tpefx.com.tw/",
+   "status": 200,
+   "final_url": "https://www.tpefx.com.tw/",
+   "size": 957,
+   "content_type": "text/html;charset=UTF-8",
+   "headers": {
+    "Cache-Control": "private",
+    "Set-Cookie": "JSESSIONID=F687E29777079D7EC76B746DF9C2839D; Path=/; Secure; HttpOnly",
+    "Content-Type": "text/html;charset=UTF-8",
+    "Date": "Thu, 29 Oct 2026 21:26:07 GMT",
+    "Server": "Server"
+   },
+   "verify": true,
+   "elapsed": 1.48
+  },
+  {
+   "name": "tpefx_svc",
+   "url": "https://www.tpefx.com.tw/service/fx/",
+   "status": 404,
+   "final_url": "https://www.tpefx.com.tw/service/fx/",
+   "size": 771,
+   "content_type": "text/html;charset=utf-8",
+   "headers": {
+    "Cache-Control": "private",
+    "Content-Type": "text/html;charset=utf-8",
+    "Date": "Thu, 29 Oct 2026 21:26:09 GMT",
+    "Server": "Server"
+   },
+   "verify": true,
+   "elapsed": 0.15
+  },
+  {
+   "name": "cbc_home",
+   "url": "https://www.cbc.gov.tw/tw/mp-1.html",
+   "status": 200,
+   "final_url": "https://www.cbc.gov.tw/tw/mp-1.html",
+   "size": 67251,
+   "content_type": "text/html; charset=utf-8",
+   "headers": {
+    "Server": "HiNetCDN",
+    "Date": "Thu, 29 Oct 2026 21:26:13 GMT",
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "private,no-cache"
+   },
+   "verify": true,
+   "elapsed": 1.1
+  },
+  {
+   "name": "cbc_fx_page",
+   "url": "https://www.cbc.gov.tw/tw/lp-645-1.html",
+   "status": 200,
+   "final_url": "https://www.cbc.gov.tw/tw/lp-645-1.html",
+   "size": 45054,
+   "content_type": "text/html; charset=utf-8",
+   "headers": {
+    "Server": "HiNetCDN",
+    "Date": "Thu, 29 Oct 2026 21:26:16 GMT",
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "private,no-cache"
+   },
+   "verify": true,
+   "elapsed": 0.72
+  },
+  {
+   "name": "cbc_cpx_list",
+   "url": "https://cpx.cbc.gov.tw/API/DataAPI/GetFileList",
+   "status": 404,
+   "final_url": "https://cpx.cbc.gov.tw/API/DataAPI/GetFileList",
+   "size": 110,
+   "content_type": "application/json; charset=utf-8",
+   "headers": {
+    "Server": "HiNetCDN",
+    "Date": "Thu, 29 Oct 2026 21:26:21 GMT",
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-cache",
+    "Access-Control-Allow-Origin": "https://petstore.swagger.io"
+   },
+   "verify": true,
+   "elapsed": 2.09
+  },
+  {
+   "name": "nq_usdtwd",
+   "url": "https://api.nasdaq.com/api/quote/USDTWD/info?assetclass=currencies",
+   "status": 200,
+   "final_url": "https://api.nasdaq.com/api/quote/USDTWD/info?assetclass=currencies",
+   "size": 166,
+   "content_type": "application/json; charset=utf-8",
+   "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "Server": "Kestrel",
+    "Cache-Control": "max-age=0, no-cache, no-store",
+    "Date": "Thu, 29 Oct 2026 21:26:25 GMT",
+    "Set-Cookie": "akaalb_ALB_Default=~op=ao_api__east1:ao_api_east1|~rv=57~m=ao_api_east1:0|~os=ff51b6e767de05e2054c5c99e232919a~id=d8477fba777dd251fdfcca7031947a41; path=/; HttpOnly; Secure; SameSite=None",
+    "Access-Control-Allow-Origin": "https://www.nasdaq.com"
+   },
+   "verify": true,
+   "elapsed": 1.27
+  }
+ ],
+ "finished": "2026-10-29T21:26:27.543422Z"
+}
