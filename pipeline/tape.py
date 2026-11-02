@@ -21,7 +21,7 @@ import traceback
 
 from . import gitstate
 from .series import d2i
-from .util import TW, Http, now_tw, num, roc_date, tables_of, find_col, write_json
+from .util import TW, HostDown, Http, now_tw, num, roc_date, tables_of, find_col, write_json
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MIS = 'https://mis.twse.com.tw/stock'
@@ -135,8 +135,11 @@ def fetch_books(state):
     except Exception:  # noqa: BLE001
         pass
     out = {'reg': {}, 'odd': {}, 'at_of': {'reg': {}, 'odd': {}}, 'errors': []}
+    down = False
     for api, key in (('getStockInfo.jsp', 'reg'), ('getOddInfo.jsp', 'odd')):
         for i in range(0, len(chans), BATCH):
+            if down:
+                break
             part = chans[i:i + BATCH]
             for attempt in range(2):
                 try:
@@ -146,6 +149,10 @@ def fetch_books(state):
                         if c:
                             out[key][c] = parse_quote(m, odd=(key == 'odd'))
                             out['at_of'][key][c] = at
+                    break
+                except HostDown as e:   # MIS 這一輪已經確定掛了：不再一批一批重試（util.BREAKER_HOSTS）
+                    out['errors'].append(f'{api}[{i}] {e!r}'[:200])
+                    down = True
                     break
                 except Exception as e:  # noqa: BLE001
                     out['errors'].append(f'{api}[{i}] {e!r}'[:200])

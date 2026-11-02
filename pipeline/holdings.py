@@ -721,7 +721,7 @@ def stock_quotes(state, gap=2.0):
     成交價是 None 表示那一筆快照沒有成交價（例如今天還沒成交）。收盤後、休市時 MIS 給的是最近一個交易日收盤時的資料。"""
     import time
     from . import tape
-    from .util import Http, now_tw
+    from .util import HostDown, Http, now_tw
     want = domestic_codes(state)
     if not want:
         return None
@@ -732,7 +732,10 @@ def stock_quotes(state, gap=2.0):
     except Exception:  # noqa: BLE001
         pass
     q, errs = {}, []
+    down = False
     for i in range(0, len(chans), tape.BATCH):
+        if down:
+            break
         part = chans[i:i + tape.BATCH]
         for _attempt in range(2):
             try:
@@ -743,6 +746,10 @@ def stock_quotes(state, gap=2.0):
                         continue
                     p = tape.parse_quote(m)
                     q[c] = [p['z'], p['y'], p['o'], p['h'], p['l'], int(p['v'] // 1000) if p['v'] else 0, p['q'], p['d']]
+                break
+            except HostDown as e:   # MIS 這一輪已經確定掛了，不再重試（util.BREAKER_HOSTS）
+                errs.append(f'[{i}] {e!r}'[:160])
+                down = True
                 break
             except Exception as e:  # noqa: BLE001
                 errs.append(f'[{i}] {e!r}'[:160])

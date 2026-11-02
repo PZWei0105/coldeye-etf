@@ -20,6 +20,37 @@ def today_tw() -> dt.date:
     return now_tw().date()
 
 
+# 盤中即時行情（證交所 MIS）偶爾整個站掛掉（2026/11/2 11:15～11:37 一直回 502）：每個請求重試 3 次、
+# 每一批再重試，一輪會卡 20 幾分鐘，接力跟著停住，網站恢復後也要等這一輪跑完才有新資料。
+# 所以同一個程序裡，這些主機「連續 BREAK_AFTER 次整個失敗」（重試完還是失敗，404 不算）就當作這一輪它掛了，
+# 之後的請求直接失敗（HostDown），讓這一輪快點結束、5 分鐘後的下一輪再試；任何一次成功就歸零。
+BREAKER_HOSTS = {'mis.twse.com.tw'}
+BREAK_AFTER = 3
+_host_fails = {}
+
+
+class HostDown(RuntimeError):
+    """這一輪已經確定這個主機掛了，不再送請求。"""
+
+
+def reset_breaker():
+    _host_fails.clear()
+
+
+def _gate(host, url):
+    if host in BREAKER_HOSTS and _host_fails.get(host, 0) >= BREAK_AFTER:
+        raise HostDown(f'{url} -> skipped ({host} failed {_host_fails[host]} times in a row this round)')
+
+
+def _note(host, ok, err=None):
+    if host not in BREAKER_HOSTS:
+        return
+    if ok:
+        _host_fails[host] = 0
+    elif err != 'HTTP 404':
+        _host_fails[host] = _host_fails.get(host, 0) + 1
+
+
 class Http:
     """對同一主機的請求自動間隔，避免被官方網站限流。"""
 
@@ -42,6 +73,7 @@ class Http:
 
     def get(self, url, *, tries=3, timeout=40, verify=True, **kw):
         host = re.sub(r'^https?://([^/]+).*$', r'\1', url)
+        _gate(host, url)
         err = None
         for attempt in range(tries):
             self._wait(host)
@@ -49,6 +81,7 @@ class Http:
                 r = self.s.get(url, timeout=timeout, verify=verify, **kw)
                 if r.status_code == 200:
                     self.log.append({'url': url, 'status': 200, 'bytes': len(r.content)})
+                    _note(host, True)
                     return r
                 err = f'HTTP {r.status_code}'
                 if r.status_code in (403, 404):
@@ -58,13 +91,16 @@ class Http:
                 verify = False  # 官方網站偶有中繼憑證未附的情況；僅讀取公開資料
             except Exception as e:  # noqa: BLE001
                 err = repr(e)[:300]
-            time.sleep(3 + attempt * 4)
+            if attempt < tries - 1:
+                time.sleep(3 + attempt * 4)
         self.log.append({'url': url, 'error': err})
+        _note(host, False, err)
         raise RuntimeError(f'{url} -> {err}')
 
     def post(self, url, *, data=None, tries=3, timeout=60, verify=True, **kw):
         """送出表單（投信投顧公會的 ASP.NET 查詢頁要用）；和 get 一樣有間隔與重試。"""
         host = re.sub(r'^https?://([^/]+).*$', r'\1', url)
+        _gate(host, url)
         err = None
         for attempt in range(tries):
             self._wait(host)
@@ -72,6 +108,7 @@ class Http:
                 r = self.s.post(url, data=data, timeout=timeout, verify=verify, **kw)
                 if r.status_code == 200:
                     self.log.append({'url': url, 'status': 200, 'bytes': len(r.content), 'post': True})
+                    _note(host, True)
                     return r
                 err = f'HTTP {r.status_code}'
                 if r.status_code in (403, 404):
@@ -81,8 +118,10 @@ class Http:
                 verify = False
             except Exception as e:  # noqa: BLE001
                 err = repr(e)[:300]
-            time.sleep(3 + attempt * 4)
+            if attempt < tries - 1:
+                time.sleep(3 + attempt * 4)
         self.log.append({'url': url, 'error': err, 'post': True})
+        _note(host, False, err)
         raise RuntimeError(f'POST {url} -> {err}')
 
     def json(self, url, **kw):
