@@ -85,12 +85,18 @@ jobs:
       - run: |
           wait=$(( NEXT_AT - $(date +%s) ))
           if [ "$wait" -gt 0 ]; then echo "等 ${wait} 秒再發出下一輪"; sleep "$wait"; fi
-          # 已經有排隊中的執行（排程或推送）就交給它接力，不要把它擠掉
-          for st in pending queued; do
-            n=$(gh api "repos/${REPO}/actions/workflows/coldeye.yml/runs?status=${st}&per_page=1" --jq '.total_count' 2>/dev/null || echo 0)
-            if [ "${n:-0}" -gt 0 ]; then echo "已有 ${st} 的執行，交給它接力"; exit 0; fi
+          # 已經有排隊中的執行（排程或推送）就交給它接力，不要把它擠掉。
+          # GitHub 偶爾回 502（2026/11/4 18:27 晚上的接力因此斷了 24 分鐘）：失敗就隔 20 秒再試，最多 4 次；
+          # 每次重試前再看一次排隊（502 有時其實已經發出去了，不要重複發）。
+          for try in 1 2 3 4; do
+            for st in pending queued; do
+              n=$(gh api "repos/${REPO}/actions/workflows/coldeye.yml/runs?status=${st}&per_page=1" --jq '.total_count' 2>/dev/null || echo 0)
+              if [ "${n:-0}" -gt 0 ]; then echo "已有 ${st} 的執行，交給它接力"; exit 0; fi
+            done
+            if gh api -X POST "repos/${REPO}/actions/workflows/coldeye.yml/dispatches" -f ref=main -f "inputs[mode]=${NEXT_MODE:-intraday}"; then exit 0; fi
+            echo "發出失敗（第 ${try} 次），20 秒後再試"; sleep 20
           done
-          gh api -X POST "repos/${REPO}/actions/workflows/coldeye.yml/dispatches" -f ref=main -f "inputs[mode]=${NEXT_MODE:-intraday}"
+          exit 1
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}

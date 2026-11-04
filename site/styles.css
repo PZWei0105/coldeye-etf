@@ -1931,6 +1931,7 @@ body.nofx .xr-map.scan .xr-tile, body.nofx .xpf.scanning .xp-row { animation: no
 .ap-s-k { font: 900 14.5px/1.3 var(--f-serif); letter-spacing: .04em; color: var(--aurora); }
 .ap-s-v { font-size: 13px; color: var(--frost-2); min-width: 0; }
 .ap-s-v b { color: var(--frost); font-weight: 600; }
+.ap-s-v > span { white-space: nowrap; }  /* 數字和「萬」不要被拆到兩行 */
 .ap-strip button > svg { width: 14px; height: 14px; color: var(--frost-3); }
 .h-plan { margin-top: 12px; }
 

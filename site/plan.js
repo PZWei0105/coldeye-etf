@@ -359,8 +359,8 @@ export function planStripHTML(P) {
   for (const a of S.alloc.adv.values()) if (a && a.plan && a.plan.n > 0) { used += a.plan.spend; n += 1; }
   const t = S.global && S.global.temp;
   const v = settings.privacy
-    ? (n ? `分給 <b class="num">${n}</b> 檔，合計約總資產 <b class="num">${(used / T * 100).toFixed(1)}%</b>` : '這次沒有分到的')
-    : `可動用 <b class="num">${compact(dep.usable)}</b>${n ? `・分給 <b class="num">${n}</b> 檔 ≈ <b class="num">${compact(used)}</b>` : '・這次沒有分到的'}`;
+    ? (n ? `<span>分給 <b class="num">${n}</b> 檔，</span><span>合計約總資產 <b class="num">${(used / T * 100).toFixed(1)}%</b></span>` : '這次沒有分到的')
+    : `<span>可動用 <b class="num">${compact(dep.usable)}</b></span>${n ? `<span>・分給 <b class="num">${n}</b> 檔</span> <span>≈ <b class="num">${compact(used)}</b></span>` : '<span>・這次沒有分到的</span>'}`;
   return `<section class="panel ap-strip"><button id="ap-go" aria-label="打開加碼計畫"><span class="ap-s-k" data-term="plan">加碼計畫${isPaper() ? '・模擬倉' : ''}</span><span class="ap-s-v">${v}</span>${tempBadgeHTML(t)}${ICON.chev}</button></section>`;
 }
 
