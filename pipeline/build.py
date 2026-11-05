@@ -13,7 +13,7 @@ import traceback
 
 from . import addsim, backtest, engine, gitstate, globalmkt, holdings, narrative, tape
 from . import sources as src
-from .series import CATEGORY_NAMES, Series, d2i, i2d
+from .series import CATEGORY_NAMES, Series, d2i, i2d, split_ratio, units_norm
 from .state import State
 from .util import TW, Http, now_tw, write_json
 
@@ -623,10 +623,68 @@ def make_live(state, extra, now, mode):
     hm = now.hour * 100 + now.minute
     open_now = now.weekday() < 5 and 900 <= hm <= 1335
     mis_day = max((int(m['date']) for m in mis.values() if str(m.get('date', '')).isdigit()), default=None)
-    return {'at': now.isoformat(timespec='seconds'), 'mode': mode, 'open': open_now,
-            'date': mday or mis_day,
-            'etfs': etfs,
-            'taiex': {'z': tx.get('z'), 'y': tx.get('y'), 't': tx.get('t')} if tx else None}
+    out = {'at': now.isoformat(timespec='seconds'), 'mode': mode, 'open': open_now,
+           'date': mday or mis_day,
+           'etfs': etfs,
+           'taiex': {'z': tx.get('z'), 'y': tx.get('y'), 't': tx.get('t')} if tx else None}
+    try:
+        sp = live_splits(state, extra, mday)
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+        sp = {}
+    if sp:
+        out['splits'] = sp
+    return out
+
+
+def _last_close(daily):
+    """這一檔最近一次有收盤價的 (日期, 收盤)；沒有就 None。"""
+    best = None
+    for d, c in zip(daily.get('d') or [], daily.get('c') or []):
+        if c and c > 0 and (best is None or d > best[0]):
+            best = (d, c)
+    return best
+
+
+def _nav_at(navs, d):
+    """官方淨值（{日期字串: 淨值}）在 d（含）以前最近的一個。"""
+    ks = [int(k) for k, v in (navs or {}).items() if v and int(k) <= d]
+    return navs[str(max(ks))] if ks else None
+
+
+def live_splits(state, extra, mday):
+    """今天剛生效、官方收盤資料還沒算進去的分割（例如 00662 在 2026/11/17 一拆五恢復交易的那一個盤中）。
+    收盤後的計算用「開盤跳空」找分割（series.adjust_factors），但那要等當天的官方收盤出來；在那之前，
+    App 會看到價格掉了八成、持股、提醒、防守線全部亂掉。所以盤中先用證交所的即時行情認出來：
+    - 主要：沙盤那一輪抓的整股行情（MIS getStockInfo）的參考價 y——恢復交易那天，證交所已經把參考價換算成分割後的價格——
+      和這一檔最近一次官方收盤差了整數倍（split_ratio，和收盤後同一套倍數）。
+    - 沒有那一輪的行情時（晚上、MIS 那一支掛了）：投信的即時價和預估淨值（all_etf.txt）都和分割前最後一天差同一個倍數才算。
+    只看「即時行情的日期＝今天的市場日、而且比最近一次官方收盤新」的；官方收盤進來之後就不會再標（由收盤後的計算接手）。
+    回傳 {代號: [[生效日, 倍數]]}。"""
+    if not mday or state is None:
+        return {}
+    reg = (((extra.get('tape') or {}).get('last') or {}).get('reg')) or {}
+    mis = extra.get('mis') or {}
+    out = {}
+    for code, daily in (state['daily'] or {}).items():
+        last = _last_close(daily)
+        if not last or last[0] >= mday:
+            continue
+        d0, c0 = last
+        k = None
+        q = reg.get(code)
+        if isinstance(q, dict) and q.get('d') == mday and q.get('y'):
+            k = split_ratio(c0, q['y'])
+        else:
+            m = mis.get(code) or {}
+            md = int(m['date']) if str(m.get('date', '')).isdigit() else None
+            nav0 = _nav_at(state['nav'].get(code), d0)
+            if md == mday and m.get('px') and m.get('est_nav') and nav0:
+                k1, k2 = split_ratio(c0, m['px']), split_ratio(nav0, m['est_nav'])
+                k = k1 if k1 and k1 == k2 else None
+        if k:
+            out[code] = [[mday, k]]
+    return out
 
 
 def compute(state, extra, out_dir, now):
@@ -808,6 +866,11 @@ def summary_row(s, r, m, nd, state):
     units = (state['units'].get(s.code) or {})
     u_last = units[max(units, key=int)] if units else None
     nav = (m or {}).get('est_nav') or s.nav[i]
+    # 分割停止交易那幾天：單位數可能已經換成分割後（變 5 倍），價格、淨值卻還是分割前最後一天的，規模會被算成 5 倍。
+    # 單位數比最後一個有成交的日子跳了整數倍，就用那天的單位數和那天的官方淨值（同一個基準）
+    u_ref = [units[k] for k in sorted(units, key=int) if int(k) <= s.dates[i]] if units else []
+    if u_last and u_ref and u_ref[-1] and split_ratio(u_ref[-1], u_last) and s.nav[i]:
+        u_last, nav = u_ref[-1], s.nav[i]
     h = s.holders[-1] if s.holders else None
     pos = r.get('position') or {}
     yp = comps.get('yield', {}).get('facts', {}).get('pctl') if 'yield' in comps else None
@@ -870,7 +933,8 @@ def write_detail(out_dir, s, r, state, bt, nd, m, ctx, pos_bt=None):
         'divs': [list(x) for x in s.divs if x[0] >= s.dates[i] - 30000],
         'div_next': nd, 'splits': s.splits,
         'holders': s.holders[-26:],
-        'units': sorted([[int(k), v] for k, v in (state['units'].get(s.code) or {}).items()])[-60:],
+        # 單位數換成目前的基準（分割那天整數倍跳一次，不換算會變成假的淨申購）
+        'units': units_norm(sorted([[int(k), v] for k, v in (state['units'].get(s.code) or {}).items()]), s.splits)[-60:],
         'mis': m, 'bt': backtest.stats(bt), 'bt_calib': backtest.calibration(bt) if bt else None,
         'pos_bt': pos_bt, 'pos_bt_self': backtest.pos_stats(bt) if bt else None,
     }

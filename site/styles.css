@@ -866,6 +866,8 @@ tr.mine td { background: var(--aurora-wash); }
 .flags { display: grid; gap: 8px; }
 .flag { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; color: var(--amber); }
 .flag svg { width: 15px; height: 15px; flex: none; margin-top: 3px; }
+.flag.sys { color: var(--frost-2); }
+.flag.sys svg { color: var(--glacier); }
 .src { font-size: 11.5px; color: var(--frost-3); }
 .src a { color: var(--frost-3); text-decoration: underline; text-decoration-color: var(--seam-2); text-underline-offset: 3px; }
 .chart-card { padding: 12px 6px 10px; }

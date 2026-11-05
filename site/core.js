@@ -1,6 +1,6 @@
 /* 冷眼 — 共用核心：狀態、設定、資料載入、格式、圖示、小元件。 */
 import * as PF from './pf.js';
-import { breadth, normPlan, planSkipKeys, normSkips, normNoAsk, calClosed, dcaReserve, dcaSpent } from './calc.js';
+import { breadth, normPlan, planSkipKeys, normSkips, normNoAsk, calClosed, dcaReserve, dcaSpent, mergeSplit, pendingSplit, scaleRow, scaleDetail, alertSplit, haltNear } from './calc.js';
 import * as FX from './fx.js';
 
 export { PF };
@@ -386,6 +386,7 @@ export async function loadCore(o = {}) {
   S.breadth = breadth(summary.etfs);
   store.set('cache.summary', summary);
   if (live) store.set('cache.live', live);
+  applySplits();   // 快取存的是後台原本的數字；換算只在記憶體裡做
 }
 export function useCache() {
   const cached = store.get('cache.summary', null);
@@ -397,6 +398,7 @@ export function useCache() {
   S.divs = store.get('cache.divs', null);
   S.cal = store.get('cache.cal', null);
   S.global = store.get('cache.global', null);
+  applySplits();
   return true;
 }
 export async function ensureTrack() {
@@ -418,6 +420,7 @@ export const marketClosedOn = (d) => calClosed(S.cal, d);
 export async function ensureDivs(force = false) {
   if (S.divs && !force) return S.divs;
   try { S.divs = await getJSON('divs.json', { batch: true }); store.set('cache.divs', S.divs); } catch { /* 用快取 */ }
+  applySplits();
   return S.divs;
 }
 /**
@@ -442,6 +445,7 @@ export async function ensureHist(code, o = {}) {
   if (!res.h) { S.histMeta[code] = { asof: cur, status: res.status }; return o.fresh ? null : S.hist[code] || null; }
   S.hist[code] = res.h;
   S.histMeta[code] = { asof: cur, status: res.status, offline: res.offline };
+  histSplits(code, res.h);
   return o.fresh && res.offline ? null : res.h;
 }
 export async function ensureDetail(code) {
@@ -449,8 +453,136 @@ export async function ensureDetail(code) {
   const g = batchGen;
   let d;
   try { d = await getJSON(`etf/${code}.json`, { batch: true }); } catch { return null; }
+  detailSplits(code, d);
   if (g === batchGen) S.detail[code] = d;
   return d;
+}
+
+// ------------------------------------------------------------------ 分割（收盤資料還沒算進去的那一段）
+// 例：00662 在 2026/11/17 一拆五恢復交易。盤中價格已經是分割後的（約 1/5），收盤資料、防守線、走勢圖、你的提醒卻還是分割前的；
+// 後台盤中用證交所的參考價認出「今天剛生效的分割」（live.json 的 splits），這裡先把分割前的數字換算成分割後的基準。
+// 收盤後的計算出來（新的一批），分割已經在 divs.json 和歷史裡，收盤資料也是分割後的，就不用再換。
+/** 盤中剛認出來的分割（live.json 的 splits）：{代號: [[生效日, 倍數]]} */
+const liveSplits = () => { const x = S.live && S.live.splits; return x && typeof x === 'object' ? x : {}; };
+/** 這一檔全部的分割：收盤後算好的（divs.json）＋盤中剛認出來的（同一次只算一次） */
+export function splitsOf(code) {
+  let xs = (S.divs && S.divs[code] && S.divs[code].s) || [];
+  for (const [d, k] of liveSplits()[code] || []) xs = mergeSplit(xs, d, k);
+  return xs;
+}
+/** 這一檔盤中資料的日期（沒有就用整份盤中資料的日期） */
+const liveDay = (code) => { const lv = liveOf(code); return (lv && lv.date) || (S.live && S.live.date) || null; };
+function histSplits(code, h) {
+  if (!h) return;
+  for (const [d, k] of liveSplits()[code] || []) h.splits = mergeSplit(h.splits, d, k);
+}
+function detailSplits(code, det) {
+  if (!det) return;
+  const upto = liveDay(code);
+  const p = upto ? pendingSplit(splitsOf(code), det.sx || det.asof, upto) : null;
+  if (p) scaleDetail(det, p.k, p.d);
+}
+/**
+ * 把盤中剛認出來的分割套到手上的資料：divs（持股股數、成本、配息、對答案都從這裡換算）、歷史檔（時光機、資產走勢、定期定額）、
+ * 收盤資料的每一列（價格、防守線…）、已經打開過的單檔分析、到價提醒。每次盤中資料、配息資料、收盤資料進來都跑一次；
+ * 換算過的會記下來（sx），不會重複換。
+ */
+export function applySplits() {
+  const L = liveSplits();
+  if (S.divs) {
+    for (const [c, xs] of Object.entries(L)) {
+      const cur = S.divs[c] || { d: [], s: [] };
+      const s2 = splitsOf(c);
+      if (s2.length !== (cur.s || []).length) S.divs[c] = { ...cur, s: s2 };
+    }
+  }
+  for (const [c, h] of Object.entries(S.hist || {})) if (L[c]) histSplits(c, h);
+  for (const [c, det] of Object.entries(S.detail || {})) detailSplits(c, det);
+  if (S.summary && Array.isArray(S.summary.etfs)) {
+    for (const row of S.summary.etfs) {
+      const upto = liveDay(row.c);
+      if (!upto || upto <= row.d) continue;
+      const p = pendingSplit(splitsOf(row.c), row.sx || row.d, upto);
+      if (p) scaleRow(row, p.k, p.d);
+    }
+  }
+  splitAlerts();
+}
+/** 分割的說法：1 拆 5、5 合 1 */
+const kTxt = (x) => String(Math.round(x * 100) / 100);
+export const splitName = (k) => (k >= 1 ? `1 拆 ${kTxt(k)}` : `${kTxt(1 / k)} 合 1`);
+function splitEffect(k) {
+  return k >= 1
+    ? `價格約變成之前的 1/${kTxt(k)}，不是大跌；你的股數變 ${kTxt(k)} 倍、成本變 1/${kTxt(k)}，總值不變`
+    : `價格約變成之前的 ${kTxt(1 / k)} 倍，不是大漲；你的股數變 1/${kTxt(1 / k)}、成本變 ${kTxt(1 / k)} 倍，總值不變`;
+}
+/**
+ * 這一檔前後幾天的分割說明（單檔頁、今日行動用）：已公告還沒停止交易、停止交易中、今天剛恢復（盤中換算中）、剛換算好。
+ * 回傳 { kind: 'soon'|'halt'|'live'|'done'|'wait', text: 單檔頁的完整說明, short: 今日行動的一句 }；沒有就 null。
+ */
+export function splitNote(code) {
+  const td = today();
+  const row = S.rows.get(code);
+  const h = haltNear(code, td);
+  const name = (k) => splitName(k);
+  if (h && td < h.from) {
+    return {
+      kind: 'soon', d: h.back, k: h.k,
+      text: `已公告 ${h.why}：${fmt.d(h.from)}～${fmt.d(h.to)} 停止交易，${fmt.d(h.back)} 恢復。恢復那天起${splitEffect(h.k)}。冷眼會自動換算你的持股、成本、配息與到價提醒，不用自己改。定期定額：停止交易那幾天國泰不扣，之後也不補扣。`,
+      short: `${h.why}：${fmt.d(h.from)}～${fmt.d(h.to)} 停止交易、${fmt.d(h.back)} 恢復；那幾天定期定額不扣，持股與提醒冷眼會自動換算`,
+    };
+  }
+  if (h && td <= h.to) {
+    return {
+      kind: 'halt', d: h.back, k: h.k,
+      text: `停止交易中（${h.why}）：${fmt.d(h.back)} 恢復交易。這幾天的價格停在最後一個交易日的收盤；定期定額這幾天國泰不扣，也不補扣。恢復那天起${splitEffect(h.k)}，冷眼會自動換算。`,
+      short: `停止交易中（${h.why}），${fmt.d(h.back)} 恢復；這幾天定期定額不扣`,
+    };
+  }
+  if (row && row.sx) {
+    return {
+      kind: 'live', d: row.sx, k: row.sk,
+      text: `今天（${fmt.d(row.sx)}）${name(row.sk)} 之後恢復交易：${splitEffect(row.sk)}。官方收盤資料出來之前，冷眼先把昨收、防守線、關鍵價位、走勢圖和你的到價提醒換算成分割後的價格；收盤後（約 14:30）用新的官方資料重新計算。`,
+      short: `今天 ${name(row.sk)} 之後恢復交易，${splitEffect(row.sk).split('；')[0]}；持股、成本、提醒冷眼都換算好了`,
+    };
+  }
+  // 剛恢復交易、或其他最近的分割（不一定事先公告過：後台會自己從證交所的行情認出來）
+  const sp = splitsOf(code).filter(([d]) => d <= td && PF.daysBetween(d, td) <= 2).pop();
+  if (sp) {
+    return {
+      kind: 'done', d: sp[0], k: sp[1],
+      text: `${fmt.d(sp[0])} 起 ${name(sp[1])}：${splitEffect(sp[1])}。走勢圖、歷史報酬已經用還原價換算，你的持股、成本、配息、到價提醒也都換算成分割後的基準。`,
+      short: `${fmt.d(sp[0])} 起 ${name(sp[1])}，${splitEffect(sp[1]).split('；')[0]}；持股、成本、提醒冷眼已換算`,
+    };
+  }
+  if (h && td >= h.back) {
+    return {
+      kind: 'wait', d: h.back, k: h.k,
+      text: `${fmt.d(h.back)} 恢復交易（${h.why}）：價格會變成之前的約 1/${kTxt(h.k)}。冷眼還在等證交所的行情確認分割（開盤後幾分鐘），確認後會自動換算你的持股、成本與到價提醒；在那之前看到的大跌不是真的。`,
+      short: `${fmt.d(h.back)} 恢復交易（${h.why}），冷眼等證交所的行情確認後自動換算；價格變低不是大跌`,
+    };
+  }
+  return null;
+}
+/** 最近幾天因為分割換算過的到價提醒（今日行動說明一次） */
+export function splitAlerted(days = 3) {
+  const td = today();
+  return alerts.filter((a) => isNum(a.was) && a.sx && a.sx <= td && PF.daysBetween(a.sx, td) <= days);
+}
+/** 分割前設的到價提醒換算成分割後的價位（換過的記在 sx、原本的價位記在 was，今日行動會說明一次） */
+function splitAlerts() {
+  let dirty = false;
+  for (let i = 0; i < alerts.length; i++) {
+    const a = alerts[i];
+    const row = S.rows.get(a.c);
+    const sp = splitsOf(a.c);
+    if (!row || !sp.length) continue;
+    const q = quote(row);
+    const upto = q.date || row.d;
+    const b = alertSplit(a, sp, upto, q.px);
+    if (b) { alerts[i] = b; dirty = true; }
+  }
+  if (dirty) saveAlerts();
 }
 
 export function liveOf(code) {
@@ -464,9 +596,10 @@ export function quote(row) {
   const lv = liveOf(row.c);
   if (lv && lv.date && row.d && lv.date > row.d && isNum(lv.px) && lv.px > 0) {
     let ref = row.p;
-    // 收盤資料之後才生效的分割（例如 1 拆 4）：昨收要換算成分割後的價格，不然漲跌會差好幾倍
-    const sp = ((S.divs && S.divs[row.c] && S.divs[row.c].s) || []).filter(([d]) => d > row.d && d <= lv.date);
-    for (const [, k] of sp) ref /= k;
+    // 收盤資料之後才生效的分割（例如 1 拆 5）：昨收要換算成分割後的價格，不然漲跌會差好幾倍
+    // （applySplits 已經換算過的列記著 sx，不會再除一次；summary 直接拿來用的列也一樣）
+    const sp = pendingSplit(splitsOf(row.c), row.sx || row.d, lv.date);
+    if (sp) ref /= sp.k;
     if (row.dv && row.dv.d === lv.date && isNum(row.dv.cash)) ref -= row.dv.cash;
     return { px: lv.px, ch: lv.px - ref, pc: (lv.px / ref - 1) * 100, prem: lv.prem, live: true, time: lv.time, date: lv.date };
   }
@@ -478,8 +611,7 @@ export function hasBook() { return book.lots.length > 0 || book.cash > 0; }
 
 export function paperCash(P0) {
   if (!book.start) return 0;
-  const sp = (c) => (S.divs && S.divs[c] && S.divs[c].s) || [];
-  return (book.start.cash0 || 0) + PF.lotsCashFlow(book.lots, sp) + (P0 ? P0.totals.divRecv : 0);
+  return (book.start.cash0 || 0) + PF.lotsCashFlow(book.lots, splitsOf) + (P0 ? P0.totals.divRecv : 0);
 }
 export function computePF() {
   if (!S.summary) { S.P = null; return null; }

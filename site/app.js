@@ -6,7 +6,7 @@ import {
   dirCls, arrow, twParts, CAT, catName, POS, ST, ICON, getJSON, loadCore, useCache, ensureTrack, ensureDivs, ensureCal, marketClosedOn, ensureHist, quote,
   computePF, hasBook, heldOf, slotVar, stanceChip, posChip, actChip, gaugeSVG, animateNeedles, sparkSVG, toast, countUp,
   today, PF, premBand, DEFAULT_RULES, isPaper, switchMode, reloadBook, isBookKey, journal, saveJournal, reloadJournal, isJournalKey, taiexNow,
-  reloadPlans, dayTag, ensureNews, NEWS_MAX_AGE, invalidateBatch, ensureDetail, plainText, adviceFor, ensureGlobal, marketTemp, normReserve,
+  reloadPlans, dayTag, ensureNews, NEWS_MAX_AGE, invalidateBatch, ensureDetail, plainText, adviceFor, ensureGlobal, marketTemp, normReserve, applySplits, splitNote, splitAlerted, splitName,
 } from './core.js';
 import { openDetail, closeDetail, renderDetail, refreshDetailQuote } from './sheet.js';
 import { openTradeForm, openCashForm, openBackup, checkAlerts, closeModal, modalOpen, wipeBook, openPaperStart, PAPER_FRESH_MIN, openModal } from './forms.js';
@@ -482,6 +482,21 @@ function buildActions(P) {
   if (hits.some((h) => h.fresh)) setTimeout(() => FX.cue('alert'), 400);   // 今天第一次碰到：響一下
   for (const h of hits) {
     out.push({ pri: 0, code: h.row.c, chip: chip('到價', 'alert'), title: h.row.n, text: `${h.a.op === 'le' ? '跌到' : '漲到'}你設定的 <b class="num">${fmt.px(h.a.px)}</b>，現價 <b class="num">${fmt.px(h.q.px)}</b>` });
+  }
+  // 分割（例如 00662 一拆五）：已公告、停止交易中、剛恢復交易——你持有、關注、或有定期定額的那幾檔
+  const mine = new Set([...(P ? P.holdings.map((x) => x.code) : []), ...settings.watch, ...(settings.plans || []).filter((p) => !p.end || p.end >= today()).map((p) => p.c)]);
+  for (const c of mine) {
+    const n = splitNote(c);
+    const r = S.rows.get(c);
+    if (!n || !r) continue;
+    out.push({ pri: n.kind === 'live' || n.kind === 'wait' ? 0 : 1, code: c, chip: chip('分割', 'info'), title: r.n, text: esc(n.short) });
+  }
+  const conv = splitAlerted();
+  for (const c of new Set(conv.map((a) => a.c))) {
+    const r = S.rows.get(c);
+    const xs = conv.filter((a) => a.c === c);
+    if (!r) continue;
+    out.push({ pri: 2, code: c, chip: chip('提醒', 'info'), title: r.n, text: `到價提醒已照 ${splitName(xs[0].sk || xs[0].was / xs[0].px)} 換算：${xs.map((a) => `<b class="num">${fmt.px(a.was)}</b> → <b class="num">${fmt.px(a.px)}</b>`).join('、')}` });
   }
   if (P) {
     for (const x of P.holdings) {
@@ -1654,6 +1669,7 @@ async function refreshLive(v) {
   try {
     S.live = await getJSON('live.json', { v });
     store.set('cache.live', S.live);
+    applySplits();   // 今天剛生效的分割（例如 1 拆 5 恢復交易那天）：收盤資料、持股、提醒先換算成分割後的基準
     computePF();
     renderHeader();
     if (S.tab === 'home' || S.tab === 'pf' || S.tab === 'radar') viewRender();

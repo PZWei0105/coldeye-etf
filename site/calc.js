@@ -549,14 +549,18 @@ export function dcaEstimate(amt, fee, px) {
 }
 /**
  * 一期在成交日 d 用的官方收盤價（自動入帳用，不拿更早的價格硬湊）。
- * o：{ h: 這一檔的歷史檔 { d, p, splits }（沒有就 null）, hist404: 確定沒有歷史檔（上市太短）, row: 最新收盤資料裡的這一檔（下市就沒有）, cal: 市場交易日 }
+ * o：{ h: 這一檔的歷史檔 { d, p, splits }（沒有就 null）, hist404: 確定沒有歷史檔（上市太短）, row: 最新收盤資料裡的這一檔（下市就沒有）, cal: 市場交易日, c: 代號（查已公告的停止交易） }
  * 回傳 { st: 'ok', px, pd: 價格是哪一天的 }
  *    、{ st: 'none', why: 'halt'（分割等停止交易：國泰不扣也不補）|'gone'（已經不在交易）|'thin'（太久沒有成交） }
  *    、{ st: 'wait' }（還不知道：等之後的資料）、{ st: 'unknown' }（這次沒拿到資料，什麼都不動）
  */
 export function dcaPrice(o, d) {
-  const { h, hist404, row, cal } = o || {};
-  const rowOk = !!(row && row.d === d && row.p > 0);
+  const { h, hist404, row, cal, c } = o || {};
+  // 已公告的停止交易（HALTS，例如 00662 一拆五）：不用等之後的資料，國泰那幾天不扣也不補
+  if (c && haltOn(c, d)) return { st: 'none', why: 'halt' };
+  // 收盤資料那一列如果已經先換算成分割後（scaleRow 的 sx／sk），那天的成交價要換回原本的
+  const rowP = row && row.sx && row.sk ? round(row.p * row.sk, 4) : row && row.p;
+  const rowOk = !!(row && row.d === d && rowP > 0);
   if (h && Array.isArray(h.d) && h.d.length && Array.isArray(h.p)) {
     const i = indexIn(h.d, d);
     if (i >= 0 && h.p[i] > 0) return { st: 'ok', px: h.p[i], pd: d };
@@ -570,12 +574,12 @@ export function dcaPrice(o, d) {
       if (j >= 0 && h.p[j] > 0 && cal && cal.length && lastAtOrBefore(cal, d) - lastAtOrBefore(cal, h.d[j]) <= 10) return { st: 'ok', px: h.p[j], pd: h.d[j] };
       return { st: 'none', why: 'thin' };
     }
-    if (rowOk) return { st: 'ok', px: row.p, pd: d };
+    if (rowOk) return { st: 'ok', px: rowP, pd: d };
     if (!row) return { st: 'none', why: 'gone' };
     return { st: 'wait' };
   }
   if (hist404) {
-    if (rowOk) return { st: 'ok', px: row.p, pd: d };
+    if (rowOk) return { st: 'ok', px: rowP, pd: d };
     // 不在最新收盤資料、也沒有歷史檔（下市、合併、很久沒成交）：以前的價格查不到，已經記的先留著、也不新增
     if (!row) return { st: 'unknown' };
     return { st: 'wait' };
@@ -918,6 +922,8 @@ export function dcaReserve(plans, lots, today, span, cal = null, skip = []) {
         if (d < today || s > hi) continue;
         if (p.sb === true ? (s < p.start || (p.end && s > p.end)) : (d < p.start || (p.end && d > p.end))) continue;
         if (done.has(`${p.c}|${s}`) || sk.has(`${p.c}|${s}`)) continue;
+        if (haltOn(p.c, d)) continue;   // 已公告的停止交易（分割）那幾天：國泰不扣也不補，不用留錢
+
         done.add(`${p.c}|${s}`);   // 同一檔、同一天的兩個計畫（重疊）只留一期，和自動入帳一樣
         items.push({ c: p.c, plan: p.id, s, d, amt: p.amt });
       }
@@ -942,4 +948,112 @@ export function dcaSpent(lots, cashD, today) {
   }
   items.sort((a, b) => a.d - b.d);
   return { total: items.reduce((t, x) => t + x.amt, 0), items };
+}
+
+// ------------------------------------------------------------------ 分割：收盤資料還沒算進去的那一段（例如 00662 在 2026/11/17 一拆五）
+// 收盤後的計算用「開盤跳空」找分割（series.py 的 adjust_factors），要等那天的官方收盤出來；在那之前，盤中的價格已經是分割後的
+// （約 1/5），收盤資料、防守線、走勢圖、你的提醒卻還是分割前的。後台盤中先用證交所的參考價認出「今天剛生效的分割」
+// （live.json 的 splits，build.py 的 live_splits），這裡把分割前的那些數字先換算成分割後的基準，收盤後的計算出來就交還給它。
+
+/**
+ * 已經公告、還沒發生的停止交易（分割）：讓停止交易那幾天之前就知道——定期定額那幾天國泰不扣、單檔頁與今日行動先提醒。
+ * 真正生效時不靠這張表（後台會從證交所的行情自己認出分割），所以這裡只是提早知道；有新的公告就照格式加一筆，
+ * 過期的可以留著（只在前後幾天有作用）。from／to：停止交易（含）、back：恢復交易那天、k：分割倍數。
+ * 00662：富邦投信 2026/9/10 公告 1 拆 5，11/11～11/16 停止交易、11/17 恢復（國泰證券 2026/11/5 的通知也一樣：那幾天暫停定期定額）。
+ */
+export const HALTS = [
+  { c: '00662', from: 20261111, to: 20261116, back: 20261117, k: 5, why: '1 拆 5 分割', src: 'https://ec.ltn.com.tw/article/breakingnews/5569790' },
+];
+/** 這一天這一檔是不是在已公告的停止交易期間（是就回傳那一筆） */
+export const haltOn = (c, d, halts = HALTS) => (halts || []).find((h) => h.c === c && d >= h.from && d <= h.to) || null;
+/** 這一檔接下來（或剛剛）的停止交易：從 before 天前開始提醒、恢復交易後 after 天內還說明 */
+export function haltNear(c, td, before = 7, after = 2, halts = HALTS) {
+  return (halts || []).find((h) => h.c === c && td >= addDays(h.from, -before) && td <= addDays(h.back, after)) || null;
+}
+
+/** 分割紀錄 [[生效日, 倍數]] 加一筆：同一次分割（倍數一樣、日期差 10 天內）只算一次，回傳新的陣列（照日期排好） */
+export function mergeSplit(list, d, k) {
+  const xs = Array.isArray(list) ? list.filter((x) => Array.isArray(x) && x.length >= 2) : [];
+  if (!Number.isInteger(d) || !(k > 0) || k === 1) return xs;
+  if (xs.some(([sd, sk]) => Math.abs(sk - k) < 1e-9 && Math.abs(daysBetween(sd, d)) <= 10)) return xs;
+  return [...xs, [d, k]].sort((a, b) => a[0] - b[0]);
+}
+/** after（不含）之後、upto（含）以前生效的分割，合起來的倍數與最後一次的日期；沒有回傳 null */
+export function pendingSplit(splits, after, upto) {
+  let k = 1, d = null;
+  for (const [sd, sk] of splits || []) if (sk > 0 && sd > after && sd <= upto) { k *= sk; d = Math.max(d || 0, sd); }
+  return d ? { k, d } : null;
+}
+const tickR = (p) => { if (!isNum(p)) return p; const t = p < 50 ? 0.01 : 0.05; return round(Math.round(p / t) * t, 2); };
+const divK = (x, k, n = 4) => (isNum(x) ? round(x / k, n) : x);
+/**
+ * 收盤資料（summary 的一列）換算成分割後的基準：價格、漲跌、防守線、作廢線、支撐壓力、拉回價、月線、ATR、走勢小圖都除以 k。
+ * 直接改這一列（S.rows 和 summary 用的是同一個物件），記下 sx＝換算到哪一次分割，quote() 就不會再除一次。
+ * 成交量、成交值、殖利率、規模、溢價都不用換（量是那一天的事實、其他是比例或總額）。
+ */
+export function scaleRow(row, k, d) {
+  if (!row || !(k > 0) || k === 1) return row;
+  for (const f of ['p', 'ch', 'atr']) row[f] = divK(row[f], k);
+  for (const f of ['iv', 's1', 'r1', 'dl', 'pb', 'm20']) row[f] = tickR(divK(row[f], k));
+  if (Array.isArray(row.sp)) row.sp = row.sp.map((x) => divK(x, k, 3));
+  row.sx = d;
+  row.sk = (row.sk || 1) * k;
+  return row;
+}
+/** 文字裡的「123.45 元」（規則觀點、理由裡的價位、每單位配息）換算成分割後的基準；「億元」「百萬元」這種總額不動 */
+export function scaleText(s, k) {
+  if (typeof s !== 'string' || !(k > 0) || k === 1) return s;
+  return s.replace(/(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)? 元/g, (m, a, b) => {
+    const v = Number(a.replace(/,/g, '') + (b || '')) / k;
+    return `${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} 元`;
+  });
+}
+/**
+ * 單檔分析（etf/{代號}.json）換算成分割後的基準：走勢圖（開高低收、均線）、關鍵價位、防守線、ATR、淨值與收盤、文字裡的價位。
+ * 直接改這一份，記下 sx／sk。成交量 ×k（同一筆錢變成 k 倍的單位），規則分數、信心、回測、法人買賣超（張數是那一天的事實）不動。
+ */
+export function scaleDetail(det, k, d) {
+  if (!det || !(k > 0) || k === 1) return det;
+  const arr = (a, n = 3) => (Array.isArray(a) ? a.map((x) => divK(x, k, n)) : a);
+  if (det.bars) { for (const f of ['o', 'h', 'l', 'c']) det.bars[f] = arr(det.bars[f]); if (Array.isArray(det.bars.v)) det.bars.v = det.bars.v.map((x) => (isNum(x) ? round(x * k, 0) : x)); }
+  if (det.ma) for (const f of Object.keys(det.ma)) det.ma[f] = arr(det.ma[f]);
+  det.price = divK(det.price, k);
+  if (det.nav) { det.nav.nav = arr(det.nav.nav, 4); det.nav.c = arr(det.nav.c); }
+  const V = det.view;
+  if (V) {
+    const L = V.levels || {};
+    const lv = (z) => { if (z && isNum(z.price)) z.price = tickR(z.price / k); };
+    (L.support || []).forEach(lv);
+    (L.resistance || []).forEach(lv);
+    for (const f of ['invalid', 'turn_bull', 'turn_bear', 'pullback']) lv(L[f]);
+    if (V.position) { V.position.dl = tickR(divK(V.position.dl, k)); V.position.ma20 = tickR(divK(V.position.ma20, k)); }
+    if (V.risk) V.risk.atr = divK(V.risk.atr, k);
+    V.summary = scaleText(V.summary, k);
+    if (V.advice) V.advice.detail = scaleText(V.advice.detail, k);
+    for (const c of V.components || []) c.text = scaleText(c.text, k);
+    for (const f of V.flags || []) f.text = scaleText(f.text, k);
+  }
+  det.sx = d;
+  det.sk = (det.sk || 1) * k;
+  return det;
+}
+/**
+ * 到價提醒碰到分割：分割前設的價位（at＝設定的時間，換成台灣日期）要除以 k，不然 1 拆 5 之後「跌到 100」會馬上觸發。
+ * 已經換算過的（sx＝換算到哪一次分割）不會再換。沒有設定時間的（舊備份）：價位比較接近分割前的價格才換。
+ * pxNow：現在（分割後）的價格。回傳換算後的提醒（沒有要換就回傳 null）。
+ */
+export function alertSplit(a, splits, upto, pxNow) {
+  if (!a || !isNum(a.px)) return null;
+  const t = Date.parse(a.at || '');
+  const set = isNum(t) ? Number(new Date(t + 8 * 3600e3).toISOString().slice(0, 10).replace(/-/g, '')) : null;
+  let px = a.px, sx = a.sx || 0, kk = 1;
+  for (const [sd, sk] of splits || []) {
+    if (!(sk > 0) || sk === 1 || sd <= sx || sd > upto) continue;
+    if (set != null ? set >= sd : !(isNum(pxNow) && pxNow > 0 && Math.abs(Math.log(px / sk / pxNow)) < Math.abs(Math.log(px / pxNow)))) { sx = Math.max(sx, sd); continue; }
+    px = tickR(px / sk);
+    sx = sd;
+    kk *= sk;
+  }
+  if (px === a.px && sx === (a.sx || 0)) return null;
+  return { ...a, px, sx, ...(kk !== 1 ? { was: a.px, sk: kk } : {}) };
 }

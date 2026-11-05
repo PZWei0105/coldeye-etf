@@ -101,7 +101,7 @@ async function runOnce({ quiet = false } = {}) {
   const data = await priceData([...new Set(settings.plans.map((p) => p.c))]);
   if (S.offline) return NOTHING;
   const upto = Math.min(today(), S.summary.asof);
-  const priceOf = (c, d) => { const x = data.get(c); return x ? C.dcaPrice({ ...x, cal }, d) : { st: 'unknown' }; };
+  const priceOf = (c, d) => { const x = data.get(c); return x ? C.dcaPrice({ ...x, cal, c }, d) : (C.haltOn(c, d) ? { st: 'none', why: 'halt' } : { st: 'unknown' }); };
   let res = null;
   const added = [];
   updateRealBook((b) => {
@@ -192,6 +192,15 @@ export function dcaActions(chip) {
     const r = S.rows.get(p.c);
     if (!r) continue;
     const done = lots.find((l) => C.isDcaLot(l) && l.dca.plan === p.id && l.d === td);
+    const halt = !done && C.haltOn(p.c, td);
+    if (halt) {
+      // 已公告的停止交易（例如 00662 一拆五）：國泰這一期不扣，也不補（0050 分割時的前例，國泰的通知也寫暫停定期定額）
+      out.push({
+        pri: 1, code: p.c, chip: chip('扣款日', 'info'), title: r.n,
+        text: `今天原本是扣款日，但因為 ${esc(halt.why)} 停止交易（${fmt.d(halt.from)}～${fmt.d(halt.to)}）：國泰這一期不扣 <b class="num">${money(p.amt)}</b> 元，之後也不補扣，冷眼不會記這一期。${fmt.d(halt.back)} 恢復交易後照常扣。`,
+      });
+      continue;
+    }
     const rule = r.ps === 'trim' || r.ps === 'caution' ? `；規則現在是「${r.ps === 'trim' ? '減碼' : '先不加碼'}」，另外的單筆加碼先等一等` : '';
     out.push({
       pri: 1, code: p.c, chip: chip('扣款日', 'alert'), title: r.n,
@@ -228,7 +237,7 @@ function statusOf(p) {
     // 下一期（只看日期，平日放假要等官方資料才知道）
     for (let k = 0; k < 400 && !next; k++) {
       const d = PF.addDays(td, k);
-      if (C.dcaDueToday(p, d) && !mine.some((l) => l.d === d)) next = d;
+      if (C.dcaDueToday(p, d) && !mine.some((l) => l.d === d) && !C.haltOn(p.c, d)) next = d;
     }
   }
   const halts = last.none.filter((x) => x.plan === p.id && x.why === 'halt').length;

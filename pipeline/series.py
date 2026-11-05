@@ -218,9 +218,8 @@ def adjust_factors(dates, raw_o, raw_c, divs):
         d = dates[i]
         step = 1.0
         # 分割／反分割：開盤相對前收的跳空超過 ±45%（台股漲跌幅 10%，海外 ETF 也極少見）
-        if prev_c and o and (o / prev_c < 1 / 1.45 or o / prev_c > 1.45):
-            ratio = prev_c / o
-            nice = _nice_ratio(ratio)
+        if prev_c and o:
+            nice = split_ratio(prev_c, o)
             if nice:
                 step *= 1 / nice
                 cum_v *= nice
@@ -236,6 +235,44 @@ def adjust_factors(dates, raw_o, raw_c, divs):
     vol_f[0] = cum_v
     splits.reverse()
     return adj_f, vol_f, splits
+
+
+SPLIT_GAP = 1.45   # 差 45% 以上才可能是分割（台股一天最多漲跌 10%）
+
+
+def split_ratio(prev_c, px):
+    """前一次收盤 prev_c → 之後的價格 px：差 45% 以上、而且接近常見的分割倍數，就是分割（或反分割），回傳倍數
+    （1 拆 5 → 5，5 合 1 → 0.2）；不是就回傳 None。收盤後用開盤跳空找分割（adjust_factors）、盤中用證交所的參考價找
+    「今天剛生效的分割」（build.live_splits）都用這一個。"""
+    if not prev_c or not px or prev_c <= 0 or px <= 0:
+        return None
+    r = prev_c / px
+    if 1 / SPLIT_GAP <= r <= SPLIT_GAP:
+        return None
+    return _nice_ratio(r)
+
+
+def units_norm(units, splits, days=20):
+    """已發行單位數 [[日期, 單位數]]（由舊到新）換成「目前的單位基準」：分割那幾天單位數會整數倍跳一次
+    （1 拆 5 → 變 5 倍），不換算的話「近 20 日單位數」會變成 +400% 的假淨申購。
+    只有附近（days 天內）真的有分割、而且單位數剛好跳了那個倍數才換算，一般的申購贖回不動。"""
+    out = [[d, u] for d, u in units or []]
+    if len(out) < 2 or not splits:
+        return out
+    for j in range(len(out) - 1, 0, -1):
+        d, u = out[j]
+        u0 = out[j - 1][1]
+        if not u or not u0:
+            continue
+        for sd, k in splits:
+            if abs((i2d(int(sd)) - i2d(int(d))).days) > days or not k or k <= 0:
+                continue
+            if abs(math.log(u / u0) - math.log(k)) < 0.05:
+                for x in out[:j]:
+                    if x[1]:
+                        x[1] = x[1] * k
+                break
+    return out
 
 
 def _nice_ratio(r):

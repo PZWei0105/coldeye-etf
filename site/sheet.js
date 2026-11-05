@@ -2,7 +2,7 @@
 import {
   $, $$, esc, clamp, isNum, S, PF, settings, saveSettings, book, alerts, fmt, money, sharesOf, cash3, dirCls, arrow,
   catName, ICON, ST, POS, quote, ensureDetail, ensureTrack, heldOf, adviceFor, ctxFor, holdingInput, stanceChip, posChip,
-  actChip, gaugeSVG, animateNeedles, toast, bus, today, premBand, slotVar, isPaper, dayTag, quoteWhen,
+  actChip, gaugeSVG, animateNeedles, toast, bus, today, premBand, slotVar, isPaper, dayTag, quoteWhen, splitNote,
 } from './core.js';
 import { openTradeForm, openAlertForm, closeModal, modalOpen } from './forms.js';
 import { addToDuel, openDuel, openTM } from './tools.js';
@@ -140,12 +140,20 @@ function heroHTML(row) {
     <div class="chips">${stanceChip(row.st)}${posChip(row.ps)}${(row.fl || []).includes('weak_edge') ? '<span class="chip ghost">此類回測優勢弱</span>' : ''}</div></section>`;
 }
 
+// ------------------------------------------------------------------ 分割說明（已公告、停止交易中、剛恢復交易）
+function splitNoteHTML(code) {
+  const n = splitNote(code);
+  if (!n) return '';
+  return `<section class="panel pad flags split-note"><div class="flag sys">${ICON.swap}<span>${esc(n.text)}</span></div></section>`;
+}
+
 // ------------------------------------------------------------------ 主體
 function detailHTML(row, det) {
   if (!row) return '<section class="panel empty">找不到這檔 ETF</section>';
   const x = heldOf(row.c);
   const a = adviceFor(row.c);
   let h = heroHTML(row);
+  h += splitNoteHTML(row.c);
   if (x) h += myPositionHTML(x);
   if (a) h += adviceHTML(row, x, a);
   h += aideDetailHTML(row.c);

@@ -1070,7 +1070,11 @@ export function readBackup(obj) {
       let id = typeof a.id === 'string' && ID.test(a.id) && !seen.has(a.id) ? a.id : `r${i}${Date.now().toString(36)}`;
       while (seen.has(id)) id += 'x';
       seen.add(id);
-      return { id, c: a.c.toUpperCase(), op: a.op === 'le' ? 'le' : 'ge', px: a.px, at: typeof a.at === 'string' ? a.at.slice(0, 40) : null, hit: okDate(a.hit) ? a.hit : null };
+      return {
+        id, c: a.c.toUpperCase(), op: a.op === 'le' ? 'le' : 'ge', px: a.px, at: typeof a.at === 'string' ? a.at.slice(0, 40) : null, hit: okDate(a.hit) ? a.hit : null,
+        // 分割換算過的提醒：換算到哪一次分割（sx）、原本的價位（was）
+        ...(okDate(a.sx) ? { sx: a.sx } : {}), ...(okNum(a.was) && a.was > 0 ? { was: a.was } : {}), ...(okNum(a.sk) && a.sk > 0 ? { sk: a.sk } : {}),
+      };
     });
   }
   // 偏好設定：只留認得的欄位（定期定額的計畫之後還會經過 calc.js 的 normPlan 逐欄檢查）
