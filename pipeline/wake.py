@@ -9,8 +9,12 @@ GitHub 的排程常常延遲半小時到一小時：
 延遲一兩個小時也還來得及），每一班照順序發出：
 - 早班：07:45 全球市場（美股收盤、台指期夜盤收盤、全球歷史一天一次）→ 09:00:30 第一輪盤中更新（之後每一輪自己接力）
 - 下午班：14:15 收盤後計算（eod）→ 15:05 晚上的全球市場接力（台指期夜盤、美股盤中，每 10 分鐘一輪到隔天 05:30）
+- 白天看門（早班發完第一輪之後、下午班睡到 14:15 之前，看到 13:25）：盤中接力偶爾會斷——下一輪看到「已經有排隊的」
+  其實是 GitHub 列表還沒更新（11/3 斷 16 分鐘、11/5 斷 40 分鐘），或發出去的那一輪卡在排隊、一直沒開始（11/6 卡 12 分鐘），
+  10 分鐘一次的備援排程又常常延遲；所以每 2 分鐘看一次，沒有在跑的、排隊的都卡了 4 分鐘以上、最後一次執行是 8 分鐘以前，
+  才發一輪 intraday 接上（卡住的那一輪會被新的取代）。休市表上的日子不看；證交所即時資料 09:20 還不是今天（颱風假）就不看了。
 - 夜班（21:23、01:23 起來）：看門。晚上的接力白天沒有備援排程，萬一斷掉（發不出下一輪、GitHub 出狀況），
-  美股開盤的那幾個小時就沒有新資料；所以每 10 分鐘看一次，冷眼 20 分鐘以上沒有任何執行（也沒有在跑、在排隊的）
+  美股開盤的那幾個小時就沒有新資料；所以每 10 分鐘看一次，冷眼 20 分鐘以上沒有任何執行（也沒有在跑的、排隊的沒有卡住）
   才發一輪 night 接上。平常接力好好的時候什麼都不做，不會把排隊中的收盤後計算擠掉。
 同一班有好幾個排程都跑起來時，只有最早的那個在等，其他的馬上結束。證交所休市日不發盤中更新與收盤後計算，
 但全球市場照常（美股有開）。它不和冷眼主流程共用排隊（concurrency），睡覺時不會擋住推送或其他工作；只用標準函式庫。
@@ -37,6 +41,14 @@ WATCH_FROM = 2100          # 夜班看門：21:00 以後起來的看到 01:15（
 WATCH_TO = 505             # 05:05 以後交給早班（05:13 起來），兩班不重疊（只有最早的那個叫醒會等）
 WATCH_GAP_S = 600          # 每 10 分鐘看一次
 WATCH_STALE_S = 1200       # 冷眼 20 分鐘以上沒有新的執行、也沒有在跑或排隊的：接力斷了
+DAY_FROM = 905             # 白天看門：09:05～13:25（第一輪 09:00:30 發出；13:25 以後發的那一輪來不及接力到收盤，備援排程會接上）
+DAY_TO = 1325
+DAY_GAP_S = 120            # 每 2 分鐘看一次
+DAY_STALE_S = 480          # 最後一次執行是 8 分鐘以前（平常每 4～5 分鐘一輪，一直有一輪在跑）
+DAY_STUCK_S = 240          # 排隊 4 分鐘以上還沒開始：卡住了（平常排隊幾秒就開始）
+DAY_CLOSED_AT = 920        # 09:20 以後證交所即時資料還不是今天：今天休市（颱風假），不用看了
+JOB_LIMIT_S = 5 * 3600 + 40 * 60   # wake.yml 的 timeout-minutes 350：看門最多看到起來後 5 小時 40 分
+LIVE_URL = 'https://pzwei0105.github.io/coldeye-etf/data/live.json'
 CAL_URL = 'https://pzwei0105.github.io/coldeye-etf/data/cal.json'
 API = 'https://api.github.com'
 # 每一班照順序：(幾點, 冷眼的模式, 怎麼說, 超過這個時間就不發這一步, 休市日要不要發)
@@ -73,6 +85,37 @@ def relay_dead(active, latest_created, now, stale_s=WATCH_STALE_S) -> bool:
     return latest_created is None or (now - latest_created).total_seconds() > stale_s
 
 
+def day_dead(running, waiting, latest_created, now, stale_s=DAY_STALE_S, stuck_s=DAY_STUCK_S) -> bool:
+    """接力斷了沒（白天、夜班看門都用）：沒有在跑的；排隊的都卡了 stuck_s 以上（或沒有排隊的）；最後一次執行是 stale_s 以前。
+    waiting＝排隊中那幾輪的建立時間（卡住的那一輪會被新發出的取代，不會兩輪一起跑）。"""
+    if running:
+        return False
+    if any(w is None or (now - w).total_seconds() < stuck_s for w in waiting or []):
+        return False
+    return latest_created is None or (now - latest_created).total_seconds() > stale_s
+
+
+def day_watch_end(now: dt.datetime, started: dt.datetime, holidays=()):
+    """白天看門看到幾點（不看就回傳 None）：交易日的 13:25，而且不超過這個工作的時間限制"""
+    if now.weekday() >= 5 or int(now.strftime('%Y%m%d')) in set(holidays or ()):
+        return None
+    end = min(now.replace(hour=DAY_TO // 100, minute=DAY_TO % 100, second=0, microsecond=0),
+              started + dt.timedelta(seconds=JOB_LIMIT_S))
+    return end if end > now else None
+
+
+def shift_of(when: dt.datetime):
+    """一個叫醒是哪一班（看它起來的時間）：open 早班、close 下午班、watch 夜班；其他時間 None"""
+    hm = when.hour * 100 + when.minute
+    if hm >= WATCH_FROM or hm < WATCH_TO:
+        return 'watch'
+    if hm < OPEN_LATEST:
+        return 'open'
+    if CLOSE_FROM <= hm < CLOSE_LATEST:
+        return 'close'
+    return None
+
+
 def plan(now: dt.datetime, holidays=()):
     """這一班要不要叫：回傳 (到第一步要睡幾秒, 班別 'open'／'close'／'watch')，不叫就回傳 (None, 原因)。
     holidays＝證交所休市表上的日期（yyyymmdd）：休市日只發全球市場那幾步。"""
@@ -106,9 +149,15 @@ def steps_left(shift, now, holidays=()):
     return [x for x in SHIFTS[shift] if hm < x[3] and (x[4] or not closed)]
 
 
-def older_wake(runs, my_id) -> bool:
-    """另一個比較早開始的叫醒還在等（同一班有好幾個排程）：交給它，自己不用等。"""
-    return any(int(r.get('id') or 0) < int(my_id or 0) for r in runs or [])
+def older_wake(runs, my_id, shift=None) -> bool:
+    """同一班另一個比較早開始的叫醒還在等（同一班有好幾個排程）：交給它，自己不用等。
+    給了 shift 就只看同一班的（早班白天看門會看到 13:25 前後，不能擋住下午班）。"""
+    def same(r):
+        if shift is None:
+            return True
+        c = _created(r)
+        return c is None or shift_of(c.astimezone(TW)) == shift
+    return any(int(r.get('id') or 0) < int(my_id or 0) and same(r) for r in runs or [])
 
 
 def close_started(runs) -> bool:
@@ -162,14 +211,52 @@ def watch(repo):
         if now >= end:
             return
         try:
-            active = any(_runs(repo, 'coldeye.yml', f'status={st}') for st in ('in_progress', 'queued', 'pending'))
-            latest = None if active else _created((_runs(repo, 'coldeye.yml', 'branch=main') or [{}])[0])
-            if relay_dead(active, latest, now):
+            running = bool(_runs(repo, 'coldeye.yml', 'status=in_progress'))
+            waiting = [] if running else [_created(r) for st in ('queued', 'pending')
+                                          for r in _runs(repo, 'coldeye.yml', f'status={st}')]
+            latest = None if running else _created((_runs(repo, 'coldeye.yml', 'branch=main') or [{}])[0])
+            if day_dead(running, waiting, latest, now, stale_s=WATCH_STALE_S):
                 log(f'接力斷了（最後一次執行 {latest.astimezone(TW):%H:%M}）' if latest else '接力斷了（查不到執行）')
                 _dispatch(repo, 'night', '晚上的全球市場接力')
         except Exception as e:  # noqa: BLE001 — 查不到就下一次再看
             log(f'查不到冷眼的執行：{e}')
         time.sleep(max(1, min(WATCH_GAP_S, (end - dt.datetime.now(TW)).total_seconds())))
+
+
+def _live_date():
+    try:
+        with urllib.request.urlopen(LIVE_URL + f'?t={int(time.time() // 60)}', timeout=20) as r:
+            return json.loads(r.read().decode()).get('date')
+    except Exception:  # noqa: BLE001 — 抓不到就當作不知道，照常看
+        return None
+
+
+def day_watch(repo, end):
+    """白天看門：每 2 分鐘看一次，盤中接力斷了（或發出去的那一輪卡在排隊）才發一輪 intraday"""
+    log(f'白天看門到 {end:%H:%M}')
+    while True:
+        now = dt.datetime.now(TW)
+        if now >= end:
+            return
+        hm = now.hour * 100 + now.minute
+        if hm >= DAY_CLOSED_AT:
+            ld = _live_date()
+            if ld and str(ld) != now.strftime('%Y%m%d'):
+                log(f'證交所即時資料還是 {ld}：今天休市，不看了')
+                return
+        if hm >= DAY_FROM:
+            try:
+                running = bool(_runs(repo, 'coldeye.yml', 'status=in_progress'))
+                waiting = [] if running else [_created(r) for st in ('queued', 'pending')
+                                              for r in _runs(repo, 'coldeye.yml', f'status={st}')]
+                latest = None if running else _created((_runs(repo, 'coldeye.yml', 'branch=main') or [{}])[0])
+                if day_dead(running, waiting, latest, now):
+                    log('盤中接力斷了' + (f'（最後一次執行 {latest.astimezone(TW):%H:%M}）' if latest else '')
+                        + ('，排隊的那一輪卡住了' if waiting else ''))
+                    _dispatch(repo, 'intraday', '一輪盤中更新')
+            except Exception as e:  # noqa: BLE001 — 查不到就下一次再看
+                log(f'查不到冷眼的執行：{e}')
+        time.sleep(max(1, min(DAY_GAP_S, (end - dt.datetime.now(TW)).total_seconds())))
 
 
 def _dispatch(repo, mode, what):
@@ -188,18 +275,19 @@ def _dispatch(repo, mode, what):
 def main():
     repo = os.environ.get('REPO', '')
     my_id = os.environ.get('GITHUB_RUN_ID', '0')
-    try:
-        mine = [r for st in ('in_progress', 'queued') for r in _runs(repo, 'wake.yml', f'status={st}')]
-        if older_wake(mine, my_id):
-            log('另一個叫醒已經在等了，交給它')
-            return
-    except Exception as e:  # noqa: BLE001 — 查不到就自己等（頂多多發一輪，不會少）
-        log(f'查不到其他叫醒：{e}')
+    started = dt.datetime.now(TW)
     holidays = _holidays()
-    wait, shift = plan(dt.datetime.now(TW), holidays)
+    wait, shift = plan(started, holidays)
     if wait is None:
         log(f'這一班不用叫：{shift}')
         return
+    try:
+        mine = [r for st in ('in_progress', 'queued') for r in _runs(repo, 'wake.yml', f'status={st}')]
+        if older_wake(mine, my_id, shift):
+            log('同一班另一個叫醒已經在等了，交給它')
+            return
+    except Exception as e:  # noqa: BLE001 — 查不到就自己等（頂多多發一輪，不會少）
+        log(f'查不到其他叫醒：{e}')
     if shift == 'watch':
         watch(repo)
         return
@@ -208,6 +296,11 @@ def main():
         now = dt.datetime.now(TW)
         if now.hour * 100 + now.minute >= latest:
             continue
+        if mode == 'eod':   # 下午班：睡到收盤後計算之前，先看著盤中接力
+            end = day_watch_end(now, started, holidays)
+            if end:
+                day_watch(repo, end)
+                now = dt.datetime.now(TW)
         wait = (now.replace(hour=h, minute=m, second=s, microsecond=0) - now).total_seconds()
         if wait > 0:
             log(f'睡 {int(wait)} 秒，之後發出{what}')
@@ -226,6 +319,10 @@ def main():
             log(f'查不到冷眼的執行：{e}（照樣發出）')
         if not _dispatch(repo, mode, what):
             failed.append(what)
+    if shift == 'open':   # 早班：第一輪發出之後看著盤中接力
+        end = day_watch_end(dt.datetime.now(TW), started, holidays)
+        if end:
+            day_watch(repo, end)
     if failed:
         raise SystemExit(f'發不出：{"、".join(failed)}（之後的排程會接上）')
 
