@@ -140,6 +140,8 @@ function freshness() {
   const newest = [L && L.at, gen].filter(Boolean).sort().pop() || null;
   if (S.offline) return { key: 'lag', txt: `離線　顯示上次存下的資料（${L && L.at ? `${fmt.d(isoD(L.at))} ${hhmm(L.at)}` : fmt.d(S.summary.asof)}）`, stall: false, offline: true };
   const stall = newest ? minsAgo(newest) >= STALL_MIN : false;
+  // 連續兩次連不上冷眼的網站（每分鐘看一次）：照實說畫面是什麼時候的資料，不要讓人以為後台沒更新
+  if ((S.syncFail || 0) >= 2) return { key: 'lag', txt: `連不上冷眼網站・畫面是 ${L && L.at ? `${isoD(L.at) === td ? '今天' : fmt.d(isoD(L.at))} ${hhmm(L.at)}` : fmt.d(S.summary.asof)} 的資料・點一下重試`, stall: false };
   const liveToday = !!(L && L.date === td);
   // 後台今天開盤後跑過，證交所的即時資料卻停在之前的日期 → 今天休市（颱風假也一樣）
   const ranToday = !!(L && isoD(L.at) === td && isoHm(L.at) >= 905);
@@ -158,6 +160,8 @@ function freshness() {
   // 收盤後到晚上的完整計算跑完之前：畫面上已經是今天的收盤價，只是分析還是昨天的
   if (weekday && liveToday && hm > 1335) {
     if (isoHm(L.at) >= 1330) return { key: 'idle', txt: `今天收盤　${hhmm(L.at)} 的價格・完整分析${hm < 1425 ? '約 14:20 ' : '稍晚'}更新`, stall };
+    // 後台 14:15 收盤後計算、之後每 10 分鐘一輪都會重寫 live.json：14:30 以後手上的這一份已經放了 20 分鐘以上，是這支手機還沒同步到，不是後台沒送
+    if (hm >= 1430 && age != null && age > 20) return { key: 'lag', txt: `畫面停在今天 ${hhmm(L.at)} 的資料・點一下更新`, stall };
     return { key: 'lag', txt: `今天 ${hhmm(L.at)} 的價格・收盤價還沒送來`, stall };
   }
   if (!weekday) return { key: 'idle', txt: `休市　資料到 ${fmt.d(S.summary.asof)}`, stall };
@@ -184,7 +188,9 @@ async function manualRefresh() {
   const before = [S.live && S.live.at, S.summary && S.summary.generated].join('|');
   try {
     await newBatch({ force: true });
+    S.syncFail = 0;
     el.classList.remove('busy');
+    renderHeader();
     const after = [S.live && S.live.at, S.summary && S.summary.generated].join('|');
     const f = freshness();
     const liveNow = (f.key === 'live' || f.key === 'lag') && S.live;
@@ -1648,7 +1654,7 @@ window.addEventListener('popstate', () => {
 });
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.deferredInstall = e; if (S.tab === 'home' && S.summary) render(); });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && S.summary) { syncTick().then(() => { refreshEvals(); runPlans(); }); }
+  if (document.visibilityState === 'visible' && S.summary) { renderHeader(); syncTick().then(() => { refreshEvals(); runPlans(); }); }
   if (document.visibilityState === 'hidden') FX.stopSpeak();
 });
 document.addEventListener('keydown', (e) => {
@@ -1703,12 +1709,20 @@ function tryStamp(k, stamp) {
   tried[k] = { s: stamp, at: Date.now() };
   return true;
 }
+// 上一次同步卡住太久（例如手機鎖螢幕時正好在抓資料，iPhone 回來後那個請求可能永遠不回）：
+// 超過 SYNC_STUCK_MS 就不等它，直接開始新的一次；舊的那次回來了也不會把「忙碌中」清掉
+const SYNC_STUCK_MS = 90000;
+let syncAt = 0;
+let syncGen = 0;
 async function syncTick() {
-  if (syncBusy || !S.summary) return;
+  if (!S.summary || (syncBusy && Date.now() - syncAt < SYNC_STUCK_MS)) return;
   syncBusy = true;
+  syncAt = Date.now();
+  const my = ++syncGen;
   try {
     let v = null;
-    try { v = await getJSON('version.json'); } catch { v = null; }
+    try { v = await getJSON('version.json'); if (my === syncGen && S.syncFail) { S.syncFail = 0; renderHeader(); } } catch { v = null; if (my === syncGen) { S.syncFail = (S.syncFail || 0) + 1; renderHeader(); } }
+    if (my !== syncGen) return;   // 已經有比較新的一次在跑（這一次卡太久被跳過了）
     const F = v && !S.verOffline && v.files && typeof v.files === 'object' ? v.files : null;
     if (!F) {
       if ((S.live && S.live.open) || inSession()) await refreshLive();
@@ -1733,7 +1747,7 @@ async function syncTick() {
       if (S.tab === 'pf') viewRender();
     }
   } catch { /* 連不上：下一分鐘再試 */ } finally {
-    syncBusy = false;
+    if (my === syncGen) syncBusy = false;
   }
 }
 /**
@@ -1836,6 +1850,9 @@ async function boot() {
   // 畫面開著時每分鐘看一次後台的版本檔，哪一份資料變了就重抓那一份（見 syncTick）；網路恢復時馬上看一次
   setInterval(() => { if (document.visibilityState === 'visible') syncTick(); }, SYNC_MS);
   window.addEventListener('online', () => { if (document.visibilityState === 'visible') syncTick(); });
+  // iPhone 加到主畫面的 App 從背景回來時，有時候只有 pageshow／focus、沒有 visibilitychange：也馬上看一次
+  window.addEventListener('pageshow', (e) => { if (e.persisted && document.visibilityState === 'visible') syncTick(); });
+  window.addEventListener('focus', () => { if (document.visibilityState === 'visible') syncTick(); });
   setInterval(() => { if (document.visibilityState === 'visible') renderHeader(); }, 30000);
   // 對答案、定期定額：每 15 分鐘再檢查一次（例如 13:25 定案、收盤後到期）
   setInterval(() => { if (document.visibilityState === 'visible') { refreshEvals(); runPlans(); } }, 15 * 60000);
