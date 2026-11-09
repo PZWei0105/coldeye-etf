@@ -67,6 +67,8 @@ def run(mode: str) -> bool:
         runs = state['status'].setdefault('_runs', [])
         runs.append(log)
         state['status']['_runs'] = runs[-30:]
+        if mode in ('eod', 'weekly', 'backfill'):
+            state['status']['_eod_at'] = started   # 晚上的接力看這個決定要不要補跑收盤後計算（dispatch.eod_due）
         if mode not in ('intraday', 'night') or log['errors'] or log.get('news_changed'):
             state.save()
             gitstate.save_branch('state', STATE_DIR, f'{mode} {now:%Y-%m-%d %H:%M}')

@@ -19,6 +19,12 @@ FIRST_TICK = (9, 0, 30)
 NIGHT_FROM = 1505
 NIGHT_TO = 530       # 冬令時間美股 05:00 收盤，交易所延遲 15 分鐘的報價 05:15 才看得到收盤
 NIGHT_CYCLE_S = 600
+# 收盤後的完整計算原本靠排程（14:25 收盤行情、15:40 三大法人、17:50 投信淨值、21:55 融資融券），
+# 但 GitHub 的排程常常延遲、不來，或和晚上的接力同時排隊被取消（同一個 concurrency 只留一個排隊的）：
+# 2026/11/9 14:25 的排程沒來、15:40 的被取消、17:50 的到 19:20 還沒來，加權指數停在 11/6、三大法人少了一天。
+# 所以晚上的接力自己補：下一輪開始時，已經過了某個時間點、而且那之後還沒跑過收盤後計算，下一輪就跑 eod（之後照樣接回 night）。
+EOD_SLOTS = (1425, 1540, 1750, 2155)
+EOD_MODES = ('eod', 'weekly', 'backfill')
 
 
 def decide_mode() -> str:
@@ -72,9 +78,22 @@ def in_night(now: dt.datetime) -> bool:
     return False
 
 
-def next_plan(mode: str, t0: float, live_date, now: dt.datetime | None = None):
+def eod_due(start: dt.datetime, last_eod) -> bool:
+    """下一輪（start 開始）要不要跑收盤後計算：週一到週五、已經過了最近一個 EOD_SLOTS，而且那之後還沒跑過（last_eod：Unix 時間）。"""
+    if start.weekday() >= 5:
+        return False
+    hm = start.hour * 100 + start.minute
+    due = [x for x in EOD_SLOTS if x <= hm]
+    if not due:
+        return False
+    slot = start.replace(hour=due[-1] // 100, minute=due[-1] % 100, second=0, microsecond=0)
+    return last_eod is None or last_eod < slot.timestamp()
+
+
+def next_plan(mode: str, t0: float, live_date, now: dt.datetime | None = None, last_eod=None):
     """這一輪結束後排哪一輪：(發出的 Unix 時間, 模式) 或 (None, None)。
-    白天盤中照 next_tick 每 5 分鐘一輪（intraday）；晚上（夜盤、美股盤中）每 10 分鐘一輪全球市場（night）。"""
+    白天盤中照 next_tick 每 5 分鐘一輪（intraday）；晚上（夜盤、美股盤中）每 10 分鐘一輪全球市場（night），
+    到了收盤後計算的時間點還沒跑過的，那一輪改跑 eod（eod_due；last_eod 是最近一次收盤後計算開始的 Unix 時間）。"""
     now = now or dt.datetime.now(TW)
     ts = next_tick(mode, t0, live_date, now)
     if ts:
@@ -82,8 +101,18 @@ def next_plan(mode: str, t0: float, live_date, now: dt.datetime | None = None):
     if mode in ('night', 'global', 'eod', 'weekly', 'deploy', 'probe'):
         start = dt.datetime.fromtimestamp(t0 + NIGHT_CYCLE_S, TW)
         if in_night(start):
-            return int(t0 + NIGHT_CYCLE_S - LEAD_S), 'night'
+            if mode in EOD_MODES:
+                last_eod = t0 if last_eod is None else max(last_eod, t0)
+            return int(t0 + NIGHT_CYCLE_S - LEAD_S), ('eod' if eod_due(start, last_eod) else 'night')
     return None, None
+
+
+def last_eod_at():
+    """最近一次收盤後計算開始的時間（state 分支 status.json 的 _eod_at，build.run 寫入）；讀不到就是 None。"""
+    try:
+        return float(json.loads((ROOT / '.state' / 'status.json').read_text(encoding='utf-8')).get('_eod_at'))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def live_date():
@@ -124,7 +153,7 @@ def main():
     set_output('deploy', 'true' if deploy else 'false')
     nxt, nmode = None, None
     try:
-        nxt, nmode = next_plan(mode, t0, live_date())
+        nxt, nmode = next_plan(mode, t0, live_date(), last_eod=last_eod_at())
     except Exception:  # noqa: BLE001
         traceback.print_exc()
     set_output('next_at', str(nxt) if nxt else '')

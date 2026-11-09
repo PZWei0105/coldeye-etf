@@ -3,7 +3,7 @@
    三類：基礎觀念（basic）、陷阱提醒（trap）、看盤判斷（read）。每天照日期輪一課（從 2026/10/22 起算，三類輪流），
    可以往前翻、看全部課程；上過的課記在這支手機（coldeye.lessons），不上傳。
    新增一課：加進 LESSONS 就好（id 不要改，上過的紀錄跟著 id）；每一課一定要有 src（官方來源）。 */
-import { $, $$, esc, isNum, S, settings, store, fmt, quote, premBand, today, journal, ICON } from './core.js';
+import { $, $$, esc, isNum, S, settings, store, fmt, quote, premBand, today, journal, ICON, taiexNow, dayTag } from './core.js';
 import { openModal, closeModal } from './forms.js';
 import { openTerm } from './learn.js';
 import { openCase, CASES } from './cases.js';
@@ -505,7 +505,7 @@ export const LESSONS = [
       '歷史上 2020/3、2022、2024/8、2025/4 這幾次大跌，0050 最後都回到大跌前的價格：快的幾個交易日，2022 年那次花了兩年；槓桿型每次都跌得更深、債券 ETF 也沒有真的避到險。案例教室有每一次的真實走勢。',
     ],
     do: ['大跌日當天：看，不動。', '收盤後看今日行動：有沒有持股跌破防守線（減碼／先不加碼）。', '記進決策日記：寫下你當時怎麼想，一個月後對答案。'],
-    ex: () => { const m = S.summary && S.summary.market; const b = S.breadth; return m && isNum(m.ma60) ? `今天加權 ${fmt.n(m.close, 0)}（${fmt.pct(m.pct)}），${m.close >= m.ma60 ? '在季線之上' : '跌破季線'}（季線 ${fmt.n(m.ma60, 0)}）${b && b.n ? `；偏多 ETF 占 ${Math.round(b.pBull * 100)}%` : ''}。` : ''; },
+    ex: () => { const m = taiexNow(); const b = S.breadth; if (!m || !isNum(m.ma60)) return ''; const tg = dayTag(m.d); return `${tg === '今日' ? '今天' : tg}加權 ${fmt.n(m.px, 0)}（${fmt.pct(m.pc)}），${m.px >= m.ma60 ? '在季線之上' : '跌破季線'}（季線 ${fmt.n(m.ma60, 0)}）${b && b.n ? `；偏多 ETF 占 ${Math.round(b.pBull * 100)}%` : ''}。`; },
     src: [SRC.index, SRC.flows], terms: ['breadth', 'ma', 'dl'], cases: ['crash20240805', 'tariff2025', 'covid2020'],
   },
   {
