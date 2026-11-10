@@ -5,7 +5,7 @@
 import {
   $, $$, esc, isNum, clamp, S, PF, settings, saveSettings, book, isPaper, store, journal, saveJournal, alerts, saveAlerts, newId,
   fmt, money, sharesOf, dirCls, catName, ICON, quote, ensureHist, ensureDetail, ensureTrack, heldOf, adviceFor, today, twParts,
-  toast, bus, taiexNow, quoteWhen, marketTemp,
+  toast, bus, taiexNow, quoteWhen, marketTemp, userName,
 } from './core.js';
 import { openModal, closeModal } from './forms.js';
 import * as A from './aide.js';
@@ -338,7 +338,7 @@ function heroHTML() {
     <div class="ah-core">${coreSVG('idle')}</div>
     <div class="ah-txt">
       <div class="ah-k">冷眼副官・你的投資小秘書</div>
-      <h1 class="ah-h">${esc(settings.name || 'PZ')}，${word}。有什麼想法？</h1>
+      <h1 class="ah-h">${esc(userName())}，${word}。有什麼想法？</h1>
       <p class="ah-s">說出你的想法，副官用固定規則幫你檢查、幫你記下來，${A.HORIZON} 個交易日後自動對答案。想深入討論，一鍵帶去問 Claude。</p>
     </div>
     <div class="ah-quick" role="group" aria-label="快速開始">${Object.entries(A.STANCE).map(([k, s]) => `<button class="qk st-${k}" data-quick="${k}">${STI[k]}<span>${s.t}</span></button>`).join('')}</div>

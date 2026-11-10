@@ -963,6 +963,8 @@ export function dcaSpent(lots, cashD, today) {
  */
 export const HALTS = [
   { c: '00662', from: 20261111, to: 20261116, back: 20261117, k: 5, why: '1 拆 5 分割', src: 'https://ec.ltn.com.tw/article/breakingnews/5569790' },
+  // 0053：倍數照 10/8 受益人會議當天的淨值（258.84 元）算＝8；12/1 最後交易日、12/2～12/7 停止交易、12/8 恢復（商周 2026/11/5、優分析 2026/10/9）
+  { c: '0053', from: 20261202, to: 20261207, back: 20261208, k: 8, why: '1 拆 8 分割', src: 'https://www.businessweekly.com.tw/business/blog/3023531' },
 ];
 /** 這一天這一檔是不是在已公告的停止交易期間（是就回傳那一筆） */
 export const haltOn = (c, d, halts = HALTS) => (halts || []).find((h) => h.c === c && d >= h.from && d <= h.to) || null;
@@ -1056,4 +1058,146 @@ export function alertSplit(a, splits, upto, pxNow) {
   }
   if (px === a.px && sx === (a.sx || 0)) return null;
   return { ...a, px, sx, ...(kk !== 1 ? { was: a.px, sk: kk } : {}) };
+}
+
+// ------------------------------------------------------------------ 今日戰報：今天每一檔賺賠多少（部位分頁）
+/**
+ * P：pf.js buildPortfolio 的結果；bench：同一天 0050 的報價（core.js 的 quote(row)，沒有就 null）；lots：這一本的交易紀錄。
+ * 每一檔的「今天」直接用 buildPortfolio 算好的 day（報價日以前就持有的股數 × 今日漲跌；報價日當天的買賣用成交價和現價的差），
+ * 漲跌是證交所用參考價算的（除息那天股價扣掉的配息不算虧損），所以加起來一定等於 P.totals.day。
+ * 今天出清的那幾檔（closed 裡有 day 的，剛好用參考價賣掉、損益 0 的也算）也列進來。報價日期比最新一天舊的（冷門、今天還沒成交、停止交易）
+ * 那一檔今天的漲跌算 0（只算今天買賣的價差），標 stale、不顯示漲跌百分比。
+ * 回傳 { date, items: [{ code, name, day, pc, stale, traded, held, slot }]（照金額的絕對值由大到小）, total, pct, up, down, flat, wait（還沒成交）,
+ *        bench: { pc } | null（0050 同一天的漲跌；日期不同就不比）}
+ */
+export function dayReport(P, bench, lots = []) {
+  if (!P || !P.totals) return null;
+  const dates = [...(P.holdings || []), ...(P.closed || [])].map((x) => x.q && x.q.date).filter(isNum);
+  const date = dates.length ? Math.max(...dates) : null;
+  const traded = new Set((lots || []).filter((l) => date && l.d && l.d >= date).map((l) => l.c));
+  const items = [];
+  for (const x of P.holdings || []) {
+    const q = x.q || {};
+    const stale = !!(date && q.date && q.date < date);
+    items.push({ code: x.code, name: x.name, day: isNum(x.day) ? x.day : null, pc: stale ? null : (isNum(q.pc) ? q.pc : null), stale, traded: traded.has(x.code), held: true, slot: x.slot ?? null });
+  }
+  for (const x of P.closed || []) {
+    if (!isNum(x.day)) continue;
+    const q = x.q || {};
+    // 今天出清、但這一檔今天還沒有成交（報價是前一天的）：漲跌不是今天的，不顯示
+    const stale = !!(date && q.date && q.date < date);
+    items.push({ code: x.code, name: x.name, day: x.day, pc: stale ? null : (isNum(q.pc) ? q.pc : null), stale, traded: true, held: false, slot: null });
+  }
+  items.sort((a, b) => Math.abs(b.day || 0) - Math.abs(a.day || 0) || (a.code < b.code ? -1 : 1));
+  const total = items.reduce((t, x) => t + (x.day || 0), 0);
+  const sign = (v) => (Math.abs(v || 0) < 0.5 ? 0 : v > 0 ? 1 : -1);
+  // 還沒成交（或停止交易）而且當天沒有買賣的那幾檔另外數（wait），不算「平」
+  const wait = (x) => x.stale && sign(x.day) === 0;
+  return {
+    date, items, total, pct: isNum(P.totals.dayPct) ? P.totals.dayPct : null,
+    up: items.filter((x) => sign(x.day) > 0).length, down: items.filter((x) => sign(x.day) < 0).length,
+    flat: items.filter((x) => sign(x.day) === 0 && !wait(x)).length, wait: items.filter(wait).length,
+    bench: bench && isNum(bench.pc) && date && bench.date === date ? { pc: bench.pc } : null,
+  };
+}
+
+// ------------------------------------------------------------------ 資金輪動：九大類今天、近 5 日、近 20 日（雷達）
+const wavg = (xs) => {
+  let sw = 0, s = 0;
+  for (const [x, w] of xs) if (isNum(x) && isNum(w) && w > 0) { s += x * w; sw += w; }
+  return sw > 0 ? s / sw : null;
+};
+/**
+ * 每一類 ETF 的平均漲跌，照「前 20 個交易日平均成交值」（summary 的 v20，沒有就用最新一天的成交值）加權：錢多的那幾檔份量重，
+ * 冷門小檔不會把整類拉偏。
+ *  day  今天（盤中是即時價）：只算報價日期是最新一天的（今天還沒成交的不算），單位 %；
+ *  r5／r20  近 5、20 個交易日：summary 的 sp（還原權息、分割的收盤，到 asof）算，只算 asof 那天有成交的，單位是比例；
+ *  heat 成交值熱度：最新一天成交值合計 ÷ 前 20 日平均合計（同一批 ETF；1 是平常，2 是平常的兩倍）。
+ * rows：summary 的 etfs；q(row)：報價；asof：summary.asof。
+ * 回傳 { date（今天漲跌是哪一天）, asof, cats: [{ k, n, nDay, up, down, flat, day, r5, r20, heat }] }（day 由高到低，沒有的放最後）
+ */
+export function rotation(rows, q, asof) {
+  const by = new Map();
+  const quotes = new Map();
+  let date = null;
+  for (const r of rows || []) {
+    const x = q(r);
+    quotes.set(r.c, x);
+    if (x && isNum(x.date) && (date == null || x.date > date)) date = x.date;
+  }
+  for (const r of rows || []) {
+    if (!r || !r.k) continue;
+    if (!by.has(r.k)) by.set(r.k, []);
+    by.get(r.k).push(r);
+  }
+  const cats = [];
+  for (const [k, xs] of by) {
+    const wOf = (r) => (isNum(r.v20) && r.v20 > 0 ? r.v20 : isNum(r.val) && r.val > 0 ? r.val : 0);
+    const dayPairs = [];
+    let up = 0, down = 0, flat = 0, nDay = 0;
+    for (const r of xs) {
+      const x = quotes.get(r.c);
+      if (!x || x.date !== date || !isNum(x.pc)) continue;
+      nDay += 1;
+      if (x.pc > 0) up += 1; else if (x.pc < 0) down += 1; else flat += 1;
+      dayPairs.push([x.pc, wOf(r)]);
+    }
+    const ret = (r, n) => {
+      const sp = r.sp;
+      if (r.d !== asof || !Array.isArray(sp) || sp.length < n + 1) return null;
+      const a = sp[sp.length - 1 - n], b = sp[sp.length - 1];
+      return isNum(a) && isNum(b) && a > 0 ? b / a - 1 : null;
+    };
+    const r5 = wavg(xs.map((r) => [ret(r, 5), wOf(r)]));
+    const r20 = wavg(xs.map((r) => [ret(r, 20), wOf(r)]));
+    let sv = 0, s20 = 0;
+    for (const r of xs) if (r.d === asof && isNum(r.val) && isNum(r.v20) && r.v20 > 0) { sv += r.val; s20 += r.v20; }
+    cats.push({ k, n: xs.length, nDay, up, down, flat, day: wavg(dayPairs), r5, r20, heat: s20 > 0 ? sv / s20 : null });
+  }
+  cats.sort((a, b) => (isNum(b.day) ? b.day : -1e9) - (isNum(a.day) ? a.day : -1e9) || (a.k < b.k ? -1 : 1));
+  return { date, asof, cats };
+}
+
+// ------------------------------------------------------------------ 同類排行：單檔頁和同一類的 ETF 比
+/** 要比的數字（summary 的欄位）。r1y／vol／mdd 是比例；y、pr 已經是 %；aum、v20 是元；hd 是人 */
+export const PEER_METRICS = [
+  { k: 'r1y', t: '近一年報酬（含息）', u: 'r' },
+  { k: 'vol', t: '年化波動', u: 'r' },
+  { k: 'mdd', t: '近一年最大回檔', u: 'r' },
+  { k: 'y', t: '殖利率（近 12 個月配息）', u: 'p' },
+  { k: 'aum', t: '規模', u: 'big' },
+  { k: 'hd', t: '受益人數', u: 'n' },
+  { k: 'v20', t: '平均每天成交值（前 20 日）', u: 'big' },
+  { k: 'pr', t: '溢價（最新收盤時）', u: 'p' },
+];
+/**
+ * 同類排行：同一類（summary 的 k）而且有這個數字的 ETF 裡，這一檔排第幾高（同值同名次）。少於 3 檔不排。
+ * 回傳 [{ k, t, u, v, n, rank, med, vals（由高到低）}]；這一檔沒有那個數字時 v、rank 是 null。
+ */
+export function peerRank(rows, code) {
+  const me = (rows || []).find((r) => r.c === code);
+  if (!me) return null;
+  const peers = rows.filter((r) => r.k === me.k);
+  return PEER_METRICS.map((m) => {
+    const vals = peers.map((r) => r[m.k]).filter(isNum).sort((a, b) => b - a);
+    const v = isNum(me[m.k]) ? me[m.k] : null;
+    const n = vals.length;
+    const med = n ? (n % 2 ? vals[(n - 1) / 2] : (vals[n / 2 - 1] + vals[n / 2]) / 2) : null;
+    const rank = v != null && n >= 3 ? 1 + vals.filter((x) => x > v).length : null;
+    return { k: m.k, t: m.t, u: m.u, v, n, rank, med, vals };
+  });
+}
+
+// ------------------------------------------------------------------ 盤中走勢（關注清單的小圖）
+/**
+ * 後台每一輪記下的盤中走勢（data/spark.json：{ d, at, s: { 代號: [分鐘, 價, 分鐘, 價, …] } }，分鐘＝資料時間距 09:00）。
+ * 資料日期要和這一檔報價的日期一樣才用（不然是別天的走勢）。回傳 { d, pts: [[分鐘, 價], …] }，少於 2 個點回傳 null。
+ */
+export function daySpark(spark, code, date) {
+  if (!spark || !spark.s || !isNum(date) || spark.d !== date) return null;
+  const a = spark.s[code];
+  if (!Array.isArray(a)) return null;
+  const pts = [];
+  for (let i = 0; i + 1 < a.length; i += 2) if (isNum(a[i]) && isNum(a[i + 1]) && a[i + 1] > 0 && a[i] >= 0 && a[i] <= 330) pts.push([a[i], a[i + 1]]);
+  return pts.length >= 2 ? { d: spark.d, pts } : null;
 }

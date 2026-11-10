@@ -1,7 +1,8 @@
 /* 冷眼 — 看懂模式：每個數字、術語點一下就有白話解釋，並用當下的真實數字舉例。
    打開右上角的「解」之後，畫面上有虛線底線的字都可以點。 */
-import { $$, esc, isNum, S, settings, saveSettings, fmt, quote, PF, journal } from './core.js';
+import { $$, esc, isNum, S, settings, saveSettings, fmt, quote, PF, journal, today, catName } from './core.js';
 import { openModal } from './forms.js';
+import { rotation, peerRank } from './calc.js';
 
 const r2 = (x) => (isNum(x) ? x.toFixed(2) : '—');
 const pc = (x, d = 1) => (isNum(x) ? `${x > 0 ? '+' : ''}${(x * 100).toFixed(d)}%` : '—');
@@ -21,7 +22,7 @@ export const TERMS = {
   },
   sc: {
     t: '規則分數',
-    b: ['六個面向分數的加權平均，範圍 −2（最偏空）到 +2（最偏多）。刻度上紅色區是偏多、綠色區是偏空（台股習慣紅漲綠跌）。'],
+    b: ['六個面向分數的加權平均，範圍 −2（最偏空）到 +2（最偏多）。刻度上紅色區是偏多、綠色區是偏空（台股習慣紅漲綠跌）。時間尺度大約一個月。'],
     ex: (r) => r && isNum(r.sc) ? `${r.n}：${r.sc >= 0 ? '+' : ''}${r2(r.sc)}。` : '',
   },
   cf: {
@@ -257,6 +258,45 @@ export const TERMS = {
     ex: () => {
       const t = S.global && S.global.temp;
       return t ? `現在是「${t.level}」：${t.flags.length ? t.flags.map((f) => f.t).join('、') : '沒有警訊'}。` : '';
+    },
+  },
+  dayrep: {
+    t: '今日戰報',
+    b: ['你今天每一檔賺賠多少，加起來就是今天的損益（和上面「今日」那個數字一樣）。漲跌照證交所的參考價算：除息那天股價扣掉的配息還是你的，不算虧損；今天還沒成交的那一檔算 0；今天買進或賣出的，用成交價和現價的差算。',
+      '旁邊放同一天的 0050 當參考：你的持股今天比大盤多賺還是少賺，一眼就知道。單一天的漲跌是雜訊，不要因為一天的戰報就改變長期計畫。'],
+    ex: () => {
+      const P = S.P;
+      if (!P || !P.holdings || !P.holdings.length) return '';
+      const ds = P.holdings.map((x) => x.q && x.q.date).filter(isNum);
+      const d = ds.length ? Math.max(...ds) : null;
+      const live = P.holdings.filter((x) => x.q && x.q.date === d);
+      const up = live.filter((x) => (x.day || 0) >= 0.5).length, down = live.filter((x) => (x.day || 0) <= -0.5).length;
+      return d ? `你持有 ${P.holdings.length} 檔，${d === today() ? '今天' : fmt.d(d)}賺錢的 ${up} 檔、賠錢的 ${down} 檔。` : '';
+    },
+  },
+  rot: {
+    t: '資金輪動',
+    b: ['把 ETF 照冷眼的九大類分組，看每一類今天、近 5 日、近 20 日（都是有成交的交易日）平均漲跌多少，錢正在往哪一類跑。每一類的平均照「之前 20 個有成交日子的平均成交值」加權：成交多的那幾檔份量重，冷門小檔不會把整類拉偏。',
+      '「成交值倍數」是最新一天的成交值 ÷ 之前 20 個有成交日子的平均：2 倍代表那一類今天特別熱，0.5 倍代表很冷清。熱不等於會繼續漲——追高之前先看「判斷教練」的「大漲想追」。'],
+    ex: () => {
+      if (!S.summary) return '';
+      const R = rotation(S.summary.etfs, quote, S.summary.asof);
+      const cs = R.cats.filter((c) => isNum(c.day));
+      if (cs.length < 2 || !R.date) return '';
+      const a = cs[0], z = cs[cs.length - 1];
+      const p = (x) => fmt.r(x / 100, 2);
+      return `${R.date === today() ? '今天' : fmt.d(R.date)}漲最多的是「${catName(a.k)}」${p(a.day)}，最弱的是「${catName(z.k)}」${p(z.day)}。`;
+    },
+  },
+  peer: {
+    t: '同類排行',
+    b: ['把這一檔和冷眼同一類的 ETF 放在一起比：近一年報酬、波動、最大回檔、殖利率、規模、受益人數、成交值、溢價各排第幾。每一條線上的刻度是同類每一檔的位置，短直線是中位數，亮的菱形是這一檔。',
+      '名次只是位置，不是好壞：報酬高的通常波動也大；殖利率高不代表總報酬高；規模、成交值大代表比較好買賣、不容易被清算。比較時要看自己在意的是哪一項。'],
+    ex: (r) => {
+      if (!r || !S.summary) return '';
+      const res = peerRank(S.summary.etfs, r.c);
+      const m = res && res.find((x) => x.k === 'r1y');
+      return m && m.rank ? `${r.n} 近一年含息報酬 ${pc(m.v)}，在${catName(r.k)} ${m.n} 檔裡排第 ${m.rank} 高（中位數 ${pc(m.med)}）。` : '';
     },
   },
 };

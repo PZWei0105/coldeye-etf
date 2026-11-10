@@ -28,11 +28,13 @@ export const DEFAULT_RULES = [
   '每次加碼前先想好出場線',
   '分批買進，不一次梭哈',
 ];
+/** 怎麼稱呼使用者：他本人是「痞子葳」（2026/11/8 起他的專屬 App 一律這樣叫他；「魏子葳」是他作品的主角，不是他） */
+export const DEFAULT_NAME = '痞子葳';
 /** 緊急預備金：0 到 1 百億元的整數，其他都當作 0 */
 export const normReserve = (x) => { const v = Math.round(Number(x)); return isFinite(v) && v > 0 ? Math.min(v, 1e10) : 0; };
 const savedSettings = store.get('settings', {});
 export const settings = Object.assign({
-  watch: DEFAULT_WATCH.slice(), risk: 'mid', fee: { ...PF.DEFAULT_FEE }, name: 'PZ', theme: 'system',
+  watch: DEFAULT_WATCH.slice(), risk: 'mid', fee: { ...PF.DEFAULT_FEE }, name: DEFAULT_NAME, theme: 'system',
   privacy: false, opinion: false, dca: true, installHidden: false, rules: DEFAULT_RULES.slice(),
   mode: 'real', explain: false, boot: true, heatMode: 'chg', radarView: 'list', duel: null, tm: null,
   // 副官與聲光
@@ -78,6 +80,10 @@ export const saveSettings = () => {
   if (cur && typeof cur === 'object') for (const k of DCA_KEYS) if (Array.isArray(cur[k])) out[k] = cur[k];
   return store.set('settings', out);
 };
+// 舊版預設的稱呼「PZ」（或空白）換成「痞子葳」，存起來
+if (typeof settings.name !== 'string' || !settings.name.trim() || settings.name.trim() === 'PZ') { settings.name = DEFAULT_NAME; saveSettings(); }
+/** 指揮台問候、開機畫面、副官用的稱呼 */
+export const userName = () => (typeof settings.name === 'string' && settings.name.trim()) || DEFAULT_NAME;
 /** 重新讀定期定額的計畫（另一個分頁改過時） */
 export function reloadPlans() {
   const cur = store.get('settings', null);
@@ -177,7 +183,7 @@ export const isJournalKey = (k) => k === 'coldeye.journal';
 // ------------------------------------------------------------------ 全域狀態與事件
 export const S = {
   summary: null, live: null, offline: false, news: null, newsAt: 0, track: null, divs: null, cal: null, detail: {}, hist: {}, histMeta: {}, breadth: null, pxSeen: new Map(),
-  verOffline: false, summaryNet: false, stockq: null, stockqAt: 0, global: null, alloc: null,
+  verOffline: false, summaryNet: false, stockq: null, stockqAt: 0, global: null, alloc: null, spark: null,
   tab: store.get('tab', 'home'), all: { q: '', cat: '*', sig: '*', sort: 'score' }, newsTab: 'official',
   range: 120, rows: new Map(), deferredInstall: null, P: null, adv: new Map(), openCode: null,
   firstPaint: true, changes: [],
@@ -695,6 +701,21 @@ export function addBase(P = S.P) {
 export function marketTemp() {
   return (S.global && S.global.temp) || null;
 }
+/**
+ * 盤中走勢（spark.json：後台每一輪記下的今天每一檔 [分鐘, 價]）：關注清單的小圖、盤面熱力的盤中縮時用。
+ * v＝版本檔裡的時間戳（變了才重抓）；抓不到就用手上的。不存在手機裡（隔天就沒用了，而且有 200 多 KB）。
+ */
+let sparkP = null;
+export function ensureSpark(o = {}) {
+  if (S.spark && !o.force && !o.v) return Promise.resolve(S.spark);
+  if (!sparkP) {
+    sparkP = getJSON('spark.json', { v: o.v }).then((sp) => {
+      if (sp && sp.s && typeof sp.s === 'object') S.spark = sp;
+      return S.spark;
+    }).catch(() => S.spark || null).finally(() => { sparkP = null; });
+  }
+  return sparkP;
+}
 /** 全球市場與市場溫度（global.json）：v＝版本檔裡的時間戳；抓不到就用手上的（或上次存下的） */
 let globalP = null;
 export function ensureGlobal(o = {}) {
@@ -788,6 +809,24 @@ export function sparkSVG(vals, w = 64, h = 28, dir = 0) {
   const end = pts[pts.length - 1];
   const col = dir > 0 ? 'var(--up)' : dir < 0 ? 'var(--down)' : 'var(--flat)';
   return `<svg class="spark" viewBox="0 0 ${w} ${h}" aria-hidden="true"><path d="${d}" fill="none" stroke="var(--frost-3)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${end[0].toFixed(1)}" cy="${end[1].toFixed(1)}" r="2.6" fill="${col}"/></svg>`;
+}
+
+/**
+ * 今天的盤中走勢小圖（calc.js daySpark 的點：[[距 09:00 幾分鐘, 價], …]）：橫軸固定 09:00～13:30（盤中看得出走到幾點），
+ * 虛線＝參考價（昨收；除息、分割那天是證交所的參考價）。顏色跟今天的漲跌，live＝盤中，最後一點會閃。
+ */
+export function daySparkSVG(pts, ref, w = 64, h = 28, dir = 0, live = false) {
+  const p = (pts || []).filter((x) => Array.isArray(x) && isNum(x[0]) && isNum(x[1]));
+  if (p.length < 2) return '';
+  const ys = p.map((x) => x[1]).concat(isNum(ref) ? [ref] : []);
+  const mn = Math.min(...ys), mx = Math.max(...ys), rg = mx - mn || Math.max(1e-6, mx * 0.002);
+  const X = (m) => 2 + clamp(m / 270, 0, 1) * (w - 4);
+  const Y = (v) => h - 3 - ((v - mn) / rg) * (h - 6);
+  const d = p.map((x, i) => (i ? 'L' : 'M') + X(x[0]).toFixed(1) + ' ' + Y(x[1]).toFixed(1)).join('');
+  const end = p[p.length - 1];
+  const col = dir > 0 ? 'var(--up)' : dir < 0 ? 'var(--down)' : 'var(--flat)';
+  const base = isNum(ref) ? `<line x1="2" x2="${w - 2}" y1="${Y(ref).toFixed(1)}" y2="${Y(ref).toFixed(1)}" stroke="var(--frost-3)" stroke-width="1" stroke-dasharray="2 2.5" opacity=".7"/>` : '';
+  return `<svg class="spark day${live ? ' live' : ''}" viewBox="0 0 ${w} ${h}" aria-hidden="true">${base}<path d="${d}" fill="none" stroke="${col}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" opacity=".9"/><circle class="sp-end" cx="${X(end[0]).toFixed(1)}" cy="${Y(end[1]).toFixed(1)}" r="2.6" fill="${col}"/></svg>`;
 }
 
 let toastTimer = null;

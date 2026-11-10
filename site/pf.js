@@ -288,6 +288,9 @@ export function buildPortfolio(pf, rows, quoteOf, divsData, cfg, today) {
   }
   const holdings = [];
   const closed = [];
+  // 今日 % 的分母：報價日以前就持有的股數 × 參考價（px − ch；這一檔在最新一天還沒成交就用現價），加上報價日當天買進花的錢。
+  // 以前用「現在市值 − 今日損益」：當天有賣出（不在現在市值裡）或買進時分母不對（賣掉一半賺 1% 會被算成 2%）
+  let dayBase = 0;
   let realizedAll = 0;
   let divAll = 0;
   let undatedAll = 0;
@@ -319,14 +322,19 @@ export function buildPortfolio(pf, rows, quoteOf, divsData, cfg, today) {
         const qd = stale ? mkt : q.date || today;
         let before = 0;
         let tp = 0;
+        let bought = 0;
         for (const l of sortLots(lots).map((x) => normLot(x, splits))) {
-          if (l.d && l.d >= qd) tp += (l.side === 'sell' ? l.npx - px : px - l.npx) * l.nsh;
+          if (l.d && l.d >= qd) { tp += (l.side === 'sell' ? l.npx - px : px - l.npx) * l.nsh; if (l.side !== 'sell') bought += l.npx * l.nsh; }
           else before += (l.side === 'sell' ? -1 : 1) * l.nsh;
         }
-        dayC = (stale ? 0 : Math.max(0, before) * q.ch) + tp;
-        if (!(Math.abs(dayC) > 1e-9) || !lots.some((l) => l.d && l.d >= qd)) dayC = null;   // 只算今天清掉的
+        // 只算報價日當天清掉的（剛好用參考價賣掉、損益 0 的也算：今日戰報要列出來）
+        if (lots.some((l) => l.d && l.d >= qd)) {
+          dayC = (stale ? 0 : Math.max(0, before) * q.ch) + tp;
+          if (Math.abs(dayC) < 1e-9) dayC = 0;
+          dayBase += Math.max(0, before) * (stale ? px : px - q.ch) + bought;
+        }
       }
-      closed.push({ code, row, name: row ? row.n : code, h, divRecv: rec.total, day: dayC });
+      closed.push({ code, row, name: row ? row.n : code, h, divRecv: rec.total, day: dayC, q });
       continue;
     }
     const mv = px != null ? h.sh * px : null;
@@ -339,11 +347,13 @@ export function buildPortfolio(pf, rows, quoteOf, divsData, cfg, today) {
       const qd = stale ? mkt : q.date || today;
       let before = 0;
       let todayPart = 0;
+      let bought = 0;
       for (const l of sortLots(lots).map((x) => normLot(x, splits))) {
-        if (l.d && l.d >= qd) todayPart += (l.side === 'sell' ? l.npx - px : px - l.npx) * l.nsh;
+        if (l.d && l.d >= qd) { todayPart += (l.side === 'sell' ? l.npx - px : px - l.npx) * l.nsh; if (l.side !== 'sell') bought += l.npx * l.nsh; }
         else before += (l.side === 'sell' ? -1 : 1) * l.nsh;
       }
       day = (stale ? 0 : Math.max(0, before) * q.ch) + todayPart;
+      dayBase += Math.max(0, before) * (stale ? px : px - q.ch) + bought;
     }
     const tr = trailingDividends(dv.d, splits, today);
     const nd = row && row.dv && row.dv.d >= today ? row.dv : null;
@@ -364,12 +374,12 @@ export function buildPortfolio(pf, rows, quoteOf, divsData, cfg, today) {
   const T = mvAll + cash;
   for (const x of holdings) x.w = T > 0 && x.mv != null ? x.mv / T : null;
   holdings.sort((a, b) => (b.mv || 0) - (a.mv || 0));
-  const prevMv = mvAll - dayAll;
+
   return {
     holdings, closed,
     totals: {
       mv: mvAll, cost: costAll, pnl: pnlAll, pct: costAll > 0 ? pnlAll / costAll : null,
-      day: dayAll, dayPct: prevMv > 0 ? dayAll / prevMv : null,
+      day: dayAll, dayPct: dayBase > 0 ? dayAll / dayBase : null,
       cash, T, realized: realizedAll, divRecv: divAll, undated: undatedAll,
       annual: holdings.reduce((a, x) => a + (x.annual || 0), 0),
       months: holdings.reduce((acc, x) => acc.map((v, i) => v + (x.months[i] || 0)), new Array(12).fill(0)),
@@ -1091,7 +1101,7 @@ export function readBackup(obj) {
       if (okNum(p.fee.minOdd) && p.fee.minOdd >= 0 && p.fee.minOdd <= 100) f.minOdd = p.fee.minOdd;
       out.fee = f;
     }
-    if (typeof p.name === 'string') out.name = p.name.replace(/[<>&"'`]/g, '').trim().slice(0, 8) || 'PZ';
+    if (typeof p.name === 'string') out.name = p.name.replace(/[<>&"'`]/g, '').trim().slice(0, 8) || '痞子葳';
     if (Array.isArray(p.rules)) out.rules = p.rules.filter((r) => typeof r === 'string' && r.trim()).map((r) => r.trim().slice(0, 60)).slice(0, 20);
     for (const k of ['plans', 'dcaSkip', 'dcaNoAsk']) if (Array.isArray(p[k])) out[k] = p[k].slice(0, 3000);
     if (okNum(p.reserve) && p.reserve >= 0) out.reserve = Math.min(Math.round(p.reserve), 1e10);

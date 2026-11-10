@@ -343,9 +343,11 @@ def publish(data_dir: pathlib.Path, tape=None):
 
 
 def make_spark(day):
-    """今天每一檔的走勢線（沙盤的自選卡片、清單用）：{d, s: {代號: [分鐘, 價, 分鐘, 價, …]}}，分鐘＝資料時間距 09:00。"""
+    """今天每一檔的走勢線（沙盤的自選卡片、清單；冷眼的清單小圖）：{d, at, s: {代號: [分鐘, 價, 分鐘, 價, …]}}，
+    分鐘＝資料時間距 09:00；at＝最新一筆快照是後台幾點抓的（台灣時間，冷眼的 version.json 用它判斷有沒有變）。"""
     base = _epoch(day['d'], 90000)
     out = {}
+    newest = max((t for rec in (day.get('codes') or {}).values() for t in ((rec.get('reg') or {}).get('t') or []) if t), default=None)
     for c, rec in (day.get('codes') or {}).items():
         s = rec.get('reg') or {}
         ts, qs, zs = s.get('t') or [], s.get('q') or [], s.get('z') or []
@@ -362,7 +364,8 @@ def make_spark(day):
             last_m = m
         if pts:
             out[c] = pts
-    return {'d': day['d'], 's': out}
+    at = dt.datetime.fromtimestamp(newest, TW).isoformat(timespec="seconds") if newest else None
+    return {'d': day['d'], 'at': at, 's': out}
 
 
 def write_k(out_dir: pathlib.Path, state, codes):

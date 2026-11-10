@@ -165,8 +165,9 @@ function crash(ctx) {
     const worst = H.filter((x) => x.q && isNum(x.q.pc)).sort((a, b) => a.q.pc - b.q.pc).slice(0, 3);
     const brk = H.filter((x) => x.row && isNum(x.row.dl) && isNum(x.px) && x.px < x.row.dl);
     const trim = H.filter((x) => x.row && x.row.ps === 'trim');
+    const dw = dayWord(Math.max(0, ...H.map((x) => (x.q && x.q.date) || 0)) || null);
     S1.push(step('你的部位怎麼了',
-      `總資產 ${ctx.privacy ? '' : `<b class="num ${t.day < 0 ? 'down' : t.day > 0 ? 'up' : ''}">${money(t.day, true)}</b> `}（<b class="num">${pr(t.dayPct, 2)}</b>）。跌最多：${worst.map((x) => `${esc(x.name)} <b class="num down">${pc(x.q.pc, 2)}</b>`).join('、') || '—'}。${brk.length ? `<br>跌破移動防守線：${brk.map((x) => `${esc(x.name)}（${n2(x.row.dl)}）`).join('、')}。` : '<br>沒有一檔跌破移動防守線。'}${trim.length ? `<br>規則轉成「減碼」：${trim.map((x) => esc(x.name)).join('、')}。` : ''}`,
+      `${dw === '今天' ? dw : `${dw} `}持股 ${ctx.privacy ? '' : `<b class="num ${t.day < 0 ? 'down' : t.day > 0 ? 'up' : ''}">${money(t.day, true)}</b> `}（<b class="num">${pr(t.dayPct, 2)}</b>，不含現金）。跌最多：${worst.map((x) => `${esc(x.name)} <b class="num down">${pc(x.q.pc, 2)}</b>`).join('、') || '—'}。${brk.length ? `<br>跌破移動防守線：${brk.map((x) => `${esc(x.name)}（${n2(x.row.dl)}）`).join('、')}。` : '<br>沒有一檔跌破移動防守線。'}${trim.length ? `<br>規則轉成「減碼」：${trim.map((x) => esc(x.name)).join('、')}。` : ''}`,
       brk.length || trim.length ? 'warn' : 'ok',
       '真正該行動的理由，是跌破你事先設好的出場線、或規則轉成減碼；不是「今天跌很多」。',
       '恐慌時一次全部賣掉，等於把短期的波動變成永久的損失。',

@@ -525,6 +525,13 @@ def r4(x, n=4):
     return round(x, n)
 
 
+def avg_before(xs, i, n=20):
+    """xs[i] 之前 n 個的平均（不含 xs[i]）；前面不滿 n 個回傳 None。"""
+    if i < n or i > len(xs):
+        return None
+    return sum(xs[i - n:i]) / n
+
+
 def publish(state, log, mode):
     now = now_tw()
     extra = state.data.pop('_extra', {}) if '_extra' in state.data else {}
@@ -569,7 +576,7 @@ def publish(state, log, mode):
 
 
 STAMPS = (('summary', 'generated'), ('live', 'at'), ('news', 'generated'), ('stockq', 'at'), ('stocks', 'at'), ('hold', 'at'),
-          ('global', 'at'))
+          ('global', 'at'), ('spark', 'at'))
 
 
 def file_stamps(data_dir):
@@ -899,6 +906,8 @@ def summary_row(s, r, m, nd, state):
         'yp': r4(yp, 3), 'hot': pos.get('hot'), 'blw': pos.get('below'), 'fx': s.foreign,
         # ETF 對決用：近一年含息報酬、年化波動、最大回檔（小數，0.12 = 12%）
         'r1y': r4(r1y), 'vol': r4(vol1y), 'mdd': r4(mdd1y), 'since': s.dates[0],
+        # 資金輪動、同類排行用：最新一天之前 20 個交易日的平均成交值（不含最新一天，拿來和今天比熱度；不滿 20 天不給）
+        'v20': r4(avg_before(s.val, i, 20), 0),
     }
 
 
@@ -1032,6 +1041,7 @@ def make_news(state, pre, risk, series, now):
         k = classify(x)   # 過濾規則更新後，舊資料也重新套用一次
         if k:
             items.append({**x, 'kind': k})
+    items = dedupe_news(items)
     names = {c: (s.name if hasattr(s, 'name') else s) for c, s in series.items()} or \
         {c: m.get('name', c) for c, m in state['meta'].items()}
     for it in items:
@@ -1044,6 +1054,46 @@ def make_news(state, pre, risk, series, now):
     etf_risk = [x for x in risk if src.is_etf_code(x['code'])]
     return {'generated': now.isoformat(timespec='seconds'), 'items': items[:250], 'divs': upcoming,
             'risk': etf_risk, 'risk_total': len(risk)}
+
+
+NEWS_REPOST_DAYS = 14
+
+
+def _news_days(a, b):
+    try:
+        da = dt.date(a // 10000, a // 100 % 100, a % 100)
+        db = dt.date(b // 10000, b // 100 % 100, b % 100)
+    except (TypeError, ValueError):
+        return None
+    return abs((da - db).days)
+
+
+def _news_dup(prev, d, src):
+    """同一個來源、同一個標題的兩則：同一天一定算重複；官方公告（不是中央社）NEWS_REPOST_DAYS 天內也算。"""
+    if prev == d:
+        return True
+    if src == 'cna':
+        return False
+    n = _news_days(prev, d)
+    return n is not None and n <= NEWS_REPOST_DAYS
+
+
+def dedupe_news(items):
+    """同一個來源、同一個標題（拿掉空白後一樣）重複的只留第一則（items 由新到舊，留最新的）：
+    - 官方公告（證交所、金管會、央行）同一個標題 NEWS_REPOST_DAYS 天內又發一次＝重複：
+      證交所把「新加坡AngelCentral來訪證交所…」在 2026/11/6、11/9 發了三次（網址都不同）。
+    - 中央社的例行標題（例如「11月電子期金融期齊跌」）每天都一樣、是不同天的新聞，只拿掉同一天重複的。"""
+    kept = {}
+    out = []
+    for it in items:
+        key = (it.get('src'), re.sub(r'\s+', '', it.get('t') or ''))
+        d = it.get('d')
+        ds = kept.setdefault(key, [])
+        if any(_news_dup(x, d, key[0]) for x in ds):
+            continue
+        ds.append(d)
+        out.append(it)
+    return out
 
 
 def rules_doc():

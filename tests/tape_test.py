@@ -112,7 +112,9 @@ check('tape/0050.json：前一天一定是完成的、今天還沒', f50['prev']
 check('有 spark.json', (tmp / 'spark.json').exists())
 q0 = tape._epoch(20261022, 90000)
 sp = tape.make_spark({'d': 20261022, 'codes': {'0050': {'reg': {'t': [q0 + 400, q0 + 700, q0 + 900], 'q': [q0 + 300, None, q0 + 600], 'z': [108.1, 108.2, None]}}}})
-check('spark.json：今天每一檔的走勢線（距 09:00 的分鐘、價；優先用資料時間）', sp == {'d': 20261022, 's': {'0050': [5.0, 108.1, 11.7, 108.2]}}, sp)
+check('spark.json：今天每一檔的走勢線（距 09:00 的分鐘、價；優先用資料時間）', sp['d'] == 20261022 and sp['s'] == {'0050': [5.0, 108.1, 11.7, 108.2]}, sp)
+check('spark.json 的 at：最新一輪是後台幾點抓的（冷眼 version.json 用它判斷要不要重抓）', sp['at'] == '2026-10-22T09:15:00+08:00', sp)
+check('spark.json：還沒有快照時 at 是 None、s 是空的', tape.make_spark({'d': 20261022, 'codes': {}}) == {'d': 20261022, 'at': None, 's': {}})
 
 
 # ---- 盤後結果：after/{日期}.json、after.json 的 _days 與最近幾天、只留 ETF

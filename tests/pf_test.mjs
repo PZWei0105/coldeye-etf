@@ -65,6 +65,29 @@ t('今日損益：某一檔在最新交易日沒有新價格（沒成交），�
   assert.ok(Math.abs(P2.totals.day - (500 - 1000)) < 1e-9, P2.totals.day);
 });
 
+t('今日 %：分母是昨天收盤時的持股（參考價）＋今天買進的錢；當天有賣出、買進也不會算錯', () => {
+  const rows = new Map([['A', { c: 'A', k: 'broad', n: 'A' }], ['B', { c: 'B', k: 'div', n: 'B' }], ['C', { c: 'C', k: 'bond', n: 'C' }]]);
+  // 昨天 A、B 各 10 萬；今天 B 全部用 101 賣掉（參考價 100，賺 1,000），A 不漲不跌 → 今天 +1,000 ÷ 20 萬 = +0.5%（以前會算成 1.01%）
+  const lots = [
+    { c: 'A', side: 'buy', d: 20260101, sh: 1000, px: 100, fee: 0 },
+    { c: 'B', side: 'buy', d: 20260101, sh: 1000, px: 100, fee: 0 },
+    { c: 'B', side: 'sell', d: 20261027, sh: 1000, px: 101, fee: 0, tax: 0 },
+  ];
+  const qs = { A: { px: 100, ch: 0, date: 20261027 }, B: { px: 100.5, ch: 0.5, date: 20261027 }, C: { px: 50, ch: 1, date: 20261027 } };
+  const P = pf.buildPortfolio({ cash: 0, lots }, rows, (r) => qs[r.c], {}, pf.DEFAULT_FEE, 20261027);
+  assert.ok(Math.abs(P.totals.day - 1000) < 1e-9, P.totals.day);
+  assert.ok(Math.abs(P.totals.dayPct - 0.005) < 1e-12, P.totals.dayPct);
+  // 今天才開始買：10 萬買在 49，現價 50 → 今天 +2,040.8…÷ 10 萬（不會除以 0 或變成無限大）
+  const P2 = pf.buildPortfolio({ cash: 0, lots: [{ c: 'C', side: 'buy', d: 20261027, sh: 2000, px: 49, fee: 0 }] }, rows, (r) => qs[r.c], {}, pf.DEFAULT_FEE, 20261027);
+  assert.ok(Math.abs(P2.totals.day - 2000) < 1e-9 && Math.abs(P2.totals.dayPct - 2000 / 98000) < 1e-12, P2.totals.dayPct);
+  // 剛好用參考價賣掉：今日損益 0，但照樣算「今天出清」（今日戰報要列出來）
+  const P3 = pf.buildPortfolio({ cash: 0, lots: [lots[0], lots[1], { ...lots[2], px: 100 }] }, rows, (r) => qs[r.c], {}, pf.DEFAULT_FEE, 20261027);
+  assert.equal(P3.closed.find((x) => x.code === 'B').day, 0);
+  // 沒有買賣的日子：和以前一樣（現在市值 − 今日損益）
+  const P4 = pf.buildPortfolio({ cash: 0, lots: lots.slice(0, 2) }, rows, (r) => qs[r.c], {}, pf.DEFAULT_FEE, 20261027);
+  assert.ok(Math.abs(P4.totals.dayPct - P4.totals.day / (P4.totals.mv - P4.totals.day)) < 1e-12, P4.totals.dayPct);
+});
+
 t('賣超過持股會被擋下並提醒', () => {
   const h = pf.holdingFromLots([
     { c: 'X', side: 'buy', d: 20250101, sh: 100, px: 10, fee: 1 },

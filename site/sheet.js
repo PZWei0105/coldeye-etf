@@ -9,6 +9,7 @@ import { addToDuel, openDuel, openTM } from './tools.js';
 import { aideDetailHTML, bindAideDetail, openIdea } from './desk.js';
 import { openConfirm, dcaTagsHTML } from './dca.js';
 import { xrayDetailHTML, bindXrayDetail } from './xray.js';
+import { peerHTML } from './pulse.js';
 import * as FX from './fx.js';
 
 const ICON_DUEL = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l9.5 9.5M4 4h3.5M4 4v3.5M20 4l-9.5 9.5M20 4h-3.5M20 4v3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6.5 15.5l2 2M17.5 15.5l-2 2M5 19l2.5-2.5M19 19l-2.5-2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
@@ -159,6 +160,7 @@ function detailHTML(row, det) {
   h += aideDetailHTML(row.c);
   if (row.st != null && det) h += scopeHTML(row, x, det.view);
   h += xrayDetailHTML(row.c);
+  h += peerHTML(row);
   h += calcHTML(row, x);
   h += journalHTML(row.c);
   if (row.st == null || !det) {
