@@ -24,8 +24,12 @@ permissions:
   id-token: write
   actions: write
 
+# 同一時間只跑一輪（寫 state 分支的不能重疊）。
+# 2026/11/10：11/10 02:00 那一輪的 deploy 卡在 GitHub Pages 環境「waiting」（沒有任何保護規則，GitHub 端的狀況），
+# 取消不掉（API 回 409「還沒排隊」），它佔住這個群組，之後每一輪都排在後面被取消，整天沒有資料。
+# 換一個群組名字就能脫困（卡住的那一輪留在舊群組）；再發生時同樣換名字（例如 -v3）。
 concurrency:
-  group: coldeye-data
+  group: coldeye-data-v2
   cancel-in-progress: false
 
 jobs:
