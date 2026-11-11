@@ -46,6 +46,8 @@ DAY_TO = 1325
 DAY_GAP_S = 120            # 每 2 分鐘看一次
 DAY_STALE_S = 480          # 最後一次執行是 8 分鐘以前（平常每 4～5 分鐘一輪，一直有一輪在跑）
 DAY_STUCK_S = 240          # 排隊 4 分鐘以上還沒開始：卡住了（平常排隊幾秒就開始）
+QUEUE_FRESH_S = 900        # 排隊中的執行只算 15 分鐘內建立的：更早的是卡在舊 concurrency 群組的（11/10 換群組後，
+                           # 舊群組有一輪永遠 pending，11/11 早上的全球市場、09:00 第一輪、14:15 收盤後計算、15:05 晚上接力全被它「交給它」吞掉）
 DAY_CLOSED_AT = 920        # 09:20 以後證交所即時資料還不是今天：今天休市（颱風假），不用看了
 JOB_LIMIT_S = 5 * 3600 + 40 * 60   # wake.yml 的 timeout-minutes 350：看門最多看到起來後 5 小時 40 分
 LIVE_URL = 'https://pzwei0105.github.io/coldeye-etf/data/live.json'
@@ -93,6 +95,15 @@ def day_dead(running, waiting, latest_created, now, stale_s=DAY_STALE_S, stuck_s
     if any(w is None or (now - w).total_seconds() < stuck_s for w in waiting or []):
         return False
     return latest_created is None or (now - latest_created).total_seconds() > stale_s
+
+
+def queued_fresh(runs, now, fresh_s=QUEUE_FRESH_S) -> bool:
+    """有沒有「真的會跑」的排隊中執行：建立時間在 fresh_s 秒內（平常排隊幾秒就開始；更早的是卡住的，不能把該發的那一輪交給它）"""
+    for r in runs or []:
+        c = _created(r)
+        if c is not None and 0 <= (now - c).total_seconds() < fresh_s:
+            return True
+    return False
 
 
 def day_watch_end(now: dt.datetime, started: dt.datetime, holidays=()):
@@ -306,7 +317,8 @@ def main():
             log(f'睡 {int(wait)} 秒，之後發出{what}')
             time.sleep(wait)
         try:
-            if any(_runs(repo, 'coldeye.yml', f'status={st}') for st in ('pending', 'queued')):
+            pend = [r for st in ('pending', 'queued') for r in _runs(repo, 'coldeye.yml', f'status={st}')]
+            if queued_fresh(pend, dt.datetime.now(dt.timezone.utc)):
                 log(f'冷眼已經有排隊中的執行，{what}交給它')
                 continue
             if mode == 'eod':

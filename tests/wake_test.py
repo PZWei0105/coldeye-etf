@@ -138,5 +138,14 @@ check('週日晚上：不接力（沒有夜盤、美股沒開）', dispatch.next
 now = at(2026, 10, 28, 7, 46)
 check('早上 07:45 的全球市場：不接力（等 09:00 盤中）', dispatch.next_plan('global', now.timestamp() - 60, 20261027, now) == (None, None))
 
+# 舊 concurrency 群組卡住的排隊（11/10 08:03 UTC 建立、永遠 pending）不能吞掉該發的那一輪
+now = at(2026, 11, 11, 14, 15)
+stuck = [{'created_at': '2026-11-10T08:03:53Z'}]
+check('卡了一天的排隊：不算有排隊中的執行', not wake.queued_fresh(stuck, now))
+fresh = [{'created_at': (now - dt.timedelta(seconds=60)).astimezone(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}]
+check('1 分鐘前排隊的：算（交給它）', wake.queued_fresh(stuck + fresh, now))
+check('沒有排隊的：不算', not wake.queued_fresh([], now))
+check('建立時間壞掉的：不算', not wake.queued_fresh([{'created_at': None}], now))
+
 print('全部通過' if not fails else f'{fails} 項失敗')
 sys.exit(1 if fails else 0)
