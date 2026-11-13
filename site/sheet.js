@@ -44,8 +44,17 @@ export function renderDetail(code, det = S.detail[code]) {
   bindTop(code);
   bindDetail(code, row, det);
   restoreCalc(sh, calc);
+  fitGauge(sh, det);
   animateNeedles(sh);
   sh.scrollTop = y;
+}
+/** 規則觀點的大刻度盤：照實際寬度重畫一次（寬螢幕上「偏空／中性／偏多」的字不會被放大） */
+function fitGauge(sh, det) {
+  const g = $('.verdict .gauge.big', sh);
+  const V = det && det.view;
+  if (!g || !V) return;
+  const w = g.getBoundingClientRect().width;
+  if (w > 330) g.outerHTML = gaugeSVG(V.score, V.stance, true, w);
 }
 function calcState(sh) {
   const q = $('#c-qty', sh);
@@ -568,7 +577,8 @@ function drawPriceChart(det, n, row, x) {
   if (inv != null) lv.push({ p: inv, t: '作廢', cls: 'amber' });
   if (isNum(row.dl)) lv.push({ p: row.dl, t: '防守', cls: 'amber', dot: true });
   if (x && isNum(x.h.avg) && !settings.privacy) lv.push({ p: x.h.avg, t: '成本', cls: 'aurora' });
-  const W = 360, Ht = 230, pl = 6, pr = 76, pt = 12, pb = 22;
+  // 圖的寬度＝實際畫出來的寬度：寬螢幕上價位、月份的字不會被放大
+  const W = Math.round(Math.min(1200, Math.max(320, el.clientWidth || 360))), Ht = W > 520 ? 260 : 230, pl = 6, pr = 76, pt = 12, pb = 22;
   const vals = [...C, ...Hh, ...Lo, ...M20, ...M60, ...M120].filter(isNum);
   const last = C[C.length - 1];
   lv.forEach((z) => { if (Math.abs(z.p / last - 1) < 0.25) vals.push(z.p); });

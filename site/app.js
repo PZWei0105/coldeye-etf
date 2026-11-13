@@ -855,7 +855,7 @@ function renderPF() {
   } else if (isPaper()) {
     html += '<section class="panel pad calm"><b>模擬倉還是空的。</b><span class="muted">到「雷達」挑一檔，在單檔頁按「記一筆」就能模擬下單；也可以照冷眼的加碼建議買買看。</span></section>';
   }
-  html += divCalHTML(P);
+  html += divCalHTML(P, v.clientWidth);
   html += riskHTML(P);
   if (P.closed.length) {
     html += `<div class="sec-h"><h2>已出清</h2></div><section class="panel list">${P.closed.map((x) => `<button class="w-row closed" data-code="${x.code}"><span class="w-id"><span class="w-name">${esc(x.name)}</span><span class="w-code num">${x.code}</span></span><span class="w-px"><span class="small muted" data-term="rpnl">已實現</span><span class="p num ${dirCls(x.h.realized)}">${money(x.h.realized, true)}</span></span></button>`).join('')}</section>`;
@@ -986,12 +986,15 @@ function holdRow(x) {
   </button>`;
 }
 
-function divCalHTML(P) {
+function divCalHTML(P, boxW = 0) {
   const t = P.totals;
   if (!(t.annual > 0)) return '';
   const hs = P.holdings.filter((x) => x.annual > 0);
   const mx = Math.max(...t.months, 1);
-  const W = 336, H = 132, pb = 18, pt = 16, bw = 16;
+  // 圖的寬度跟著畫面（扣掉面板內距）：寬螢幕不會把月份、金額的字放大好幾倍
+  const W = Math.round(Math.min(1200, Math.max(300, (boxW || 376) - 40)));
+  const H = W > 600 ? 150 : 132, pb = 18, pt = 16;
+  const bw = Math.round(Math.min(30, Math.max(16, (W / 12) * 0.42)));
   const step = W / 12;
   const { m: curM } = twParts();
   let cols = '';

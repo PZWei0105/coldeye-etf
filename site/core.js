@@ -772,8 +772,9 @@ export function actChip(a) {
 }
 export const premBand = (row) => PF.premBand(row);
 
-export function gaugeSVG(score, stance, big = false) {
-  const W = 300, H = big ? 54 : 22, x = (v) => 8 + ((clamp(v, -2, 2) + 2) / 4) * 284;
+export function gaugeSVG(score, stance, big = false, w = 0) {
+  // w：畫出來的實際寬度（大的那個在單檔頁量好再畫一次）：寬螢幕上字和刻度不會被放大
+  const W = big && w > 300 ? Math.round(Math.min(1200, w)) : 300, H = big ? 54 : 22, x = (v) => 8 + ((clamp(v, -2, 2) + 2) / 4) * (W - 16);
   const base = big ? 30 : 13;
   let ticks = '';
   for (let k = -20; k <= 20; k++) {
