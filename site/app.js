@@ -179,6 +179,13 @@ function renderHeader() {
   if (hi) hi.textContent = greeting();
   const el = $('#status');
   if (!el || !S.summary) return;
+  // 冷眼有新版本、還沒換（使用者正在用）：點一下就換（見 swApply）
+  if (S.newVersion) {
+    el.className = `status upd${el.classList.contains('busy') ? ' busy' : ''}`;
+    el.innerHTML = '<i></i><span>冷眼有新版本・點一下更新</span>';
+    el.setAttribute('aria-label', '冷眼有新版本。點一下換成新版本');
+    return;
+  }
   const f = freshness();
   el.className = `status ${f.key === 'live' ? 'open' : f.key === 'lag' ? 'stale' : ''}${el.classList.contains('busy') ? ' busy' : ''}`;
   el.innerHTML = `<i></i><span>${f.txt}</span>`;
@@ -188,6 +195,7 @@ function renderHeader() {
   if (box) { box.classList.toggle('live', f.key === 'live'); box.classList.toggle('lag', f.key === 'lag'); }
 }
 async function manualRefresh() {
+  if (S.newVersion) { swReload(false); return; }
   const el = $('#status');
   if (el.classList.contains('busy')) return;
   el.classList.add('busy');
@@ -1608,6 +1616,7 @@ function maybeBoot() {
     setTimeout(() => {
       el.hidden = true; el.classList.remove('out', 'go', 'standby'); el.innerHTML = '';
       document.body.classList.remove('booting');
+      S.shownAt = performance.now();   // 開機畫面結束才算「剛打開」（有新版要換時看這個，見 swSafe）
       S.firstPaint = true; S.animUntil = 0;
       if (S.tab === 'home' && !S.openCode) render();
       if (voiced && settings.voice !== false) setTimeout(() => { FX.sfx('comms'); FX.speak(briefSpeech(true)); }, 450);
@@ -1716,8 +1725,10 @@ window.addEventListener('popstate', () => {
 });
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.deferredInstall = e; if (S.tab === 'home' && S.summary) render(); });
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') { S.shownAt = performance.now(); swCheck(); }
   if (document.visibilityState === 'visible' && S.summary) { renderHeader(); syncTick().then(() => { refreshEvals(); runPlans(); }); }
-  if (document.visibilityState === 'hidden') FX.stopSpeak();
+  // 離開 App（畫面藏起來）：有等著換的新版就趁現在換，回來就是新版
+  if (document.visibilityState === 'hidden') { FX.stopSpeak(); swApply(); }
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
@@ -1915,11 +1926,12 @@ async function boot() {
   else if (h === 'temp') openTemp(false);
   else if (h && S.rows.has(h)) openDetail(h, false);
   // 畫面開著時每分鐘看一次後台的版本檔，哪一份資料變了就重抓那一份（見 syncTick）；網路恢復時馬上看一次
-  setInterval(() => { if (document.visibilityState === 'visible') syncTick(); }, SYNC_MS);
-  window.addEventListener('online', () => { if (document.visibilityState === 'visible') syncTick(); });
+  // 介面有沒有新版本（sw.js）：畫面開著時每 10 分鐘問一次，回到 App 時馬上問（swCheck 最多每分鐘一次）
+  setInterval(() => { if (document.visibilityState === 'visible') { syncTick(); swCheck(10 * 60000); } }, SYNC_MS);
+  window.addEventListener('online', () => { if (document.visibilityState === 'visible') { syncTick(); swCheck(); } });
   // iPhone 加到主畫面的 App 從背景回來時，有時候只有 pageshow／focus、沒有 visibilitychange：也馬上看一次
-  window.addEventListener('pageshow', (e) => { if (e.persisted && document.visibilityState === 'visible') syncTick(); });
-  window.addEventListener('focus', () => { if (document.visibilityState === 'visible') syncTick(); });
+  window.addEventListener('pageshow', (e) => { if (e.persisted && document.visibilityState === 'visible') { S.shownAt = performance.now(); syncTick(); swCheck(); } });
+  window.addEventListener('focus', () => { if (document.visibilityState === 'visible') { syncTick(); swCheck(); } });
   setInterval(() => { if (document.visibilityState === 'visible') renderHeader(); }, 30000);
   // 對答案、定期定額：每 15 分鐘再檢查一次（例如 13:25 定案、收盤後到期）
   setInterval(() => { if (document.visibilityState === 'visible') { refreshEvals(); runPlans(); } }, 15 * 60000);
@@ -1936,8 +1948,73 @@ async function boot() {
       if (JSON.stringify([settings.plans, settings.dcaSkip, settings.dcaNoAsk]) !== before) bus.emit('book');
     }
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  // 註冊本身不會去問有沒有新版（打開 App 的那一下瀏覽器已經問過了），所以從現在起算
+  if (SWC) SWC.register('sw.js').then((r) => { swReg = r; swCheckAt = Date.now(); }).catch(() => {});
   setTimeout(() => announceUpdates(8), 2500);
+}
+
+// ------------------------------------------------------------------ 介面換新版（sw.js 的 announce）
+// sw.js 裝好新版、接手之後會通知（帶 build）。這一頁是舊的那一版時：剛打開或剛切回來（SW_FRESH_MS 內）、沒開著全螢幕頁或表單、
+// 沒在打字、沒在念晨報、開機畫面結束了，就直接重新載入（分頁記在 store、全螢幕頁記在網址，重新載入後回到原處）；
+// 不然頂端寫「冷眼有新版本・點一下更新」，等下次離開 App（畫面藏起來）時再換，不會在看到一半時突然重新載入。
+// iPhone 加到主畫面的 App 從背景切回來不會重新載入，瀏覽器也不會自己去問有沒有新版：回到 App 時、每 10 分鐘主動問一次（swCheck）。
+const SWC = 'serviceWorker' in navigator ? navigator.serviceWorker : null;
+const SW_FRESH_MS = 45000;
+let swReg = null;
+let swCheckAt = 0;
+let swBuild = null;   // 這一頁是哪一版；直接從網站抓的（第一次打開、強制重新整理）等第一個 service worker 告訴我們
+let swWait = null;
+let swGone = false;   // 已經在重新載入
+S.shownAt = performance.now();
+
+function swCheck(gap = 60000) {
+  if (!swReg || Date.now() - swCheckAt < gap) return;
+  swCheckAt = Date.now();
+  swReg.update().catch(() => {});
+}
+function swSafe() {
+  if (document.visibilityState === 'hidden') return true;
+  if (performance.now() - (S.shownAt || 0) > SW_FRESH_MS) return false;
+  const a = document.activeElement;
+  const typing = !!a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+  return !typing && !modalOpen() && !S.openCode && !document.body.classList.contains('booting') && !FX.isSpeaking();
+}
+/** 換成新版＝重新載入。自動的有保險（萬一出錯也不會一直重新載入）：和上一次自動的隔 30 秒以上、30 分鐘內最多 3 次；
+    擋下來的就只留頂端的「點一下更新」。點「更新」的不限、也不算次數 */
+function swReload(auto) {
+  if (swGone) return true;
+  if (auto) {
+    let ts = [];
+    try { ts = JSON.parse(sessionStorage.getItem('coldeye.swReload') || '[]').filter((t) => Date.now() - t < 30 * 60000); } catch { ts = []; }
+    if (ts.length >= 3 || ts.some((t) => Date.now() - t < 30000)) return false;
+    try { sessionStorage.setItem('coldeye.swReload', JSON.stringify([...ts, Date.now()])); } catch { /* 無痕模式 */ }
+  }
+  // 重新載入時瀏覽器會先把這一頁標成「藏起來」（visibilitychange）：不能再被當成一次自動換版
+  swGone = true;
+  location.reload();
+  return true;
+}
+function swApply() {
+  if (!S.newVersion || swGone) return;
+  if (swSafe()) { if (!swReload(true)) renderHeader(); return; }
+  renderHeader();
+  if (!swWait) swWait = setInterval(() => { if (swSafe()) { clearInterval(swWait); swWait = null; swApply(); } }, 3000);
+}
+if (SWC) {
+  // 一載入就聽（模組執行時，比 DOMContentLoaded 早）：sw.js 等不到「收到」會當成舊版頁面直接重新載入
+  SWC.addEventListener('message', (e) => {
+    const m = e.data || {};
+    if (m.t !== 'coldeye-sw') return;
+    if (e.ports && e.ports[0]) { try { e.ports[0].postMessage('ok'); } catch { /* 不能回就算了 */ } }
+    if (!m.build) return;
+    if (!swBuild) { swBuild = m.build; return; }
+    if (m.build !== swBuild && !S.newVersion) { S.newVersion = true; swApply(); }
+  });
+  try { SWC.startMessages(); } catch { /* 舊瀏覽器 */ }
+  // 這一頁是哪一版：問現在給檔案的 service worker；接手的換了（例如另一個分頁裝好了新版）再問一次
+  const ask = () => { try { if (SWC.controller) SWC.controller.postMessage({ t: 'coldeye-build?' }); } catch { /* 問不到就等通知 */ } };
+  ask();
+  SWC.addEventListener('controllerchange', ask);
 }
 
 // ------------------------------------------------------------------ 更新紀錄：有沒看過的新功能，開機畫面結束後提示一次

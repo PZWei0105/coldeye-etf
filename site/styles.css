@@ -231,6 +231,9 @@ body.paper .top { border-bottom: 3px solid transparent; border-image: repeating-
 .status.stale { color: var(--amber); }
 .status.stale i { background: var(--amber); }
 .status.busy { opacity: .6; }
+/* 冷眼有新版本、等著換（app.js 的 swApply）：冰藍＝系統與動作，點一下就換 */
+.status.upd { color: var(--glacier); }
+.status.upd i { background: var(--glacier); animation: pulse 1.6s infinite; }
 .status.busy i { animation: blink .6s infinite alternate; }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--glacier) 60%, transparent); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
 @keyframes blink { to { opacity: .2; } }
