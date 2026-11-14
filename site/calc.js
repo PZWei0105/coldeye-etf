@@ -1,6 +1,6 @@
 /* 冷眼 — 純計算：大盤之瞳、冷眼晨報、存股時光機、模擬倉基準、ETF 對決、熱力圖版面。
    全部是純函式，不碰畫面、不連網；同樣的輸入永遠得到同樣的結果（tests/calc_test.mjs 會檢查）。 */
-import { FEE_RATE, tradeCost, daysBetween, addDays } from './pf.js';
+import { FEE_RATE, tradeCost, daysBetween, addDays, normLot, sortLots, sellValue, taxCat } from './pf.js';
 
 const isNum = (x) => typeof x === 'number' && isFinite(x);
 const round = (x, n = 0) => { const k = 10 ** n; return Math.round(x * k) / k; };
@@ -1200,4 +1200,179 @@ export function daySpark(spark, code, date) {
   const pts = [];
   for (let i = 0; i + 1 < a.length; i += 2) if (isNum(a[i]) && isNum(a[i + 1]) && a[i + 1] > 0 && a[i] >= 0 && a[i] <= 330) pts.push([a[i], a[i + 1]]);
   return pts.length >= 2 ? { d: spark.d, pts } : null;
+}
+
+
+// ------------------------------------------------------------------ 投入總覽：你投入了多少、市值、損益、全部賣掉實拿（部位分頁、定期定額卡）
+/**
+ * 一檔的交易照時間重播，把股數分成「定期定額買的」和「其他（自己買的）」兩堆。
+ * 賣出照國泰的規則：同時有現股和定期定額時先賣現股，不夠才賣定期定額的（國泰「台股定額庫存調整須知」Q3）；
+ * 定期定額那一堆的成本照平均算（國泰把定期定額庫存合併成一筆、用成交均價）。
+ * 回傳 { dca: { sh, cost, paid, n, est, first, last }, other: { sh, cost } }：
+ *   sh＝還在手上的股數（換算成目前的分割基準）、cost＝還在手上那些股數當初花的錢（含買進手續費）、
+ *   paid＝定期定額每一期付出的錢加總（含手續費；之後賣掉的也算）、n＝期數、est＝其中還沒核對的預估、first／last＝第一期、最近一期的成交日。
+ */
+export function dcaPart(lots, splits) {
+  const dca = { sh: 0, cost: 0, paid: 0, n: 0, est: 0, first: null, last: null };
+  const other = { sh: 0, cost: 0 };
+  const take = (pile, want) => {
+    const k = Math.min(want, pile.sh);
+    if (!(k > 0)) return 0;
+    const avg = pile.sh > 0 ? pile.cost / pile.sh : 0;
+    pile.cost -= avg * k;
+    pile.sh -= k;
+    if (pile.sh < 1e-6) { pile.sh = 0; pile.cost = 0; }
+    return k;
+  };
+  for (const raw of sortLots(lots || [])) {
+    const l = normLot(raw, splits);
+    if (!(l.nsh > 0)) continue;
+    if (raw.side === 'sell') {
+      const rest = l.nsh - take(other, l.nsh);
+      if (rest > 0) take(dca, rest);
+      continue;
+    }
+    const money = raw.sh * raw.px + (isNum(raw.fee) ? raw.fee : 0);
+    if (isDcaLot(raw)) {
+      dca.sh += l.nsh; dca.cost += money; dca.paid += money; dca.n += 1;
+      if (raw.dca.est === true) dca.est += 1;
+      if (Number.isInteger(raw.d)) {
+        if (dca.first == null || raw.d < dca.first) dca.first = raw.d;
+        if (dca.last == null || raw.d > dca.last) dca.last = raw.d;
+      }
+    } else { other.sh += l.nsh; other.cost += money; }
+  }
+  dca.sh = round(dca.sh, 3); other.sh = round(other.sh, 3);
+  return { dca, other };
+}
+
+/**
+ * 投入總覽（純函式）。P：pf.js buildPortfolio 的結果；lots：這一本的交易；splitsOf(c)：分割；cfg：手續費設定；td：今天。
+ * 回傳 {
+ *   cost：還在手上的股票當初花的錢（含買進手續費）＝國泰 App「投資」的「總成本」那一格要對的數字,
+ *   mv：市值, paper：市值 − cost（和國泰「不含息參考報酬」同一個算法：還沒扣賣出的手續費、證交稅）, paperPct,
+ *   sell：{ amount, fee, tax, net } 現在全部賣掉（每一檔整股、零股分開下單算手續費；證交稅照類別與日期）,
+ *   real：net − cost（冷眼的「損益」：扣掉賣出的手續費、證交稅）, realPct, div：已領配息, realized：已實現損益,
+ *   paidAll：買進花的錢加總（之後賣掉的也算）, back：賣出拿回的錢（扣手續費、證交稅；賣超過持股的不算）, sold：有沒有賣過,
+ *   dca：{ n, est, paid, sh, cost, mv, sell, real, codes: [{ code, name, n, est, paid, sh, cost, px, mv, sell, real, realPct, sold, first, last }] } | null,
+ *   other：{ cost, mv }（不是定期定額的那一部分）, missing：[沒有價格的代號] }
+ */
+export function investView(P, lots, splitsOf = () => [], cfg, td) {
+  if (!P || !P.totals) return null;
+  const hs = P.holdings || [];
+  const missing = hs.filter((x) => !isNum(x.mv) || !x.sell).map((x) => x.code);
+  const ok = hs.filter((x) => isNum(x.mv) && x.sell);
+  const sum = (xs, f) => xs.reduce((a, x) => a + (f(x) || 0), 0);
+  const cost = sum(hs, (x) => x.h.cost);
+  const mv = sum(ok, (x) => x.mv);
+  const sell = { amount: sum(ok, (x) => x.sell.amount), fee: sum(ok, (x) => x.sell.fee), tax: sum(ok, (x) => x.sell.tax), net: sum(ok, (x) => x.sell.net) };
+  const costOk = sum(ok, (x) => x.h.cost);
+  // 買進花的錢、賣出拿回的錢（照時間重播：賣超過當時持股的部分不算，和 lotsCashFlow 一樣）
+  let paidAll = 0, back = 0, sold = false;
+  const held = new Map();
+  for (const raw of sortLots(lots || [])) {
+    const l = normLot(raw, splitsOf(raw.c));
+    const fee = isNum(raw.fee) ? raw.fee : 0;
+    const h = held.get(raw.c) || 0;
+    if (raw.side === 'sell') {
+      const n = Math.min(l.nsh, h);
+      if (!(n > 1e-9) || !(l.nsh > 0)) continue;
+      back += (n / l.nsh) * (raw.sh * raw.px - fee - (isNum(raw.tax) ? raw.tax : 0));
+      held.set(raw.c, h - n);
+      sold = true;
+    } else {
+      paidAll += raw.sh * raw.px + fee;
+      held.set(raw.c, h + l.nsh);
+    }
+  }
+  // 定期定額那一部分（每一檔各自算，賣出先賣現股）
+  const byCode = new Map();
+  for (const l of lots || []) { if (!byCode.has(l.c)) byCode.set(l.c, []); byCode.get(l.c).push(l); }
+  const codes = [];
+  let otherCost = 0, otherMv = 0;
+  for (const [code, ls] of byCode) {
+    const part = dcaPart(ls, splitsOf(code));
+    const x = hs.find((y) => y.code === code) || null;
+    const px = x && isNum(x.px) ? x.px : null;
+    otherCost += part.other.cost;
+    if (px != null) otherMv += part.other.sh * px;
+    if (!part.dca.n) continue;
+    const d = part.dca;
+    const dmv = px != null ? d.sh * px : null;
+    const sv = px != null && d.sh > 0 ? sellValue(d.sh, px, taxCat(x && x.row), td, cfg) : (d.sh > 0 ? null : { amount: 0, fee: 0, tax: 0, net: 0 });
+    const real = sv ? sv.net - d.cost : null;
+    codes.push({
+      code, name: x ? x.name : (((P.closed || []).find((y) => y.code === code) || {}).name || code), n: d.n, est: d.est, paid: d.paid, sh: d.sh, cost: d.cost, px, mv: dmv,
+      sell: sv, real, realPct: real != null && d.cost > 0 ? real / d.cost : null, sold: d.paid - d.cost > 0.5 || (d.sh === 0 && d.n > 0), first: d.first, last: d.last,
+    });
+  }
+  codes.sort((a, b) => (b.mv || 0) - (a.mv || 0) || b.paid - a.paid || (a.code < b.code ? -1 : 1));
+  let dca = null;
+  if (codes.length) {
+    const okc = codes.filter((c) => c.sell);
+    const dsell = { amount: sum(okc, (c) => c.sell.amount), fee: sum(okc, (c) => c.sell.fee), tax: sum(okc, (c) => c.sell.tax), net: sum(okc, (c) => c.sell.net) };
+    const dcost = sum(codes, (c) => c.cost);
+    dca = {
+      n: sum(codes, (c) => c.n), est: sum(codes, (c) => c.est), paid: sum(codes, (c) => c.paid), sh: null, cost: dcost,
+      mv: sum(okc, (c) => c.mv), sell: dsell, real: dsell.net - sum(okc, (c) => c.cost), codes,
+    };
+  }
+  return {
+    cost, mv, paper: mv - costOk, paperPct: costOk > 0 ? (mv - costOk) / costOk : null,
+    sell, real: sell.net - costOk, realPct: costOk > 0 ? (sell.net - costOk) / costOk : null,
+    div: P.totals.divRecv || 0, realized: P.totals.realized || 0, paidAll, back, sold,
+    dca, other: { cost: otherCost, mv: otherMv }, missing,
+  };
+}
+
+/**
+ * 定期定額某一個月扣了哪幾期（看成交日 d；ym＝yyyymm）：每一期付出的錢＝股數 × 成交價＋手續費（預估的是用收盤價估的，核對之後才是實際的）。
+ * none：自動入帳算出來國泰不會扣的期數（dcaReconcile 的 none，例如停止交易）；skip：你標成「這期沒扣到」的（`代號|原本扣款日`）。
+ * 回傳 { ym, items: [{ id, c, d, s, plan, sh, px, fee, amt, est }], total, est（預估的筆數）,
+ *        missed: [{ c, s, why }]（halt 停止交易、small 金額買不到 1 股、thin 那陣子沒有成交估不出價格、gone 下市、skip 你標成沒扣到） }
+ */
+export function dcaMonth(lots, ym, none = [], skip = []) {
+  const items = (lots || []).filter((l) => isDcaLot(l) && Number.isInteger(l.d) && Math.floor(l.d / 100) === ym && l.sh > 0)
+    .map((l) => ({ id: l.id, c: l.c, d: l.d, s: l.dca.s, plan: l.dca.plan, sh: l.sh, px: l.px, fee: isNum(l.fee) ? l.fee : 0, amt: round(l.sh * l.px + (isNum(l.fee) ? l.fee : 0), 2), est: l.dca.est === true }))
+    .sort((a, b) => a.d - b.d || (a.c < b.c ? -1 : 1));
+  const missed = [];
+  const seen = new Set();
+  for (const e of none || []) {
+    if (!e || !Number.isInteger(e.s) || Math.floor(e.s / 100) !== ym) continue;
+    const k = `${e.c}|${e.s}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    missed.push({ c: e.c, s: e.s, why: ['halt', 'small', 'thin', 'gone'].includes(e.why) ? e.why : 'gone' });
+  }
+  for (const k of skip || []) {
+    const [c, s] = String(k).split('|');
+    const d = Number(s);
+    if (!c || !Number.isInteger(d) || Math.floor(d / 100) !== ym || seen.has(`${c}|${d}`)) continue;
+    seen.add(`${c}|${d}`);
+    missed.push({ c, s: d, why: 'skip' });
+  }
+  missed.sort((a, b) => a.s - b.s || (a.c < b.c ? -1 : 1));
+  return { ym, items, total: round(items.reduce((a, x) => a + x.amt, 0), 2), est: items.filter((x) => x.est).length, missed };
+}
+
+
+/**
+ * 和國泰 App 的「總成本」對帳（純函式）。mine：冷眼的投入（investView 的 cost）；theirs：你打進來的國泰總成本；
+ * feeGap：定期定額還在手上那幾期的買進手續費加總（國泰的定期定額庫存用成交均價、不含這 1 元，所以冷眼本來就會多這麼多）；
+ * est：還沒核對的預估期數；recent：最近兩個交易日成交的定期定額 [{ d, amt }]（國泰可能還沒算進去）。
+ * 回傳 { diff（冷眼 − 國泰，已扣掉 feeGap）, kind: 'ok'|'more'|'less', near（差的金額剛好像最近那一期）, tol }
+ */
+export function costGap(mine, theirs, { feeGap = 0, est = 0, recent = [] } = {}) {
+  if (!isNum(mine) || !isNum(theirs) || !(theirs > 0)) return null;
+  const diff = round(mine - feeGap - theirs, 2);
+  const tol = Math.max(10, theirs * 0.001);
+  const kind = Math.abs(diff) <= tol ? 'ok' : diff > 0 ? 'more' : 'less';
+  // 冷眼多出來的錢，剛好和最近兩個交易日成交的那一期（或那幾期加起來）差不多：可能國泰還沒把它算進總成本
+  let near = null;
+  if (kind === 'more' && recent && recent.length) {
+    const tot = recent.reduce((a, x) => a + x.amt, 0);
+    const cands = [...recent.map((x) => ({ d: x.d, amt: x.amt })), ...(recent.length > 1 ? [{ d: recent[recent.length - 1].d, amt: tot, all: true }] : [])];
+    near = cands.find((x) => Math.abs(diff - x.amt) <= Math.max(tol, x.amt * 0.03)) || null;
+  }
+  return { diff, kind, near, tol, est };
 }

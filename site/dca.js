@@ -4,7 +4,7 @@
    「每一期應該記成什麼樣子」由 calc.js 的 dcaReconcile 算（純函式）：只動還沒核對的「預估」，核對過的、你自己記的交易一律不動。 */
 import {
   $, $$, esc, isNum, S, PF, settings, saveSettings, savePlans, reloadPlans, fmt, money, sharesOf, ICON, toast, bus, today, newId,
-  ensureHist, updateRealBook, realLots, isPaper, PLAN_MAX, store, marketClosedOn,
+  ensureHist, updateRealBook, realLots, isPaper, PLAN_MAX, store, marketClosedOn, splitsOf, dirCls,
 } from './core.js';
 import { openModal, closeModal, modalOpen } from './forms.js';
 import * as C from './calc.js';
@@ -220,7 +220,7 @@ export function dcaActions(chip) {
       pri: 2, act: 'dca', chip: chip('待核對', 'go2'), title: '定期定額',
       text: q
         ? `有 <b class="num">${q}</b> 件事要你確認（你自己也記了一筆、或改了設定之後多出來的紀錄），確認前不會重複記${n ? `；另外 <b class="num">${n}</b> 筆預估等你核對` : ''}。`
-        : `有 <b class="num">${n}</b> 筆自動記的是預估，對照國泰 App 的成交回報核對一下，或一次和庫存對齊。`,
+        : `有 <b class="num">${n}</b> 筆自動記的是預估，對照國泰證券 App「定期投資」的買進紀錄核對一下，或一次和庫存對齊。`,
     });
   }
   return out;
@@ -254,7 +254,48 @@ function statusOf(p) {
   if (!ended && td > PROMO_END && p.fee === 1) bits.push('<b class="pend">1 元手續費優惠到 2026/12/31，國泰改了記得來改</b>');
   return bits.join('・');
 }
-const planRows = (ps) => `<ul class="plan-list">${ps.map((p) => `<li><button type="button" class="plan-row" data-plan="${esc(p.id)}"><span class="pl-n"><b>${esc(nameOf(p.c))}</b> <span class="muted num">${esc(p.c)}</span></span><span class="pl-d">${esc(daysText(p))}・<b class="num">${money(p.amt)}</b> 元</span><span class="pl-s small muted">${statusOf(p)}</span></button></li>`).join('')}</ul>`;
+/** 這一檔定期定額買的部分：投入（每一期付出的錢）、市值、損益（全部賣掉實拿 − 投入）、賣掉實拿（calc.js 的 investView） */
+function codeStatsHTML(x) {
+  if (!x) return '';
+  const cell = (k, v, sub, term) => `<span class="pl-c"><small${term ? ` data-term="${term}"` : ''}>${k}</small><b class="num${v.cls ? ` ${v.cls}` : ''}">${v.t}</b>${sub ? `<small class="num${v.cls ? ` ${v.cls}` : ''}">${sub}</small>` : ''}</span>`;
+  const gone = !(x.sh > 0);
+  return `<span class="pl-v">${cell('投入', { t: money(x.cost) }, `${x.n} 期${x.est ? `・${x.est} 期預估` : ''}`, 'invest')}${gone ? `<span class="pl-c wide"><small>現在</small><b>已經全部賣掉</b></span>` : `${cell('市值', { t: isNum(x.mv) ? money(x.mv) : '—' }, sharesOf(x.sh))}${cell('損益', { t: isNum(x.real) ? money(x.real, true) : '—', cls: dirCls(x.real) }, isNum(x.realPct) ? fmt.r(x.realPct, 2) : '', 'netsell')}${cell('賣掉實拿', { t: x.sell ? money(x.sell.net) : '—' }, x.sell && (x.sell.fee || x.sell.tax) ? `扣費用 ${money(x.sell.fee + x.sell.tax)}` : '', 'netsell')}`}</span>${x.sold && !gone ? '<span class="pl-s small muted">賣出照國泰的規則先賣現股、最後才賣定期定額的；這裡是還在手上的定期定額部分。</span>' : ''}`;
+}
+const planRows = (ps, stats) => {
+  const shown = new Set();
+  return `<ul class="plan-list">${ps.map((p) => {
+    // 同一檔有好幾個計畫（例如國泰那邊改過設定）：整檔的數字只放在第一個
+    const x = stats && !shown.has(p.c) ? stats.get(p.c) : null;
+    if (x) shown.add(p.c);
+    return `<li><button type="button" class="plan-row" data-plan="${esc(p.id)}"><span class="pl-n"><b>${esc(nameOf(p.c))}</b> <span class="muted num">${esc(p.c)}</span></span><span class="pl-d">${esc(daysText(p))}・<b class="num">${money(p.amt)}</b> 元</span>${codeStatsHTML(x)}<span class="pl-s small muted">${statusOf(p)}</span></button></li>`;
+  }).join('')}</ul>`;
+};
+/** 某一個月扣了哪幾期（看成交日）：這個月還沒有就看上個月。每一期付出的錢、核對了沒有、國泰沒扣的那幾期 */
+const MISS_TEXT = { small: '每期金額買不到 1 股，國泰沒買', thin: '那陣子都沒有成交、冷眼估不出價格，沒有記（照國泰的買進紀錄自己記一筆）', gone: '已經下市，沒有記', skip: '你標成這期沒扣到' };
+function monthHTML() {
+  const lots = realLots();
+  if (!lots.some((l) => C.isDcaLot(l))) return '';
+  const td = today();
+  let ym = Math.floor(td / 100);
+  let M = C.dcaMonth(lots, ym, last.none, settings.dcaSkip);
+  if (!M.items.length && !M.missed.length) {
+    ym = ym % 100 === 1 ? ym - 89 : ym - 1;
+    M = C.dcaMonth(lots, ym, last.none, settings.dcaSkip);
+  }
+  if (!M.items.length && !M.missed.length) return '';
+  const amtOf = (id) => { const p = planOf(id); return p ? p.amt : null; };
+  const rows = [
+    ...M.items.map((x) => ({ s: x.d, html: `<li><span class="num">${fmt.d(x.d)}</span><span class="dm-n">${esc(nameOf(x.c))} <small class="num">${esc(x.c)}</small></span><b class="num">${money(x.amt)}</b><em class="${x.est ? 'est' : 'ok'}">${x.est ? '預估' : '已核對'}</em>${amtOf(x.plan) ? `<small class="dm-p num">計畫 ${money(amtOf(x.plan))}</small>` : ''}</li>` })),
+    ...M.missed.map((x) => {
+      const h = x.why === 'halt' ? C.haltOn(x.c, x.s) : null;
+      const why = x.why === 'halt' ? `停止交易${h ? `（${esc(h.why)}）` : ''}，國泰不扣也不補` : MISS_TEXT[x.why] || '國泰沒扣';
+      return { s: x.s, html: `<li class="miss"><span class="num">${fmt.d(x.s)}</span><span class="dm-n">${esc(nameOf(x.c))} <small class="num">${esc(x.c)}</small></span><em>${why}</em></li>` };
+    }),
+  ].sort((a, b) => a.s - b.s).map((r) => r.html).join('');
+  return `<div class="dm"><div class="dm-h"><b>${ym % 100} 月扣款</b><small>（看成交日）</small><span>共 <b class="num">${money(M.total)}</b> 元${M.est ? `・<b class="num">${M.est}</b> 期是預估` : ''}</span></div>
+    <ul class="dm-list">${rows}</ul>
+    <p class="small muted">每一期＝股數 × 成交價＋手續費。「預估」是用那天的收盤價算的，國泰實際是盤中、盤後分批買，金額會差一點；核對之後就是國泰的數字。實際扣款以國泰為準。</p></div>`;
+}
 const sortPlans = (ps) => ps.slice().sort((a, b) => (!!a.end - !!b.end) || a.c.localeCompare(b.c) || a.start - b.start);
 /** 已經有計畫、還沒看過新版說明的人：說一次「現在會自動記、你自己記過的會先問」 */
 const noticeHTML = () => ((settings.plans || []).length && settings.dcaNotice !== 2
@@ -264,7 +305,7 @@ const noticeHTML = () => ((settings.plans || []).length && settings.dcaNotice !=
 export function plansHTML() {
   const ps = sortPlans(settings.plans || []);
   const n = pendingLots().length + last.ask.length + last.extras.length;
-  return `<div class="srow col"><div><div class="h" data-term="dca">定期定額（國泰證券）</div><div class="d">每到扣款日，等官方收盤資料出來，冷眼自動幫你記一筆「預估」，你再對照國泰 App 的成交回報核對。以前扣過的可以補記，再一次和國泰庫存對齊。只記在這支手機的真實部位。</div></div>
+  return `<div class="srow col"><div><div class="h" data-term="dca">定期定額（國泰證券）</div><div class="d">每到扣款日，等官方收盤資料出來，冷眼自動幫你記一筆「預估」，你再對照國泰證券 App「定期投資」的買進紀錄核對。以前扣過的可以補記，再一次和國泰庫存對齊。只記在這支手機的真實部位。</div></div>
     ${noticeHTML()}${ps.length ? planRows(ps) : ''}
     <div class="row-btns"><button type="button" class="btn small" data-dca="add">${ICON.plus}新增定期定額</button>${n ? `<button type="button" class="btn small ghost" data-dca="pend">核對（${n}）</button>` : ''}</div></div>`;
 }
@@ -276,8 +317,17 @@ export function dcaStripHTML() {
   if (!ps.length) {
     return `<section class="panel pad dca-strip invite"><div><b>有在國泰定期定額嗎？</b><span class="small muted">設定一次，每期扣款後冷眼自動記進部位；以前扣過的也能補記。</span></div><button type="button" class="btn small" data-dca="add">${ICON.plus}設定定期定額</button></section>`;
   }
+  // 每一檔定期定額買的部分：投入、市值、損益、賣掉實拿（和「投入總覽」同一套算法）
+  let stats = null, tot = null;
+  if (S.P) {
+    const V = C.investView(S.P, realLots(), splitsOf, settings.fee, today());
+    if (V && V.dca) { stats = new Map(V.dca.codes.map((x) => [x.code, x])); tot = V.dca; }
+  }
+  const head = tot && tot.codes.length > 1 ? `<div class="dca-tot"><span>定期定額合計</span><span>投入 <b class="num">${money(tot.cost)}</b>（${tot.n} 期）</span><span>市值 <b class="num">${money(tot.mv)}</b></span><span>損益 <b class="num ${dirCls(tot.real)}">${money(tot.real, true)}</b></span><span>賣掉實拿 <b class="num">${money(tot.sell.net)}</b></span></div>` : '';
   return `<div class="sec-h"><h2 data-term="dca">定期定額</h2><span class="aside">國泰・收盤後自動記</span></div>
-    <section class="panel pad dca-strip">${noticeHTML()}${planRows(ps)}
+    <section class="panel pad dca-strip">${noticeHTML()}${head}${planRows(ps, stats)}
+      ${stats ? '<p class="small muted dca-foot">投入＝每一期付出的錢（股數 × 成交價＋手續費）；損益＝全部賣掉實拿 − 投入（已扣賣出的手續費、證交稅）。和國泰 App 的數字怎麼對，看上面的「投入總覽」。</p>' : ''}
+      ${monthHTML()}
       <div class="row-btns"><button type="button" class="btn small ghost" data-dca="add">${ICON.plus}新增</button>${n ? `<button type="button" class="btn small" data-dca="pend">核對（${n}）</button>` : ''}</div></section>`;
 }
 /** 交易紀錄上的小標籤 */
@@ -332,7 +382,7 @@ export function openPlanForm(id, after) {
         <label class="field"><span class="lab">每期金額（含手續費）</span><input class="input num" id="p-amt" inputmode="numeric" placeholder="例如 3000" value="${old ? esc(old.amt) : ''}"></label>
         <label class="field"><span class="lab">每筆手續費</span><input class="input num" id="p-fee" inputmode="decimal" value="${esc(old ? old.fee : DCA_FEE)}"></label>
       </div>
-      <p class="small muted">國泰定期定額以百元為單位、每筆最低 100 元；2026/12/31 前每筆手續費 1 元。有開「智慧加減碼」的話每期金額會變，核對時照國泰的成交回報改就好。</p>
+      <p class="small muted">國泰定期定額以百元為單位、每筆最低 100 元；2026/12/31 前每筆手續費 1 元。有開「智慧加減碼」的話每期金額會變，核對時照國泰的買進紀錄改就好。</p>
       ${old ? `<div class="field"><label class="field inline"><span class="lab">從哪一天開始記（成交日）</span><input class="input num" type="date" id="p-start" min="${isoOf(HIST_FROM)}" value="${isoOf(old.start)}"></label>
         <p class="small muted">改早一點會補記；改晚一點，之前還沒核對的預估會刪掉（核對過的不動）。</p>
         ${skipped ? `<details class="p-skips"><summary class="small">這檔你刪掉過 <b class="num">${skipped}</b> 期（例如按了「這期沒扣到」），冷眼不會自動補回來。刪錯了可以恢復</summary>
@@ -584,7 +634,7 @@ export function openConfirm(lotId) {
       <h2 class="m-title">核對定期定額</h2>
       <p class="m-desc"><b>${esc(nameOf(lot.c))}</b> <span class="num">${esc(lot.c)}</span>・成交日 ${fmt.dy(lot.d)}${lot.dca.s !== lot.d ? `（原本扣款日 ${fmt.d(lot.dca.s)}，遇到休市順延）` : ''}</p>
       <div class="est-box">${lot.dca.est ? '冷眼預估' : '目前記的'}：<b class="num">${sharesOf(lot.sh)}</b> × <span class="num">${fmt.px(lot.px)}</span>${lot.dca.est ? (lot.dca.pd ? `（那天整股沒有成交，用 ${fmt.d(lot.dca.pd)} 的收盤價）` : '（那天的官方收盤價）') : ''}＋手續費 <span class="num">${fmt.n(lot.fee || 0)}</span> 元＝<b class="num">${money(lot.sh * lot.px + (lot.fee || 0))}</b> 元${p ? `<small>計畫每期 ${money(p.amt)} 元</small>` : ''}</div>
-      <p class="small muted">打開國泰 App 的成交回報（或對帳單），把這一期實際買到的股數和均價（或成交金額）填進來。國泰是盤中、盤後分批買，成交均價通常和收盤價差一點點。餘額不足扣款失敗的，國泰不會補扣：按「這期沒扣到」。</p>
+      <p class="small muted">打開國泰證券 App →「定期投資」→ 最上面「我的定期投資」，找到這一期的買進紀錄（或看對帳單），把實際買到的股數和成交均價（或成交金額）填進來。國泰是盤中、盤後分批買，成交均價通常和收盤價差一點點；兩個數字都一樣就按「和預估一樣」。餘額不足扣款失敗的，國泰不會補扣：按「這期沒扣到」。</p>
       <div class="f-row">
         <label class="field"><span class="lab">成交股數</span><input class="input num" id="c-sh" inputmode="numeric" value="${esc(lot.sh)}"></label>
         <label class="field"><span class="lab">成交均價</span><input class="input num" id="c-px" inputmode="decimal" value="${esc(lot.px)}"></label>
@@ -626,7 +676,7 @@ export function openConfirm(lotId) {
     if (!(x.sh >= 1)) { err.textContent = '成交股數至少 1 股'; FX.sfx('err'); return; }
     if (!(x.px > 0)) { err.textContent = '請填成交均價或成交金額'; FX.sfx('err'); return; }
     if (!(x.fee >= 0)) { err.textContent = '手續費格式不對'; FX.sfx('err'); return; }
-    if (x.px > lot.px * 1.25 || x.px < lot.px * 0.8) { err.textContent = `均價 ${fmt.px(x.px)} 和那天的收盤價 ${fmt.px(lot.px)} 差太多（台股一天最多漲跌 10%），請再對一次成交回報`; FX.sfx('err'); return; }
+    if (x.px > lot.px * 1.25 || x.px < lot.px * 0.8) { err.textContent = `均價 ${fmt.px(x.px)} 和那天的收盤價 ${fmt.px(lot.px)} 差太多（台股一天最多漲跌 10%），請再對一次國泰的買進紀錄`; FX.sfx('err'); return; }
     write((l) => { l.sh = x.sh; l.px = +x.px.toFixed(4); l.fee = x.fee; l.dca = { ...l.dca, est: false }; }, '已核對這一期');
   });
   const same = $('#c-same', card);
@@ -723,7 +773,7 @@ export function openPending(after) {
       ${extras.length ? `<p class="m-desc">改了設定之後，這幾筆核對過的紀錄照現在的設定，那段時間沒有對應的扣款。是多記的就刪掉，不是就留著。</p>
         <ul class="ask-list">${extras.map((x, i) => `<li class="ask-row"><div><b>${esc(nameOf(x.c))}</b> <span class="num muted">${esc(x.c)}</span>・<b class="num">${fmt.d(x.d)}</b> ${sharesOf(x.sh)} × <span class="num">${fmt.px(x.px)}</span>（原本 ${fmt.d(x.s)} 那一期，已經核對過）。這筆是不是多記了？</div>
           <div class="row-btns"><button type="button" class="btn small" data-ex="${i}" data-ans="del">是，刪掉這筆</button><button type="button" class="btn small ghost" data-ex="${i}" data-ans="keep">不是，留著</button></div></li>`).join('')}</ul>` : ''}
-      ${ls.length ? `<p class="m-desc">這些是冷眼用官方收盤價預估的。可以一筆一筆對照國泰 App 的成交回報，或每一檔一次和國泰的庫存股數對齊。</p>
+      ${ls.length ? `<p class="m-desc">這些是冷眼用官方收盤價預估的。點一筆，對照國泰證券 App「定期投資」（最上面「我的定期投資」）的買進紀錄改成實際的股數和均價；或每一檔一次和國泰的庫存股數對齊。</p>
       ${codes.map((c) => { const xs = ls.filter((l) => l.c === c); return `<div class="pend-g"><div class="pend-h"><b>${esc(nameOf(c))}</b> <span class="num muted">${esc(c)}</span><span class="small muted">${xs.length} 筆</span><button type="button" class="btn small" data-cal="${esc(c)}">和庫存對齊</button></div>
         <ul class="pend-list">${xs.slice(0, 24).map((l) => `<li><button type="button" class="pend-row" data-cf="${esc(l.id)}"><span class="num">${fmt.dy(l.d)}</span><span class="num">${sharesOf(l.sh)} × ${fmt.px(l.px)}</span><span class="chev">${ICON.chev}</span></button></li>`).join('')}${xs.length > 24 ? `<li class="small muted">還有 ${xs.length - 24} 筆（對齊會一起處理）</li>` : ''}</ul></div>`; }).join('')}` : ''}
       <div class="m-actions"><button type="button" class="btn primary" data-close>完成</button></div>`;
@@ -803,7 +853,7 @@ export function openCalibrate(code, o = {}) {
       <h2 class="m-title">和國泰庫存對齊</h2>
       <p class="m-desc" id="k-desc"></p>
       ${o.fresh ? '<p class="small muted">剛補記完：先確認補記的期數和金額對不對（例如開始的日期、扣款日），再和國泰的庫存對齊。</p>' : ''}
-      ${B0.est.length ? `<label class="field"><span class="lab">國泰 App「庫存」裡這一檔的股數</span><input class="input num" id="k-sh" inputmode="numeric" placeholder="例如 1250"></label>
+      ${B0.est.length ? `<label class="field"><span class="lab">國泰證券 App「帳務」→「庫存」裡這一檔的股數（定期定額和自己買的分成兩筆顯示時，加起來）</span><input class="input num" id="k-sh" inputmode="numeric" placeholder="例如 1250"></label>
       <p class="small muted">對齊只會照同一個比例調整預估的那幾筆的股數（每一筆花的錢不變，所以均價會跟著變），你自己記的其他交易不動。台股一天最多漲跌 10%，國泰分批買的均價和收盤價差不了太多，所以差兩成以上就不給對齊。對齊之後這些就算核對過了。</p>
       <div class="k-prev small" id="k-prev"></div>` : '<p class="small muted">這一檔沒有待核對的預估，不需要對齊。</p>'}
       <div class="f-err" id="k-err" role="alert"></div>

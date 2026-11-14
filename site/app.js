@@ -28,6 +28,7 @@ import { openCoach, hooks as coachHooks, coachRulesHTML, coachPacket } from './c
 import { xrayPfHTML, bindXrayPf, searchStocks, openStock, coachXray, xrayRulesHTML, refreshStockq, ensureHold } from './xray.js';
 import { planCardHTML, bindPlanCard, planTagHTML, planStripHTML, openTemp, refreshTemp, tempRulesHTML, compact, globalTickerHTML, bindGlobalTicker } from './plan.js';
 import { dayReportHTML, bindDayReport, rotationHTML, bindRotation } from './pulse.js';
+import { investHTML, bindInvest } from './invest.js';
 import { openLesson } from './lessons.js';
 import { AIDE } from './aide.js';
 const AIDE_BIG = AIDE.bigMarket;   // 大盤單日漲跌 2% 以上：今日行動請判斷教練帶你看
@@ -842,6 +843,7 @@ function renderPF() {
       </div>
       <p class="small muted">損益已扣掉賣出時的<span data-term="fee">手續費</span>與<span data-term="tax">證交稅</span>估計值。${settings.fee.disc < 1 ? `手續費以 ${(settings.fee.disc * 10).toFixed(1).replace(/\.0$/, '')} 折計算。` : '手續費以原價計算，可在設定改成你的折扣。'}</p>
     </section>`;
+  html += investHTML(P);
   html += dayReportHTML(P);
   html += planCardHTML(P);
   html += eqHTML();
@@ -890,6 +892,7 @@ function renderPF() {
   drawEq(v);
   bindXrayPf(v);
   bindPlanCard(v);
+  bindInvest(v);
   bindDayReport(v);
 }
 
