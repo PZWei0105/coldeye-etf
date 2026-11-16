@@ -1206,7 +1206,7 @@ async function renderTrack() {
   if (!o) { v.innerHTML = tmCard + '<section class="panel empty">歷史資料還在回補中，完成後這裡會顯示回測結果。</section>'; bindTools(); return; }
   const adj = T.overall_adj || { bull: o.base_up, bear: 1 - o.base_up };
   const pc = (z, d = 1) => (isNum(z) ? (z * 100).toFixed(d) + '%' : '—');
-  const delta = (a, b) => (isNum(a) && isNum(b) ? `<b class="${a - b >= 0.02 ? 'good' : a - b > -0.02 ? 'meh' : 'bad'}">${a >= b ? '高' : '低'} ${Math.abs((a - b) * 100).toFixed(1)} 點</b>` : '');
+  const delta = (a, b) => (isNum(a) && isNum(b) ? `<b style="white-space:nowrap" class="${a - b >= 0.02 ? 'good' : a - b > -0.02 ? 'meh' : 'bad'}">${a >= b ? '高' : '低'} ${Math.abs((a - b) * 100).toFixed(1)} 點</b>` : '');
   let html = tmCard + `<div class="sec-h"><h2>規則觀點的戰績</h2><span class="aside num" data-term="bt">${fmt.dy(o.start)}–${fmt.dy(o.end)}</span></div>
     <section class="big2">
       <div class="panel stat"><div class="k">偏多之後 20 日上漲</div><div class="v num">${pc(o.bull.hit)}</div><div class="s"><span data-term="base">同類基準</span> ${pc(adj.bull)}，${delta(o.bull.hit, adj.bull)}<br><span class="muted">${fmt.n(o.bull.n)} 次</span></div></div>

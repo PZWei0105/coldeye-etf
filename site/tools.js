@@ -240,7 +240,7 @@ function tmResult(res, row) {
   return `<section class="panel tm-hero">
       <div class="tm-k">${fmt.dy(res.start)} 起，每月 ${money(settings.tm.amount)} 元，共 ${res.months} 個月${span}</div>
       <div class="tm-big"><span class="num">${money(base.value)}</span><small>元</small></div>
-      <div class="tm-sub">投入 <b class="num">${money(base.invested)}</b>　賺 <b class="num ${base.gain >= 0 ? 'up' : 'down'}">${money(base.gain, true)}</b>　報酬 <b class="num ${base.ret >= 0 ? 'up' : 'down'}">${pctS(base.ret)}</b>　<span data-term="irr">年化</span> <b class="num">${pctS(base.irr)}</b></div>
+      <div class="tm-sub"><span>投入 <b class="num">${money(base.invested)}</b></span><span>賺 <b class="num ${base.gain >= 0 ? 'up' : 'down'}">${money(base.gain, true)}</b></span><span>報酬 <b class="num ${base.ret >= 0 ? 'up' : 'down'}">${pctS(base.ret)}</b></span><span><span data-term="irr">年化</span> <b class="num">${pctS(base.irr)}</b></span></div>
       <div class="tm-sub muted">領到股息 ${money(base.div)} 元・手續費 ${money(base.fee)} 元・現在約 ${fmt.n(base.sh)} 股</div>
     </section>
     <div class="sec-h"><h2>照冷眼的訊號買，會更好嗎？</h2></div>
