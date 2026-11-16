@@ -2,6 +2,7 @@
 // 用法：node tests/sw_test.mjs <data 資料夾>（要有 summary.json 等，App 才開得起來）；約 5 分鐘。
 // 測試網站和 GitHub Pages 一樣讓瀏覽器把檔案快取 10 分鐘（Cache-Control: max-age=600、支援 If-Modified-Since）。
 // 每一步把 site/ 複製一份、換掉 sw.js 的 BUILD、在 updates.js 加一個記號（window.__ceMark），看手機上的頁面什麼時候換成新的那一版。
+// 跑的這 5 分鐘不要改 site/：每一步都重新複製，中途在 updates.js 加了一筆的話，新的那一版會跳「更新紀錄」提示、擋住自動換版（第 5、6 步會失敗）。
 import { createRequire } from 'node:module';
 import http from 'node:http';
 import fs from 'node:fs';

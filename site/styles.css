@@ -2239,3 +2239,103 @@ body.nofx .dr-card.grow .dr-list::after, body.nofx .rot.grow .rot-list::after { 
 .dm-list li.miss > em { grid-area: s; padding: 0; font-size: 12px; color: var(--amber); }
 @media (prefers-reduced-motion: reduce) { .iv-card.grow .iv-track i { animation: none; } }
 body.nofx .iv-card.grow .iv-track i { animation: none; }
+
+/* ================================================================ 介面效果（hud.js，2026/11/17）
+   光環＝資料有多新（冰藍會消耗、靜止的灰是收盤後完整、琥珀是晚了）；翻牌只翻變了的那幾位；轉場從點的那一格展開；
+   巡航／作戰／深潛三段顯示。四個都關掉時這一段完全用不到（不輸出任何元素、body 沒有 dm- 的 class）。 */
+.sec-h > .halo { order: 3; }
+.halo { flex: none; display: inline-grid; place-items: center; width: 26px; height: 26px; margin: -2px -5px -2px -4px; padding: 0; border: 0; background: none; cursor: pointer; }
+.halo i, .status i.hring {
+  --c: var(--glacier);
+  display: block; width: 14px; height: 14px; border-radius: 50%; transform: none;
+  background: conic-gradient(var(--c) calc(var(--f, 1) * 360deg), color-mix(in srgb, var(--c) 16%, transparent) 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.7px), #000 calc(100% - 2.2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2.7px), #000 calc(100% - 2.2px));
+}
+.status i.hring { width: 11px; height: 11px; -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.4px), #000 calc(100% - 1.9px)); mask: radial-gradient(farthest-side, transparent calc(100% - 2.4px), #000 calc(100% - 1.9px)); }
+.halo.st-rest i, .status i.hring.st-rest { --c: var(--frost-3); }
+.halo.st-late i, .status i.hring.st-late, .halo.st-off i, .status i.hring.st-off { --c: var(--amber); }
+.halo.st-off i, .status i.hring.st-off { background: repeating-conic-gradient(var(--amber) 0 30deg, transparent 30deg 60deg); }
+.halo.st-wait i, .status i.hring.st-wait { background: var(--glacier); animation: haloWait 1.6s ease-in-out infinite; }
+@keyframes haloWait { 50% { opacity: .3; } }
+.halo:focus-visible { outline-offset: -2px; }
+body.nofx .halo.st-wait i, body.nofx .status i.hring.st-wait { animation: none; }
+
+/* 數字翻牌：每一位是兩層疊在一起（舊的、新的），變大往上翻、變小往下翻；裁切用 clip-path，不會動到數字的基線 */
+.rd { display: inline-grid; clip-path: inset(0 -1px); }
+.rd > span { grid-area: 1 / 1; }
+.rd > .o { animation: rdOut .5s cubic-bezier(.3, .7, .2, 1) calc(var(--i, 0) * 34ms) both; }
+.rd > .n { animation: rdIn .5s cubic-bezier(.3, .7, .2, 1) calc(var(--i, 0) * 34ms) both; }
+.rd.u > .o { --to: -100%; } .rd.u > .n { --from: 100%; }
+.rd.d > .o { --to: 100%; } .rd.d > .n { --from: -100%; }
+.rd.f > .o { visibility: hidden; } .rd.f > .n { animation: rdFade .45s ease-out calc(var(--i, 0) * 34ms) both; }
+@keyframes rdOut { to { transform: translateY(var(--to, -100%)); opacity: .15; } }
+@keyframes rdIn { from { transform: translateY(var(--from, 100%)); opacity: .15; } }
+@keyframes rdFade { from { opacity: 0; } }
+.rd-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* 鏡頭轉場：單檔頁從點的那一格展開（clip-path），四個角先閃一下像鎖定 */
+.sheet.zooming { will-change: clip-path; }   /* 原本的升起動畫由 hud.js 的 finishRise 直接跳到結尾，不用 animation: none（拿掉時會再播一次） */
+.zoom-lock {
+  position: fixed; z-index: 45; pointer-events: none;
+  background:
+    linear-gradient(var(--glacier), var(--glacier)) left top / 12px 2px no-repeat, linear-gradient(var(--glacier), var(--glacier)) left top / 2px 12px no-repeat,
+    linear-gradient(var(--glacier), var(--glacier)) right top / 12px 2px no-repeat, linear-gradient(var(--glacier), var(--glacier)) right top / 2px 12px no-repeat,
+    linear-gradient(var(--glacier), var(--glacier)) left bottom / 12px 2px no-repeat, linear-gradient(var(--glacier), var(--glacier)) left bottom / 2px 12px no-repeat,
+    linear-gradient(var(--glacier), var(--glacier)) right bottom / 12px 2px no-repeat, linear-gradient(var(--glacier), var(--glacier)) right bottom / 2px 12px no-repeat;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--glacier) 70%, transparent));
+  animation: zlock .55s ease-out both;
+}
+@keyframes zlock { 0% { opacity: 0; transform: scale(1.18); } 22% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1); } }
+
+/* 三段顯示模式：名字旁邊的模式（三格刻度＝資訊密度） */
+.dm-chip {
+  flex: none; display: inline-flex; align-items: center; gap: 4px; height: 20px; margin-left: -2px; padding: 0 6px 0 5px; border: 0;
+  color: var(--glacier); background: var(--glacier-wash); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--glacier) 45%, transparent);
+  font: 700 11px/1 var(--f-sans); letter-spacing: .04em;
+  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
+}
+.dm-chip i { display: inline-flex; gap: 1.5px; align-items: flex-end; height: 9px; }
+.dm-chip b { width: 2.5px; background: color-mix(in srgb, currentColor 28%, transparent); }
+.dm-chip b:nth-child(1) { height: 4px; } .dm-chip b:nth-child(2) { height: 6.5px; } .dm-chip b:nth-child(3) { height: 9px; }
+.dm-chip.lv1 b:nth-child(1), .dm-chip.lv2 b:nth-child(-n+2), .dm-chip.lv3 b { background: currentColor; }
+.dm-chip.lv1 { color: var(--frost-2); background: transparent; box-shadow: inset 0 0 0 1px var(--seam-2); }
+.dm-chip.lv3 { color: var(--glacier-ink); background: var(--glacier); box-shadow: none; }
+@media (max-width: 374px) { .dm-chip span { display: none; } }
+
+/* 巡航：只看最重要的 */
+.home.cruise { gap: 14px; }
+.brief.one .br-list li { font-size: 15px; }
+.cr-acts { display: grid; grid-template-columns: auto auto minmax(0, 1fr) 12px; align-items: center; gap: 10px; padding: 14px 16px; border: 0; width: 100%; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+.cr-acts .k { font: 900 15px/1.2 var(--f-serif); letter-spacing: .06em; }
+.cr-acts > b { font-size: 22px; line-height: 1; color: var(--glacier); }
+.cr-acts .ca-list { display: flex; flex-wrap: wrap; gap: 3px 12px; font-size: 12.5px; color: var(--frost-2); min-width: 0; }
+.cr-acts .ca-list b { color: var(--frost); font-weight: 600; }
+.cr-acts .chev { color: var(--frost-3); }
+.cr-acts.none { grid-template-columns: 1fr; gap: 2px; cursor: default; }
+.cr-hint { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--frost-2); line-height: 1.6; }
+.cr-hint b { color: var(--glacier); }
+.cr-hint .btn { flex: none; }
+@media (min-width: 1100px) {
+  .home.cruise { grid-template-columns: minmax(0, 620px); justify-content: center; }
+  .home.cruise .iris-box { width: min(100%, 440px); }
+}
+
+/* 深潛：每一檔多一排數字、排得更密 */
+.dx { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 12px; color: var(--frost-3); min-width: 0; }
+.dx b { color: var(--frost); font-weight: 600; margin-left: 2px; }
+.h-dx b.up { color: var(--up); } .h-dx b.down { color: var(--down); }
+body.dm-deep .w-row:not(.closed) { grid-template-areas: "id spark px" "sig sig sig" "dx dx dx" "g g g"; padding: 9px 14px 8px; gap: 4px 10px; }
+body.dm-deep .w-row .dx { grid-area: dx; }
+body.dm-deep .l-row { grid-template-areas: "nm pxc" "sig pxc" "dx dx"; padding: 8px 12px; }
+body.dm-deep .l-row .dx { grid-area: dx; }
+body.dm-deep .h-row { padding: 9px 14px; gap: 4px; }
+body.dm-deep main, body.dm-deep .home, body.dm-deep .pf, body.dm-deep .track, body.dm-deep .sheet-body, body.dm-deep .d-cols, body.dm-deep .d-left, body.dm-deep .d-right { gap: 10px; }
+body.dm-deep .sec-h { margin-top: 6px; min-height: 26px; }
+body.dm-deep .sec-h h2 { font-size: 15.5px; }
+body.dm-deep .pad { padding: 11px 14px; }
+body.dm-deep .act-row { padding-top: 9px; padding-bottom: 9px; }
+@media (min-width: 1100px) { body.dm-deep .col { gap: 10px; } }
+
+/* 設定：介面效果 */
+.hud-set .hs-intro { margin: 0; padding: 12px 16px 10px; font-size: 12.5px; color: var(--frost-3); line-height: 1.7; }

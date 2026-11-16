@@ -1376,3 +1376,56 @@ export function costGap(mine, theirs, { feeGap = 0, est = 0, recent = [] } = {})
   }
   return { diff, kind, near, tol, est };
 }
+
+// ------------------------------------------------------------------ 介面效果（hud.js）：資料新鮮度光環、數字翻牌
+/** 光環的「滿」：0～1，盤中即時價剛更新是 1，到 lagMin 分鐘變 0（之後 freshness 會判成延遲、變琥珀） */
+const clamp01 = (x) => (isNum(x) ? Math.max(0, Math.min(1, x)) : 0);
+/**
+ * 盤中即時價的光環：直接用畫面頂端 freshness() 的判斷（live 盤中正常、lag 延遲或卡住、wait 等今天第一筆、idle 收盤或休市），
+ * 不另外再判斷一次，兩邊永遠一致。st：ok 照新舊消耗、late 琥珀、wait 空心等待、rest 收盤後的完整狀態（不消耗）。
+ */
+export function haloLive(key, ageMin, lagMin = 12) {
+  if (key === 'live') return { st: 'ok', f: clamp01(1 - (isNum(ageMin) ? ageMin : 0) / lagMin) };
+  if (key === 'lag') return { st: 'late', f: 1 };
+  if (key === 'wait') return { st: 'wait', f: 0 };
+  return { st: 'rest', f: 1 };
+}
+/**
+ * 收盤後的完整分析（規則訊號、分數、加碼計畫、戰績）的光環：今天是開市日，收盤後（13:35）還沒換成今天的 → 等（約 14:20 更新），
+ * 14:40 以後還沒換 → 琥珀（晚了）；其他時候（盤中、開盤前、休市）用的就是最新一次收盤算的，算完整。
+ * in：{ asof 分析是哪天收盤的, td 今天, hm 台灣時間 HHMM, trading 今天有沒有開市 }
+ */
+export function haloEod({ asof, td, hm, trading }) {
+  if (trading && isNum(asof) && isNum(td) && asof < td) {
+    if (hm >= 1440) return { st: 'late', f: 1, k: 'late' };
+    if (hm >= 1335) return { st: 'wait', f: 0, k: 'soon' };
+  }
+  return { st: 'rest', f: 1, k: asof === td ? 'today' : 'prev' };
+}
+const DIGIT = /[0-9]/;
+const numOf = (s) => {
+  const t = String(s).replace(/−/g, '-').replace(/[^0-9.\-]/g, '');
+  const v = parseFloat(t);
+  return isFinite(v) ? v : null;
+};
+/**
+ * 數字翻牌：舊的字串 → 新的字串，從右邊對齊（數字變多一位時在左邊長出來），只有「兩邊都是數字、而且不一樣」的那幾位翻過去；
+ * 其他變了的字（正負號、逗號的位置）直接淡入。回傳新字串每一個字 [{ c 新字, o 舊字, r: 'u'|'d'|'f'|null, i 從右邊數第幾個 }]；
+ * 兩邊有一邊不是數字（例如隱藏金額的 ••••）、或根本沒變，回傳 null（不翻）。方向：數值變大往上翻、變小往下翻。
+ */
+export function rollPlan(was, now) {
+  const a = String(was ?? ''), b = String(now ?? '');
+  if (a === b || !DIGIT.test(a) || !DIGIT.test(b)) return null;
+  const na = numOf(a), nb = numOf(b);
+  const dir = na != null && nb != null && nb < na ? 'd' : 'u';
+  const A = [...a], B = [...b];
+  const out = [];
+  for (let k = 0; k < B.length; k++) {
+    const c = B[B.length - 1 - k];
+    const o = k < A.length ? A[A.length - 1 - k] : '';
+    let r = null;
+    if (c !== o) r = DIGIT.test(c) && DIGIT.test(o) ? dir : 'f';
+    out.unshift({ c, o, r, i: k });
+  }
+  return out.some((x) => x.r) ? out : null;
+}

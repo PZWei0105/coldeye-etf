@@ -11,6 +11,7 @@ import { openConfirm, dcaTagsHTML } from './dca.js';
 import { xrayDetailHTML, bindXrayDetail } from './xray.js';
 import { peerHTML } from './pulse.js';
 import * as FX from './fx.js';
+import { haloHTML, paintHalos, rollAttr, rollSpan, rollDigits, zoomOpen, zoomClose, zoomReady, dmode } from './hud.js';
 
 const ICON_DUEL = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l9.5 9.5M4 4h3.5M4 4v3.5M20 4l-9.5 9.5M20 4h-3.5M20 4v3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6.5 15.5l2 2M17.5 15.5l-2 2M5 19l2.5-2.5M19 19l-2.5-2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 const ICON_TM = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.6 12a8.4 8.4 0 1 0 2.5-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M3.2 3.6v4.2h4.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
@@ -27,6 +28,10 @@ export async function openDetail(code, push = true) {
   sh.innerHTML = sheetTop(code, row) + `<div class="sheet-body">${heroHTML(row)}<div class="skeleton" style="height:180px"></div><div class="skeleton" style="height:240px"></div></div>`;
   bindTop(code);
   sh.scrollTop = 0;
+  // 鏡頭轉場：從剛剛點的那一格放大（hud.js；沒有剛點的格子、或效果關掉就照原本的方式）
+  zoomOpen(sh, code);
+  paintHalos(sh);
+  rollDigits(sh);
   await ensureTrack();
   let det = null;
   if (row && row.st != null) det = await ensureDetail(code);
@@ -46,6 +51,8 @@ export function renderDetail(code, det = S.detail[code]) {
   restoreCalc(sh, calc);
   fitGauge(sh, det);
   animateNeedles(sh);
+  rollDigits(sh);
+  paintHalos(sh);
   sh.scrollTop = y;
 }
 /** 規則觀點的大刻度盤：照實際寬度重畫一次（寬螢幕上「偏空／中性／偏多」的字不會被放大） */
@@ -83,10 +90,14 @@ function restoreCalc(sh, st) {
 export function closeDetail(fromPop = false) {
   if (modalOpen()) closeModal();
   if (S.openCode) FX.sfx('close');
+  const code = S.openCode;
   S.openCode = null;
   const sh = $('#sheet');
-  sh.hidden = true;
-  sh.innerHTML = '';
+  // 鏡頭轉場：縮回主畫面上剛剛點的那一格，縮完才收起來。要等底下的畫面解鎖、換新之後才量位置；
+  // 效果關掉（或不是單檔頁）就照原本的方式直接收起來
+  const shut = () => { sh.hidden = true; sh.innerHTML = ''; };
+  const zoom = zoomReady(code);
+  if (!zoom) shut();
   document.body.classList.remove('locked');
   // 這一頁是 App 自己 push 進來的（有 state）就上一頁；直接從網址打開的（state 是 null，例如書籤、別人傳的連結）
   // 就只把網址的 # 拿掉，不然「上一頁」會離開冷眼
@@ -95,6 +106,7 @@ export function closeDetail(fromPop = false) {
     else history.back();
   }
   bus.emit('closed');
+  if (zoom && !zoomClose(sh, code, shut)) shut();
 }
 export function refreshDetailQuote() {
   if (!S.openCode || S.openCode.startsWith('__')) return;
@@ -106,6 +118,8 @@ export function refreshDetailQuote() {
   const now = quote(row).px;
   // 盤中價格變了就閃一下（紅漲綠跌）
   if (isNum(was) && isNum(now) && was !== now) { const nel = $('#dq .p'); if (nel) nel.classList.add(now > was ? 'fl-up' : 'fl-down'); }
+  const dq = $('#dq');
+  if (dq) { rollDigits(dq); paintHalos(dq); }
 }
 
 function sheetTop(code, row) {
@@ -138,7 +152,7 @@ function bindTop(code) {
 // ------------------------------------------------------------------ 標題與報價
 function quoteLine(row) {
   const q = quote(row);
-  return `<div class="pxline" id="dq" data-px="${isNum(q.px) ? q.px : ''}"><span class="p num">${fmt.px(q.px)}</span><span class="c num ${dirCls(q.pc)}">${arrow(q.ch)} ${isNum(q.ch) ? Math.abs(q.ch).toFixed(2) : '—'}　${fmt.pct(q.pc)}</span><span class="live">${esc(quoteWhen(q, row.d))}</span></div>`;
+  return `<div class="pxline" id="dq" data-px="${isNum(q.px) ? q.px : ''}"><span class="p num"${rollAttr('px:' + row.c, fmt.px(q.px))}>${fmt.px(q.px)}</span><span class="c num ${dirCls(q.pc)}">${arrow(q.ch)} ${isNum(q.ch) ? Math.abs(q.ch).toFixed(2) : '—'}　${rollSpan('dpc:' + row.c, fmt.pct(q.pc))}</span><span class="live">${esc(quoteWhen(q, row.d))}</span>${haloHTML('live')}</div>`;
 }
 function heroHTML(row) {
   if (!row) return '<section class="panel empty">找不到這檔 ETF</section>';
@@ -323,7 +337,7 @@ function calcHTML(row, x) {
         <label class="field"><span>價格</span><input class="input num" id="c-px" inputmode="decimal" value="${quote(row).px ?? ''}"></label>
       </div>
       <div id="c-out" class="c-out" aria-live="polite"><span class="muted">輸入數量，看看這筆交易符不符合你的紀律。</span></div>
-      ${settings.rules && settings.rules.length ? `<details class="myrules"><summary>你自己的紀律（下單前對一次）</summary><ul>${settings.rules.map((r, i) => `<li><label><input type="checkbox" data-rule="${i}"><span>${esc(r)}</span></label></li>`).join('')}</ul></details>` : ''}
+      ${settings.rules && settings.rules.length ? `<details class="myrules"${dmode() === 'deep' ? ' open' : ''}><summary>你自己的紀律（下單前對一次）</summary><ul>${settings.rules.map((r, i) => `<li><label><input type="checkbox" data-rule="${i}"><span>${esc(r)}</span></label></li>`).join('')}</ul></details>` : ''}
     </section>`;
 }
 function bindCalc(row, x) {
@@ -397,7 +411,7 @@ function analysisHTML(row, det, x) {
   const V = det.view;
   const st = ST[String(V.stance)];
   const sim = V.similar;
-  let h = `<div class="sec-h"><h2>規則觀點</h2><span class="aside">時間尺度約 1 個月</span></div>
+  let h = `<div class="sec-h"><h2>規則觀點</h2><span class="aside">時間尺度約 1 個月</span>${haloHTML('eod')}</div>
     <section class="panel verdict">
       <div class="verdict-top"><span class="big ${st.cls}" data-term="st">${V.stance > 0 ? ICON.up : V.stance < 0 ? ICON.down : ICON.flat}${st.t}</span>
         <span class="meta">${V.conf != null ? `<span data-term="cf">信心 <b class="num">${V.conf}</b></span>` : '<span data-term="cf">訊號分歧，不給信心</span>'}<span data-term="sc">規則分數 <b class="num">${V.score >= 0 ? '+' : ''}${V.score.toFixed(2)}</b></span></span></div>

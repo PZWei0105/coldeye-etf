@@ -10,6 +10,7 @@ import {
 import { openCashForm } from './forms.js';
 import { openDetail, closeDetail } from './sheet.js';
 import * as FX from './fx.js';
+import { haloHTML } from './hud.js';
 
 // ------------------------------------------------------------------ 小工具
 /** 金額寫短一點：8,500、2.4萬、64萬、1.25億 */
@@ -161,7 +162,7 @@ export function planCardHTML(P) {
   const tooSmall = plans0.length > 0 && plans0.every((x) => x.a.plan.limit === 'cash' && !(x.a.plan.cuts || []).includes('prem0'));
   const total = funded.length ? `<p class="ap-sum">${rule}合計 <b class="num">${esc(amtOf(used, T))}</b>（${funded.length} 檔）${settings.privacy ? '' : `，剩 <b class="num">${money(left)}</b> 不動`}。</p>`
     : (cash > 0 ? `<p class="ap-sum">${!(dep.usable > 0) ? '可動用的錢是 0：現金都留給緊急預備金和定期定額了。' : tooSmall ? `可動用的錢太少：分 ${PF.CASH_SLICES} 份之後，一份不夠買 1 股。` : '這次沒有分到可以加碼的，每一檔的原因寫在下面。'}</p>` : '');
-  return `<div class="sec-h"><h2>加碼計畫${paper ? '（模擬倉）' : ''}</h2><span class="aside" data-term="plan">依你的紀律・${esc(PF.PROFILES[settings.risk].name)}型</span></div>
+  return `<div class="sec-h"><h2>加碼計畫${paper ? '（模擬倉）' : ''}</h2><span class="aside" data-term="plan">依你的紀律・${esc(PF.PROFILES[settings.risk].name)}型</span>${haloHTML('eod')}</div>
     <section class="panel ap-card" aria-label="加碼計畫">
       ${bar}${eq}
       ${total}

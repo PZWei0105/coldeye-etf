@@ -5,6 +5,7 @@ import { $, $$, esc, isNum, S, settings, fmt, money, dirCls, book, today, splits
 import { investView, costGap, isDcaLot } from './calc.js';
 import { openPending } from './dca.js';
 import * as FX from './fx.js';
+import { haloHTML } from './hud.js';
 
 const anim = () => settings.fx !== false && !reduceMotion();
 /** 這一本（真實部位或模擬倉）的投入總覽 */
@@ -35,7 +36,7 @@ export function investHTML(P) {
   const bar = (k, v, cls, i) => `<div class="iv-row ${cls}" style="--i:${i}"><span class="iv-k">${k}</span><span class="iv-track" aria-hidden="true"><i style="--w:${w(v)}"></i></span><b class="num">${money(v)}</b></div>`;
   const withDiv = V.real + V.div;
   const pend = V.dca && V.dca.est ? `<p class="iv-pend">定期定額還有 <b class="num">${V.dca.est}</b> 期是冷眼用收盤價<b>估</b>的，核對之後「你投入了」才會和國泰一樣。<button type="button" class="link" data-iv="pend">現在核對</button></p>` : '';
-  return `<div class="sec-h"><h2 data-term="invest">投入總覽</h2><span class="aside">${esc(whenOf(P))}${real ? '・對照國泰 App 的總成本' : ''}</span></div>
+  return `<div class="sec-h"><h2 data-term="invest">投入總覽</h2><span class="aside">${esc(whenOf(P))}${real ? '・對照國泰 App 的總成本' : ''}</span>${haloHTML('live')}</div>
     <section class="panel iv-card${anim() && S.ivAnim !== today() ? ' grow' : ''}" aria-label="投入總覽">
       <div class="iv-head">
         <div class="iv-in"><span class="k" data-term="invest">你投入了</span><b class="num">${money(V.cost)}</b></div>

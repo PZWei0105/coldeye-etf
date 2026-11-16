@@ -6,6 +6,7 @@ import {
 } from './core.js';
 import { dayReport, rotation, peerRank, haltOn } from './calc.js';
 import * as FX from './fx.js';
+import { haloHTML } from './hud.js';
 
 const anim = () => settings.fx !== false && !reduceMotion();
 /** 盤中的話寫「盤中 HH:MM」，不然寫「M/D 收盤」（全 App 同一套說法） */
@@ -40,7 +41,7 @@ export function dayReportHTML(P) {
   const pc = isNum(R.pct) ? R.pct * 100 : null;
   const diff = R.bench && isNum(pc) ? pc - R.bench.pc : null;
   const cmp = R.bench ? `<div class="dr-bench"><span>同一天 <b>0050</b></span><b class="num ${dirCls(R.bench.pc)}">${fmt.r(R.bench.pc / 100, 2)}</b>${isNum(diff) && Math.abs(diff) >= 0.005 ? `<small>你的持股${diff > 0 ? '多' : '少'} <b class="num">${Math.abs(diff).toFixed(2)}</b> 個百分點</small>` : isNum(diff) ? '<small>和你的持股差不多</small>' : ''}</div>` : '';
-  return `<div class="sec-h"><h2 data-term="dayrep">${isToday ? '今日戰報' : `${fmt.d(R.date)} 戰報`}</h2><span class="aside">${esc(when)}・每一檔賺賠多少（含息）</span></div>
+  return `<div class="sec-h"><h2 data-term="dayrep">${isToday ? '今日戰報' : `${fmt.d(R.date)} 戰報`}</h2><span class="aside">${esc(when)}・每一檔賺賠多少（含息）</span>${haloHTML('live')}</div>
     <section class="panel dr-card" aria-label="${isToday ? '今日戰報' : `${fmt.d(R.date)} 戰報`}">
       <div class="dr-top">
         <div class="dr-total"><span class="k">${isToday ? '今天' : `${fmt.d(R.date)} `}合計</span><b class="num ${dirCls(R.total)}" id="dr-sum"${settings.privacy ? '' : ` data-v="${Math.round(R.total)}"`}>${money(R.total, true)}</b>${isNum(pc) ? `<small class="num ${dirCls(pc)}">持股 ${fmt.r(R.pct, 2)}</small>` : ''}<span class="dr-cnt">漲 <b class="num up">${R.up}</b>・跌 <b class="num down">${R.down}</b>${R.flat ? `・平 <b class="num">${R.flat}</b>` : ''}${R.wait ? `・沒成交 <b class="num">${R.wait}</b>` : ''}</span></div>

@@ -31,6 +31,10 @@ import { dayReportHTML, bindDayReport, rotationHTML, bindRotation } from './puls
 import { investHTML, bindInvest } from './invest.js';
 import { openLesson } from './lessons.js';
 import { AIDE } from './aide.js';
+import {
+  uiOn, dmode, setDmode, dmodeInfo, paintDmode, haloSetup, haloHTML, paintHalos, statusIcon, rollAttr, rollSpan, rollDigits,
+  zoomInstall, zoomCancel, zoomSkip, hudSettingsHTML, bindHudSettings, DMODES,
+} from './hud.js';
 const AIDE_BIG = AIDE.bigMarket;   // 大盤單日漲跌 2% 以上：今日行動請判斷教練帶你看
 
 // 打開之前手機上就有冷眼的資料（老用戶）：有新功能要提示；全新的人不跳
@@ -84,7 +88,22 @@ function renderShell() {
     toast(explainOn() ? '看懂模式：有虛線底線的字，點一下就有解釋' : '已關閉看懂模式');
   });
   window.addEventListener('scroll', () => $('#top').classList.toggle('scrolled', window.scrollY > 4), { passive: true });
+  // 三段顯示模式：名字旁邊的「巡航／作戰／深潛」（hud.js 畫的，會被換掉，所以在外框上聽點擊）
+  $('#top').addEventListener('click', (e) => { if (e.target.closest && e.target.closest('#dmode')) cycleMode(); });
   paintMode();
+}
+/** 巡航 → 作戰 → 深潛 → 巡航：換完整個主畫面重畫，回到最上面 */
+function cycleMode() {
+  const order = DMODES.map((m) => m.k);
+  const next = order[(order.indexOf(dmode()) + 1) % order.length];
+  setDmode(next);
+  if (S.openCode) { zoomSkip(); closeDetail(false); }
+  render();
+  window.scrollTo({ top: 0 });
+  FX.cue('nav');
+  FX.pulse($('#view'), 'fx-swap', 520);
+  const m = dmodeInfo(next);
+  toast(`${m.t}模式：${m.d}`, null);
 }
 function avatarText() {
   const n = userName();
@@ -107,6 +126,7 @@ function paintMode() {
   document.body.classList.toggle('nofx', settings.fx === false);
   const t = $('#mode-tag');
   if (t) t.hidden = !isPaper();
+  paintDmode();
 }
 /** 熱力圖、排序的「漲跌」標籤：報價是今天的才叫今日漲跌，休市或開盤前寫那一天 */
 function chgLabel() {
@@ -188,7 +208,8 @@ function renderHeader() {
   }
   const f = freshness();
   el.className = `status ${f.key === 'live' ? 'open' : f.key === 'lag' ? 'stale' : ''}${el.classList.contains('busy') ? ' busy' : ''}`;
-  el.innerHTML = `<i></i><span>${f.txt}</span>`;
+  el.innerHTML = `${statusIcon(f)}<span>${f.txt}</span>`;
+  paintHalos();
   el.setAttribute('aria-label', `${f.txt}。點一下重新整理`);
   // 盤中掃描線：資料新鮮時是冰藍，延遲時變琥珀，收盤後停下來
   const box = $('.iris-box');
@@ -220,7 +241,7 @@ async function manualRefresh() {
 }
 
 function go(tab) {
-  if (S.openCode) closeDetail(false);
+  if (S.openCode) { zoomSkip(); closeDetail(false); }
   const changed = tab !== S.tab;
   S.animUntil = 0;
   S.tab = tab;
@@ -253,6 +274,8 @@ function render() {
   if (!S.summary) { v.innerHTML = '<div class="skeleton tall"></div><div class="skeleton"></div><div class="skeleton"></div>'; return; }
   ({ home: renderHome, pf: renderPF, radar: renderRadar, aide: () => renderAide(v), news: renderNews, track: renderTrack }[S.tab] || renderHome)();
   flashPrices(v);
+  rollDigits(v);
+  paintHalos(v);
 }
 
 // ------------------------------------------------------------------ 盤中跳動：價格和上次畫面不同就閃一下
@@ -308,17 +331,22 @@ function diffSeen() {
 
 // ================================================================== 指揮台
 const liveTaiex = () => taiexNow();
+const DISCLAIM = '<p class="disclaim">資料來自證交所、櫃買中心、集保結算所等官方發布；觀點與建議由固定規則計算，不保證報酬，買賣請自行判斷。</p>';
 function renderHome() {
   const v = $('#view');
   const P = S.P;
   const has = !!(P && (P.holdings.length || P.totals.cash > 0));
+  const M = dmode();
+  if (M === 'cruise') { renderHomeCruise(v, P, has); return; }
+  const deep = M === 'deep';
   // 手機上依序排成一欄；寬螢幕（筆電、電視）變成三欄戰情室：左「大盤之瞳＋晨報」、中「行動＋關注」、右「熱力圖」
+  // 深潛：今日行動全部列出、熱力圖放全部 ETF、關注每一檔多一排數字（作戰模式的畫面和原本完全一樣）
   v.innerHTML = `<div class="home">
     ${stallHTML()}
     <div class="col c1"><div class="h-eye">${eyeHTML(P, has)}</div><div class="h-brief">${briefHTML()}</div><div class="h-lesson">${lessonHomeHTML()}</div><div class="h-aide">${aideHomeHTML()}</div></div>
-    <div class="col c2">${has ? `<div class="h-plan">${planStripHTML(P)}</div>` : ''}<div class="h-acts">${actionsHTML(P)}</div><div class="h-watch">${watchHTML()}</div></div>
-    <div class="col c3"><div class="h-heat">${heatCardHTML(true)}</div><div class="h-news">${newsMiniHTML()}</div></div>
-    <div class="h-foot">${installCard()}<p class="disclaim">資料來自證交所、櫃買中心、集保結算所等官方發布；觀點與建議由固定規則計算，不保證報酬，買賣請自行判斷。</p></div>
+    <div class="col c2">${has ? `<div class="h-plan">${planStripHTML(P)}</div>` : ''}<div class="h-acts">${actionsHTML(P, deep)}</div><div class="h-watch">${watchHTML()}</div></div>
+    <div class="col c3"><div class="h-heat">${heatCardHTML(!deep)}</div><div class="h-news">${newsMiniHTML()}</div></div>
+    <div class="h-foot">${installCard()}${DISCLAIM}</div>
   </div>`;
   $$('[data-code]', v).forEach((b) => { if (!b.closest('.hm')) b.addEventListener('click', () => openDetail(b.dataset.code)); });
   $$('[data-act="dca"]', v).forEach((b) => b.addEventListener('click', () => openPending()));
@@ -345,6 +373,40 @@ function renderHome() {
     ensureNews().then(() => { if (S.news !== had) paintNewsMini(); });
   }
 }
+/**
+ * 巡航模式的指揮台：只看最重要的——總資產與今日損益（大盤之瞳）、一句晨報、今天要做的事有幾件。
+ * 後台停擺的警告照樣放最上面；其他（關注、熱力圖、課程、副官）切到作戰就有。
+ */
+function renderHomeCruise(v, P, has) {
+  v.innerHTML = `<div class="home cruise">
+    ${stallHTML()}
+    <div class="h-eye">${eyeHTML(P, has)}</div>
+    <div class="h-brief">${briefHTML(1)}</div>
+    <div class="h-acts">${cruiseActsHTML(P)}</div>
+    <div class="h-foot">${installCard()}${DISCLAIM}</div>
+  </div>`;
+  $$('.br-list [data-code]', v).forEach((b) => b.addEventListener('click', () => openDetail(b.dataset.code)));
+  $$('.br-list [data-act="temp"]', v).forEach((b) => b.addEventListener('click', () => openTemp()));
+  const ca = $('#cr-acts', v);
+  if (ca) ca.addEventListener('click', () => {
+    setDmode('combat');
+    render();
+    FX.cue('nav');
+    requestAnimationFrame(() => { const a = $('.h-acts'); if (a) a.scrollIntoView({ block: 'start', behavior: reduceMotion() ? 'auto' : 'smooth' }); });
+    toast('切到作戰模式：今日行動在這裡', null);
+  });
+  bindHero(v, P);
+  bindInstall(v);
+  bindBrief(v);
+}
+/** 巡航模式：今日行動只寫幾件、各是什麼（點了切到作戰、捲到今日行動） */
+function cruiseActsHTML(P) {
+  const acts = buildActions(P, 99);
+  if (!acts.length) return `<section class="panel pad calm cr-acts none"><b>今天沒有需要動作的事。</b><span class="muted">${hasBook() ? '持股都在續抱狀態，照紀律放著就好。' : '輸入持股之後，加碼、減碼、除息、到價提醒都會集中在這裡。'}</span></section>`;
+  const kinds = new Map();
+  for (const a of acts) { const k = plainText(a.chip); kinds.set(k, (kinds.get(k) || 0) + 1); }
+  return `<button class="panel cr-acts" id="cr-acts" aria-label="今日行動 ${acts.length} 件，點一下看全部"><span class="k">今日行動</span><b class="num">${acts.length}</b><span class="ca-list">${[...kinds].map(([k, n]) => `<span>${esc(k)} <b class="num">${n}</b></span>`).join('')}</span><span class="chev">${ICON.chev}</span></button>`;
+}
 /** 關注清單的小圖：今天的盤中走勢 ⇄ 近 40 個交易日（存在設定，只在這支手機） */
 function bindWatchMode(root) {
   const spm = $('#sp-mode', root);
@@ -362,6 +424,8 @@ function paintWatch() {
   $$('[data-code]', box).forEach((b) => b.addEventListener('click', () => openDetail(b.dataset.code)));
   bindWatchMode(box);
   animateNeedles(box);
+  rollDigits(box);
+  paintHalos(box);
 }
 function paintNewsMini() {
   const box = $('.h-news');
@@ -406,14 +470,14 @@ function eyeHTML(P, has) {
     if (t.cash > 0) main.push({ v: t.cash, col: 'var(--s-cash)', name: '現金', code: null });
     outer = breadthSegs();
     center = `<div class="ic-k">${isPaper() ? '模擬倉總資產' : '總資產'}</div>
-      <div class="ic-v num" id="ic-v">${money(t.T)}</div>
-      <div class="ic-d num ${dirCls(t.day)}"><span>${arrow(t.day)} ${money(Math.abs(t.day))}</span><small>${dayTag(P.holdings.map((x) => x.q && x.q.date))} ${fmt.r(t.dayPct, 2)}</small></div>
+      <div class="ic-v num" id="ic-v"${rollAttr('T', money(t.T))}>${money(t.T)}</div>
+      <div class="ic-d num ${dirCls(t.day)}"><span>${arrow(t.day)} ${rollSpan('dayAbs', money(Math.abs(t.day)))}</span><small>${dayTag(P.holdings.map((x) => x.q && x.q.date))} ${rollSpan('dayPct', fmt.r(t.dayPct, 2))}</small></div>
       <div class="ic-r">${t.cost > 0 ? `<span data-term="upnl">報酬 <b class="num ${dirCls(t.pnl)}">${fmt.r(t.pct)}</b></span>` : ''}${t.divRecv > 0 ? `<span data-term="div">已領息 <b class="num">${money(t.divRecv)}</b></span>` : ''}</div>`;
     legend = `<ul class="iris-legend">${main.map((s) => `<li${s.code ? ` data-code="${s.code}"` : ''}><i style="background:${s.col}"></i><span class="nm">${esc(s.name)}</span><b class="num">${fmt.r(s.v / t.T, 0, false)}</b></li>`).join('')}</ul>`;
   } else {
     main = breadthSegs();
     center = tx ? `<div class="ic-k">加權指數・${esc(tx.when)}</div>
-      <div class="ic-v num"${pxAttr('TAIEX', tx.px)}>${fmt.n(tx.px, 2)}</div>
+      <div class="ic-v num"${pxAttr('TAIEX', tx.px)}${rollAttr('tx', fmt.n(tx.px, 2))}>${fmt.n(tx.px, 2)}</div>
       <div class="ic-d num ${dirCls(tx.ch)}">${arrow(tx.ch)} ${fmt.n(Math.abs(tx.ch ?? NaN), 2)}<small>${fmt.pct(tx.pc)}</small></div>
       <div class="ic-r">${isNum(tx.ma60) ? `<span data-term="ma">${tx.px >= tx.ma60 ? '站上季線' : '跌破季線'} <b class="num">${fmt.n(tx.ma60, 0)}</b></span>` : ''}</div>`
       : '<div class="ic-k">大盤資料準備中</div>';
@@ -422,7 +486,7 @@ function eyeHTML(P, has) {
   }
   const label = has ? '我的資產配置與市場溫度' : '大盤之瞳：全市場 ETF 規則判讀';
   const strip = tx ? `<div class="mk-strip">
-      ${has ? `<span class="mk-tx">加權 <b class="num">${fmt.n(tx.px, 0)}</b> <b class="num ${dirCls(tx.ch)}">${fmt.pct(tx.pc)}</b></span>` : ''}
+      ${has ? `<span class="mk-tx">加權 <b class="num"${rollAttr('tx0', fmt.n(tx.px, 0))}>${fmt.n(tx.px, 0)}</b> <b class="num ${dirCls(tx.ch)}"${rollAttr('txp', fmt.pct(tx.pc))}>${fmt.pct(tx.pc)}</b></span>` : ''}
       ${tx.insti ? `<span data-term="insti" class="mk-in">${[['外資', tx.insti.f], ['投信', tx.insti.t], ['自營', tx.insti.d]].map(([k, z]) => `<span>${k}<b class="num ${dirCls(z)}">${z > 0 ? '+' : ''}${fmt.big(z)}</b></span>`).join('')}<small class="num">${fmt.d(tx.insti.date)}</small></span>` : ''}
       ${has && b && b.n ? `<span class="mk-br" data-term="breadth">外圈：ETF <b class="num up">${Math.round(b.pBull * 100)}%</b> 偏多</span>` : ''}
     </div>` : '';
@@ -501,13 +565,14 @@ function briefSpeech(withHello = true) {
   if (a) parts.push(a);
   return parts.join('');
 }
-function briefHTML() {
+/** 晨報。only：只放前幾句（巡航模式只放第一句，沒有「帶去問 Claude」） */
+function briefHTML(only = 0) {
   const tx = liveTaiex();
-  const items = briefItems();
-  return `<section class="panel brief"><div class="br-h"><span class="br-t">${briefName()}</span><span class="br-s num">${tx ? esc(tx.when) : ''}</span>
+  const items = only ? briefItems().slice(0, only) : briefItems();
+  return `<section class="panel brief${only ? ' one' : ''}"><div class="br-h"><span class="br-t">${briefName()}</span><span class="br-s num">${tx ? esc(tx.when) : ''}</span>
       ${FX.hasVoice() ? `<button class="icon-btn br-say" id="br-say" aria-label="念給我聽">${ICON.speaker}</button>` : ''}</div>
     <ul class="br-list">${items.map((it) => `<li class="br-${it.k}"${it.code ? ` data-code="${it.code}"` : it.act ? ` data-act="${it.act}"` : ''}><span class="br-ic">${BR_ICON[it.k] || ''}</span><span class="br-x">${md(it.t)}</span></li>`).join('')}</ul>
-    <button class="link small br-ask" id="br-ask">${ICON.comms}帶今天的市場去問 Claude</button></section>`;
+    ${only ? '' : `<button class="link small br-ask" id="br-ask">${ICON.comms}帶今天的市場去問 Claude</button>`}</section>`;
 }
 function bindBrief(v) {
   const say = $('#br-say', v);
@@ -521,7 +586,7 @@ function bindBrief(v) {
 }
 
 function chip(t, cls) { return `<span class="chip act ${cls}">${t}</span>`; }
-function buildActions(P) {
+function buildActions(P, max = 9) {
   const out = [];
   const hits = checkAlerts();
   if (hits.some((h) => h.fresh)) setTimeout(() => FX.cue('alert'), 400);   // 今天第一次碰到：響一下
@@ -592,10 +657,11 @@ function buildActions(P) {
     if (r.dv && r.dv.d >= today() && PF.daysBetween(today(), r.dv.d) <= 10) out.push({ pri: 3, code, chip: chip('除息', 'info'), title: r.n, text: `${fmt.d(r.dv.d)} <span data-term="div">除息</span>${r.dv.cash ? `，每單位 ${cash3(r.dv.cash)} 元` : ''}` });
   }
   const seen = new Set();
-  return out.sort((a, b) => a.pri - b.pri).filter((a) => { const k = a.code + a.chip; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 9);
+  return out.sort((a, b) => a.pri - b.pri).filter((a) => { const k = a.code + a.chip; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, max);
 }
-function actionsHTML(P) {
-  const acts = buildActions(P);
+/** 今日行動。all：深潛模式全部列出（平常最多 9 件） */
+function actionsHTML(P, all = false) {
+  const acts = buildActions(P, all ? 99 : 9);
   let html = `<div class="sec-h"><h2>今日行動</h2><span class="aside">${acts.length ? `${acts.length} 件` : ''}</span></div>`;
   if (acts.length) {
     html += `<section class="panel list acts">${acts.map((a) => `<button class="act-row" ${a.act ? `data-act="${a.act}"` : `data-code="${a.code}"`}><span class="a-chip">${a.chip}</span><span class="a-body"><b>${esc(a.title)}</b><span>${a.text}</span></span><span class="chev">${ICON.chev}</span></button>`).join('')}</section>`;
@@ -614,7 +680,7 @@ function heatRows(filter) {
 }
 function heatCardHTML(mini) {
   const mode = settings.heatMode;
-  return `<div class="sec-h"><h2>盤面熱力</h2><div class="seg mini" role="tablist">${[['chg', chgLabel()], ['score', '規則分數']].map(([k, t]) => `<button data-hmode="${k}" aria-pressed="${mode === k}">${t}</button>`).join('')}</div></div>
+  return `<div class="sec-h"><h2>盤面熱力</h2><div class="seg mini" role="tablist">${[['chg', chgLabel()], ['score', '規則分數']].map(([k, t]) => `<button data-hmode="${k}" aria-pressed="${mode === k}">${t}</button>`).join('')}</div>${haloHTML(mode === 'score' ? 'eod' : 'live')}</div>
     <section class="panel heat-card"><div class="heat-wrap"><div class="heat" data-heat="${mini ? 'mini' : 'full'}"></div><div class="hm-clock" hidden><span class="k">盤中縮時</span><b class="num">09:00</b><i><s></s></i></div></div>
       <div class="heat-foot">${heatLegend(mode)}<span class="heat-acts"><button class="link small" data-replay${mode === 'chg' ? '' : ' hidden'}>${ICON.play || '▶'} 盤中縮時</button>${mini ? '<button class="link small" id="heat-more">看全部</button>' : ''}</span></div>
       <p class="small muted heat-cap">${heatCapHTML(mode, mini)}</p></section>`;
@@ -713,6 +779,9 @@ function bindHeat(v, filter) {
     settings.heatMode = b.dataset.hmode;
     saveSettings();
     $$('[data-hmode]', v).forEach((z) => z.setAttribute('aria-pressed', z === b));
+    // 光環跟著換：漲跌看盤中即時價、規則分數看收盤後的完整分析
+    const hl = $('.halo', b.closest('.sec-h'));
+    if (hl) { hl.dataset.halo = settings.heatMode === 'score' ? 'eod' : 'live'; paintHalos(b.closest('.sec-h')); }
     const card = b.closest('.sec-h').nextElementSibling;
     if (heatRP) stopHeatReplay(false);
     if (card) {
@@ -741,7 +810,7 @@ function watchHTML() {
   // 有幾檔沒有那天的走勢（還沒成交、停止交易）時，那幾檔是近 40 日的灰線：標題照實說
   const mixed = !!d && days.some((x) => !x);
   const lab = sparkDay() ? (d ? `小圖：${dayTag([d]) === '今日' ? '今天' : fmt.d(d) + ' '}走勢${mixed ? '・灰線＝近 40 日' : ''}` : '小圖：近 40 日（今天的走勢還沒有）') : '小圖：近 40 日';
-  return `<div class="sec-h"><h2>關注</h2><span class="aside">${rows.length} 檔・<button class="link sp-mode" id="sp-mode" aria-label="切換小圖：今天的走勢或近 40 個交易日">${lab}</button></span></div>` +
+  return `<div class="sec-h"><h2>關注</h2><span class="aside">${rows.length} 檔・<button class="link sp-mode" id="sp-mode" aria-label="切換小圖：今天的走勢或近 40 個交易日">${lab}</button></span>${haloHTML('live')}</div>` +
     (rows.length ? `<section class="panel list watch">${rows.map(watchRow).join('')}</section>` : '<section class="panel empty">還沒有關注的 ETF。到「雷達」點任一檔，按右上角星號加入。</section>');
 }
 function watchRow(row) {
@@ -750,10 +819,21 @@ function watchRow(row) {
   return `<button class="w-row" data-code="${row.c}" aria-label="${esc(row.n)} 詳情">
     <span class="w-id"><span class="w-name">${esc(row.n)}${held ? '<i class="mine-dot" title="持有中"></i>' : ''}</span><span class="w-code num">${row.c}<span>${esc(catName(row.k))}</span></span></span>
     ${watchSpark(row, q).svg}
-    <span class="w-px"><span class="p num"${pxAttr(row.c, q.px)}>${fmt.px(q.px)}</span><span class="c num ${dirCls(q.pc)}">${qDay(q)}${arrow(q.pc)}${isNum(q.pc) ? Math.abs(q.pc).toFixed(2) + '%' : '—'}</span></span>
+    <span class="w-px"><span class="p num"${pxAttr(row.c, q.px)}${rollAttr('px:' + row.c, fmt.px(q.px))}>${fmt.px(q.px)}</span><span class="c num ${dirCls(q.pc)}">${qDay(q)}${arrow(q.pc)}${rollSpan('pc:' + row.c, isNum(q.pc) ? Math.abs(q.pc).toFixed(2) + '%' : '—')}</span></span>
     <span class="w-sig">${stanceChip(row.st)}${posChip(row.ps)}${planTagHTML(S.alloc ? S.alloc.adv.get(row.c) : null)}${row.cf != null ? `<span class="small muted" data-term="cf">信心 <b class="num">${row.cf}</b></span>` : ''}</span>
-    <span class="w-g" data-term="sc">${gaugeSVG(row.sc, row.st)}</span>
+    ${dmode() === 'deep' ? rowDeepHTML(row, q) : ''}<span class="w-g" data-term="sc">${gaugeSVG(row.sc, row.st)}</span>
   </button>`;
+}
+/** 深潛模式：每一檔多一排數字（近一年、殖利率、折溢價、成交值、規模），都是收盤資料或盤中即時價 */
+function rowDeepHTML(row, q) {
+  const cell = (k, v, term) => `<span${term ? ` data-term="${term}"` : ''}>${k} <b class="num">${v}</b></span>`;
+  const out = [];
+  if (isNum(row.r1y)) out.push(cell('近一年', fmt.r(row.r1y), 'r1y'));
+  if (isNum(row.y)) out.push(cell('殖利率', row.y.toFixed(2) + '%', 'y'));
+  if (isNum(q.prem)) out.push(cell(q.prem >= 0 ? '溢價' : '折價', Math.abs(q.prem).toFixed(2) + '%', 'prem'));
+  if (isNum(row.val)) out.push(cell('成交值', fmt.big(row.val) + '元', 'val'));
+  if (isNum(row.aum)) out.push(cell('規模', fmt.big(row.aum) + '元', 'aum'));
+  return out.length ? `<span class="dx">${out.join('')}</span>` : '';
 }
 
 function installCard() {
@@ -835,15 +915,16 @@ function renderPF() {
     return;
   }
   const t = P.totals;
+  const M = dmode();
   let html = head;
   if (isPaper()) html += paperHeadHTML(P);
-  html += `<div class="sec-h"><h2>${isPaper() ? '模擬部位' : '我的部位'}</h2>${isPaper() ? '' : `<button class="btn primary small" id="pf-add">${ICON.plus}記一筆</button>`}</div>
+  html += `<div class="sec-h"><h2>${isPaper() ? '模擬部位' : '我的部位'}</h2>${isPaper() ? '' : `<button class="btn primary small" id="pf-add">${ICON.plus}記一筆</button>`}${haloHTML('live')}</div>
     <section class="panel pf-top">
-      <div class="pt-main"><div class="k">總資產</div><div class="pt-v num">${money(t.T)}</div>
-        <div class="pt-sub">持股市值 <b class="num">${money(t.mv)}</b>　＋　現金 ${isPaper() ? `<b class="num">${money(t.cash)}</b><small class="muted">（自動計算）</small>` : `<button class="link num" id="pf-cash">${money(t.cash)}</button>`}</div></div>
+      <div class="pt-main"><div class="k">總資產</div><div class="pt-v num"${rollAttr('T', money(t.T))}>${money(t.T)}</div>
+        <div class="pt-sub">持股市值 <b class="num"${rollAttr('mv', money(t.mv))}>${money(t.mv)}</b>　＋　現金 ${isPaper() ? `<b class="num">${money(t.cash)}</b><small class="muted">（自動計算）</small>` : `<button class="link num" id="pf-cash">${money(t.cash)}</button>`}</div></div>
       <div class="pt-grid">
-        <div><span data-term="upnl">未實現損益</span><b class="num ${dirCls(t.pnl)}">${money(t.pnl, true)}</b><small class="num ${dirCls(t.pnl)}">${fmt.r(t.pct)}</small></div>
-        <div><span>${dayTag(P.holdings.map((x) => x.q && x.q.date))}</span><b class="num ${dirCls(t.day)}">${money(t.day, true)}</b><small class="num ${dirCls(t.day)}">${fmt.r(t.dayPct, 2)}</small></div>
+        <div><span data-term="upnl">未實現損益</span><b class="num ${dirCls(t.pnl)}"${rollAttr('pnl', money(t.pnl, true))}>${money(t.pnl, true)}</b><small class="num ${dirCls(t.pnl)}"${rollAttr('pnlPct', fmt.r(t.pct))}>${fmt.r(t.pct)}</small></div>
+        <div><span>${dayTag(P.holdings.map((x) => x.q && x.q.date))}</span><b class="num ${dirCls(t.day)}"${rollAttr('day', money(t.day, true))}>${money(t.day, true)}</b><small class="num ${dirCls(t.day)}"${rollAttr('dayPct', fmt.r(t.dayPct, 2))}>${fmt.r(t.dayPct, 2)}</small></div>
         <div><span data-term="div">已領配息</span><b class="num">${money(t.divRecv)}</b>${t.undated ? '<small class="muted">只算有日期的交易</small>' : ''}</div>
         <div><span data-term="total">含息總報酬</span><b class="num ${dirCls(t.total)}">${money(t.total, true)}</b><small class="muted">損益＋已實現＋配息</small></div>
         ${Math.abs(t.realized) >= 1 ? `<div><span data-term="rpnl">已實現損益</span><b class="num ${dirCls(t.realized)}">${money(t.realized, true)}</b></div>` : ''}
@@ -851,6 +932,11 @@ function renderPF() {
       </div>
       <p class="small muted">損益已扣掉賣出時的<span data-term="fee">手續費</span>與<span data-term="tax">證交稅</span>估計值。${settings.fee.disc < 1 ? `手續費以 ${(settings.fee.disc * 10).toFixed(1).replace(/\.0$/, '')} 折計算。` : '手續費以原價計算，可在設定改成你的折扣。'}</p>
     </section>`;
+  if (M === 'cruise') {
+    if (P.holdings.length) html += holdsHTML(P);
+    else if (isPaper()) html += PAPER_EMPTY;
+    html += cruiseHintHTML('部位只放總覽和持股。投入總覽、今日戰報、加碼計畫、定期定額、交易紀錄在「作戰」。');
+  } else {
   html += investHTML(P);
   html += dayReportHTML(P);
   html += planCardHTML(P);
@@ -859,20 +945,21 @@ function renderPF() {
   html += xrayPfHTML();
   if (P.holdings.length) html += `<section class="panel pad aide-strip slim"><div class="as-h"><span class="ac-core">${coreSVG('mini')}</span><div><b>想討論整體配置？</b><span class="small muted">副官巡檢在「副官」分頁；也可以把配置（預設只寫比例）帶去問 Claude。</span></div></div><div class="row-btns"><button class="btn small ghost" id="pf-aide">${ICON.aide}看副官巡檢</button><button class="btn small ghost" id="pf-ask">${ICON.comms}帶配置去問 Claude</button></div></section>`;
   if (P.holdings.length) {
-    html += `<div class="sec-h"><h2>持股</h2><span class="aside">${P.holdings.length} 檔　依市值排序</span></div>
-    <section class="panel list holds">${P.holdings.map(holdRow).join('')}</section>`;
+    html += holdsHTML(P);
     html += dcaStripHTML();
   } else if (isPaper()) {
-    html += '<section class="panel pad calm"><b>模擬倉還是空的。</b><span class="muted">到「雷達」挑一檔，在單檔頁按「記一筆」就能模擬下單；也可以照冷眼的加碼建議買買看。</span></section>';
+    html += PAPER_EMPTY;
   }
   html += divCalHTML(P, v.clientWidth);
   html += riskHTML(P);
   if (P.closed.length) {
     html += `<div class="sec-h"><h2>已出清</h2></div><section class="panel list">${P.closed.map((x) => `<button class="w-row closed" data-code="${x.code}"><span class="w-id"><span class="w-name">${esc(x.name)}</span><span class="w-code num">${x.code}</span></span><span class="w-px"><span class="small muted" data-term="rpnl">已實現</span><span class="p num ${dirCls(x.h.realized)}">${money(x.h.realized, true)}</span></span></button>`).join('')}</section>`;
   }
-  html += txHTML();
+  html += txHTML(M === 'deep');
   if (!isPaper()) html += `<section class="panel pad row-between"><div><b>備份與搬家</b><div class="small muted">持股只存在這支手機，換手機前先備份（模擬倉會一起備份）。</div></div><button class="btn ghost small" id="pf-bk">備份</button></section>`;
+  }
   v.innerHTML = `<div class="pf">${html}</div>`;
+  bindCruiseHint(v);
   bindModeSwitch(v);
   bindPlans(v, () => renderPF());
   const add = $('#pf-add', v);
@@ -987,14 +1074,31 @@ function allocHTML(P) {
     <section class="panel pad alloc"><div class="a-bar" role="img" aria-label="資產配置">${bar}</div><ul class="a-list">${rows}</ul></section>`;
 }
 
+const PAPER_EMPTY = '<section class="panel pad calm"><b>模擬倉還是空的。</b><span class="muted">到「雷達」挑一檔，在單檔頁按「記一筆」就能模擬下單；也可以照冷眼的加碼建議買買看。</span></section>';
+function holdsHTML(P) {
+  return `<div class="sec-h"><h2>持股</h2><span class="aside">${P.holdings.length} 檔　依市值排序</span>${haloHTML('live')}</div>
+    <section class="panel list holds">${P.holdings.map(holdRow).join('')}</section>`;
+}
+/** 巡航模式：說明其他東西在哪，一鍵切回作戰 */
+function cruiseHintHTML(t) {
+  return `<section class="panel pad cr-hint"><span><b>巡航模式</b>　${esc(t)}</span><button class="btn small ghost" data-dm-go="combat">切到作戰</button></section>`;
+}
+function bindCruiseHint(v) {
+  $$('[data-dm-go]', v).forEach((b) => b.addEventListener('click', () => { setDmode(b.dataset.dmGo); render(); window.scrollTo({ top: 0 }); FX.cue('nav'); toast(`${dmodeInfo().t}模式：${dmodeInfo().d}`, null); }));
+}
 function holdRow(x) {
   const a = S.adv.get(x.code);
   const q = x.q || {};
   return `<button class="h-row" data-code="${x.code}">
     <span class="h-top"><i class="h-dot" style="background:${slotVar(x.slot)}"></i><span class="h-name">${esc(x.name)}<small class="num">${x.code}</small></span>${actChip(a)}${planTagHTML(a)}</span>
-    <span class="h-mid"><span>${sharesOf(x.h.sh)}　均價 <b class="num">${settings.privacy ? '••••' : fmt.px(x.h.avg)}</b></span><span>現價 <b class="num"${pxAttr(x.code, x.px)}>${fmt.px(x.px)}</b> <span class="num ${dirCls(q.pc)}">${fmt.pct(q.pc)}</span></span></span>
-    <span class="h-bot"><span class="num ${dirCls(x.pnl)}">${money(x.pnl, true)}<small>${fmt.r(x.pct)}</small></span><span class="muted">${x.divRecv > 0 ? `已領息 <span class="num">${money(x.divRecv)}</span>　` : ''}比重 <span class="num">${fmt.r(x.w, 1, false)}</span></span></span>
-  </button>`;
+    <span class="h-mid"><span>${sharesOf(x.h.sh)}　均價 <b class="num">${settings.privacy ? '••••' : fmt.px(x.h.avg)}</b></span><span>現價 <b class="num"${pxAttr(x.code, x.px)}${rollAttr('px:' + x.code, fmt.px(x.px))}>${fmt.px(x.px)}</b> <span class="num ${dirCls(q.pc)}">${fmt.pct(q.pc)}</span></span></span>
+    <span class="h-bot"><span class="num ${dirCls(x.pnl)}">${rollSpan('hp:' + x.code, money(x.pnl, true))}<small>${fmt.r(x.pct)}</small></span><span class="muted">${x.divRecv > 0 ? `已領息 <span class="num">${money(x.divRecv)}</span>　` : ''}比重 <span class="num">${fmt.r(x.w, 1, false)}</span></span></span>
+  ${dmode() === 'deep' ? holdDeepHTML(x) : ''}</button>`;
+}
+/** 深潛模式：每一檔多一排——市值、投入（還在手上的成本）、今天賺賠、預估一年配息 */
+function holdDeepHTML(x) {
+  const cell = (k, v, cls = '', term = '') => `<span${term ? ` data-term="${term}"` : ''}>${k} <b class="num ${cls}">${v}</b></span>`;
+  return `<span class="dx h-dx">${cell('市值', money(x.mv))}${cell('投入', money(x.h.cost), '', 'invest')}${isNum(x.day) ? cell(dayTag([x.q && x.q.date]), money(x.day, true), dirCls(x.day)) : ''}${x.annual > 0 ? cell('一年配息', money(x.annual), '', 'annual') : ''}</span>`;
 }
 
 function divCalHTML(P, boxW = 0) {
@@ -1049,10 +1153,10 @@ function riskHTML(P) {
     </section>`;
 }
 
-function txHTML() {
+function txHTML(all = false) {
   const lots = book.lots.slice().sort((a, b) => (b.d || 0) - (a.d || 0) || String(b.at || '').localeCompare(String(a.at || '')));
   if (!lots.length) return '';
-  const show = S.txAll ? lots : lots.slice(0, 12);
+  const show = S.txAll || all ? lots : lots.slice(0, 12);
   return `<div class="sec-h"><h2>${isPaper() ? '模擬交易紀錄' : '交易紀錄'}</h2><span class="aside">${lots.length} 筆</span></div>
     <section class="panel list journal">${show.map((l) => {
     const r = S.rows.get(l.c);
@@ -1072,19 +1176,21 @@ function renderRadar() {
   const cats = ['*', 'broad', 'div', 'theme', 'overseas', 'bond', 'active', 'lev', 'inv', 'fut'];
   const sigs = [['*', '全部訊號'], ['add', '可加碼'], ['wait', '漲多分批'], ['hold', '續抱'], ['caution', '先不加碼'], ['trim', '減碼']];
   const heat = settings.radarView === 'heat';
+  // 巡航模式：只留搜尋和清單（對決、時光機、資金輪動在作戰模式）
+  const cruise = dmode() === 'cruise';
   v.innerHTML = `
-    <div class="radar-tools">
+    ${cruise ? '' : `<div class="radar-tools">
       <button class="tool-btn" id="to-duel">${TOOL_ICON.duel}<span><b>ETF 對決</b><small>挑 2～3 檔比屬性</small></span></button>
       <button class="tool-btn" id="to-tm">${TOOL_ICON.tm}<span><b>存股時光機</b><small>如果當初每月買</small></span></button>
     </div>
-    ${rotationHTML()}
+    ${rotationHTML()}`}
     <div class="toolbar">
       <label class="search">${ICON.search}<input id="q" type="search" inputmode="search" placeholder="搜尋代號或名稱，例如 0050、高股息" value="${esc(S.all.q)}" autocomplete="off"></label>
       <div class="hscroll" id="cats">${cats.map((c) => `<button class="pill" data-cat="${c}" aria-pressed="${S.all.cat === c}">${c === '*' ? '全部類型' : CAT[c]}</button>`).join('')}</div>
       <div class="hscroll" id="sigs">${sigs.map(([k, t]) => `<button class="pill${k !== '*' ? ' sig-' + k : ''}" data-sig="${k}" aria-pressed="${S.all.sig === k}">${t}</button>`).join('')}</div>
       <div class="sortrow"><div class="seg mini" role="tablist" aria-label="顯示方式">${[['list', '清單'], ['heat', '熱力圖']].map(([k, t]) => `<button data-view="${k}" aria-pressed="${settings.radarView === k}">${t}</button>`).join('')}</div>
         ${heat ? '' : `<select id="sort" aria-label="排序方式">${[['score', '觀點分數（高→低）'], ['score_r', '觀點分數（低→高）'], ['chg', chgLabel()], ['val', '成交值'], ['yield', '殖利率'], ['r1y', '近一年報酬'], ['prem', '溢價（高→低）'], ['code', '代號']].map(([k, t]) => `<option value="${k}"${S.all.sort === k ? ' selected' : ''}>${t}</option>`).join('')}</select>`}
-        <span id="cnt" class="cnt"></span></div>
+        <span id="cnt" class="cnt"></span>${haloHTML('live')}</div>
     </div>
     <div id="stk-hits" class="stk-hits" hidden></div>
     ${heat ? `<div id="rheat">${heatCardHTML(false)}</div>` : '<section class="panel list" id="list"></section>'}`;
@@ -1095,8 +1201,9 @@ function renderRadar() {
   const sort = $('#sort', v);
   if (sort) sort.addEventListener('change', (e) => { S.all.sort = e.target.value; renderRadarList(); });
   $$('[data-view]', v).forEach((b) => b.addEventListener('click', () => { settings.radarView = b.dataset.view; saveSettings(); renderRadar(); }));
-  $('#to-duel', v).addEventListener('click', () => openDuel());
-  $('#to-tm', v).addEventListener('click', () => openTM());
+  const tdu = $('#to-duel', v), ttm = $('#to-tm', v);
+  if (tdu) tdu.addEventListener('click', () => openDuel());
+  if (ttm) ttm.addEventListener('click', () => openTM());
   // 資金輪動：點一類＝上面的類型篩選（再點一次取消），捲到清單
   bindRotation(v, (k) => {
     S.all.cat = k;
@@ -1141,6 +1248,7 @@ function renderRadarList() {
   const list = $('#list');
   if (!list) return;
   let rows = S.summary.etfs.filter(radarFilter());
+  const deep = dmode() === 'deep';   // 深潛：每一檔都多一排數字（不只是排序用的那一個）
   const key = {
     score: (r) => (r.sc ?? -99), score_r: (r) => -(r.sc ?? 99), chg: (r) => (quote(r).pc ?? -99), val: (r) => (r.val ?? 0),
     yield: (r) => (r.y ?? -1), r1y: (r) => (r.r1y ?? -99), prem: (r) => (quote(r).prem ?? -99), code: null,
@@ -1152,10 +1260,11 @@ function renderRadarList() {
     const qq = quote(r);
     const extra = S.all.sort === 'yield' && isNum(r.y) ? `殖利率 ${r.y.toFixed(2)}%` : S.all.sort === 'prem' && isNum(qq.prem) ? `${qq.prem >= 0 ? '溢價' : '折價'} ${Math.abs(qq.prem).toFixed(2)}%` : S.all.sort === 'val' && isNum(r.val) ? `${fmt.big(r.val)}元` : S.all.sort === 'r1y' && isNum(r.r1y) ? `近一年 ${fmt.r(r.r1y)}` : '';
     const held = !!heldOf(r.c);
-    return `<button class="l-row" data-code="${r.c}"><span class="nm"><b>${esc(r.n)}${held ? '<i class="mine-dot" title="持有中"></i>' : ''}</b><span class="meta"><span class="num">${r.c}</span><span>${esc(catName(r.k))}</span>${extra ? `<span>${extra}</span>` : ''}</span></span><span class="sig">${stanceChip(r.st)}${posChip(r.ps)}</span><span class="pxc"><span class="p num"${pxAttr(r.c, qq.px)}>${fmt.px(qq.px)}</span><span class="c num ${dirCls(qq.pc)}">${qDay(qq)}${fmt.pct(qq.pc)}</span></span></button>`;
+    return `<button class="l-row" data-code="${r.c}"><span class="nm"><b>${esc(r.n)}${held ? '<i class="mine-dot" title="持有中"></i>' : ''}</b><span class="meta"><span class="num">${r.c}</span><span>${esc(catName(r.k))}</span>${extra && !deep ? `<span>${extra}</span>` : ''}</span></span><span class="sig">${stanceChip(r.st)}${posChip(r.ps)}</span><span class="pxc"><span class="p num"${pxAttr(r.c, qq.px)}${rollAttr('px:' + r.c, fmt.px(qq.px))}>${fmt.px(qq.px)}</span><span class="c num ${dirCls(qq.pc)}">${qDay(qq)}${rollSpan('lpc:' + r.c, fmt.pct(qq.pc))}</span></span>${deep ? rowDeepHTML(r, qq) : ''}</button>`;
   }).join('');
   $$('.l-row', list).forEach((b) => b.addEventListener('click', () => openDetail(b.dataset.code)));
   flashPrices(list);
+  rollDigits(list);
 }
 
 // ================================================================== 情報
@@ -1207,7 +1316,7 @@ async function renderTrack() {
   const adj = T.overall_adj || { bull: o.base_up, bear: 1 - o.base_up };
   const pc = (z, d = 1) => (isNum(z) ? (z * 100).toFixed(d) + '%' : '—');
   const delta = (a, b) => (isNum(a) && isNum(b) ? `<b style="white-space:nowrap" class="${a - b >= 0.02 ? 'good' : a - b > -0.02 ? 'meh' : 'bad'}">${a >= b ? '高' : '低'} ${Math.abs((a - b) * 100).toFixed(1)} 點</b>` : '');
-  let html = tmCard + `<div class="sec-h"><h2>規則觀點的戰績</h2><span class="aside num" data-term="bt">${fmt.dy(o.start)}–${fmt.dy(o.end)}</span></div>
+  let html = tmCard + `<div class="sec-h"><h2>規則觀點的戰績</h2><span class="aside num" data-term="bt">${fmt.dy(o.start)}–${fmt.dy(o.end)}</span>${haloHTML('eod')}</div>
     <section class="big2">
       <div class="panel stat"><div class="k">偏多之後 20 日上漲</div><div class="v num">${pc(o.bull.hit)}</div><div class="s"><span data-term="base">同類基準</span> ${pc(adj.bull)}，${delta(o.bull.hit, adj.bull)}<br><span class="muted">${fmt.n(o.bull.n)} 次</span></div></div>
       <div class="panel stat"><div class="k">偏空之後 20 日下跌</div><div class="v num">${pc(o.bear.hit)}</div><div class="s"><span data-term="base">同類基準</span> ${pc(adj.bear)}，${delta(o.bear.hit, adj.bear)}<br><span class="muted">${fmt.n(o.bear.n)} 次</span></div></div>
@@ -1231,6 +1340,7 @@ async function renderTrack() {
   }
   html += `<section class="panel pad prose"><p><b>怎麼算的：</b>${esc(T.method.note)}</p><p>命中的定義：偏多之後 20 個交易日含息報酬大於 0；偏空之後小於 0。中性不算命中。回測是用過去資料檢查規則，不代表未來一樣準。</p></section>`;
   v.innerHTML = `<div class="track">${html}</div>`;
+  paintHalos(v);
   bindTools();
   const sel = $('#pos-cat', v);
   if (sel) sel.addEventListener('change', (e) => { S.posCat = e.target.value; renderTrack(); });
@@ -1276,6 +1386,7 @@ function calibRows(cal) {
 // ================================================================== 設定（全螢幕頁）
 function openSettings(push = true) {
   if (S.openCode !== '__prefs') FX.cue('open');
+  zoomCancel();
   S.openCode = '__prefs';
   if (push && location.hash !== '#settings') history.pushState({ prefs: 1 }, '', '#settings');
   const sh = $('#sheet');
@@ -1326,6 +1437,8 @@ function drawSettings() {
   <div class="sheet-body prefs">
     <div class="sec-h"><h2>更新紀錄</h2><span class="aside">${UPDATES.length ? fmt.dy(UPDATES[0].d) : ''}</span></div>
     <section class="panel set"><div class="srow"><div><div class="h">${UPDATES.length ? esc(UPDATES[0].title) : '—'}</div><div class="d">冷眼最近加了什麼、怎麼用</div></div><button class="btn small ghost" id="s-upd">打開</button></div></section>
+
+    ${hudSettingsHTML()}
 
     <div class="sec-h"><h2>個人化</h2></div>
     <section class="panel set">
@@ -1495,6 +1608,15 @@ function bindSettings() {
     if (!FX.speak(briefSpeech(true), { force: true })) toast(FX.voiceWhy());
   });
   bindVoiceRow(sh);
+  // 介面效果：一個一個開關、換顯示模式、一次回到原本的樣子（hud.js）。改完頂端、底下的主畫面、這一頁都重畫
+  bindHudSettings(sh, () => {
+    paintDmode();
+    renderHeader();
+    render();
+    const y = sh.scrollTop;
+    drawSettings();
+    sh.scrollTop = y;
+  });
   $('#s-proj', sh).addEventListener('click', async () => {
     const t = projectText();
     try { await navigator.clipboard.writeText(t); FX.cue('ok'); toast('已複製專案指示，到 Claude 的專案「指示」貼上', null); } catch {
@@ -1880,6 +2002,9 @@ async function boot() {
   renderShell();
   installExplain();
   speakPill();
+  // 介面效果（hud.js）：光環照頂端狀態列同一套判斷；記下在主畫面點的是哪一格（鏡頭轉場）
+  haloSetup({ fresh: freshness, minsAgo });
+  zoomInstall();
   // 手機要先點一下才能出聲：任何一次點擊或按鍵都順便喚醒音效引擎
   for (const ev of ['pointerdown', 'keydown', 'touchend']) document.addEventListener(ev, () => FX.unlock(), { capture: true, passive: true });
   // 一般按鈕的「喀」一聲＋輕震動（分頁列、對話框有自己的聲音）
