@@ -2452,3 +2452,22 @@ body.nofx .bt-sit .bs-c { animation: none; opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .st-hero .st-rain, .st-hero .st-flash, .st-items .st-bar i { animation: none !important; } .st-hero .st-rain { opacity: .3; } }
 body.nofx .st-hero .st-rain, body.nofx .st-hero .st-flash, body.nofx .st-items .st-bar i { animation: none !important; }
 body.nofx .st-hero .st-rain { opacity: .3; }
+/* 手機橫拿（2026/11/18）：開機畫面放不下一整欄——左邊標誌與眼睛、右邊啟動鈕／開機清單；
+   清單和戰況板疊在同一格，戰況板出來時清單淡出；名字排在眼睛下面（eye.js 的 labelPos） */
+@media (orientation: landscape) and (max-height: 560px) {
+  .boot { grid-template-columns: minmax(0, 880px); padding: 10px 18px; }
+  .boot .bt-in { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); column-gap: 28px; row-gap: 8px; align-items: center; }
+  .boot .bt-mark { grid-column: 1; grid-row: 1; }
+  .boot .bt-name { grid-column: 1; grid-row: 2; }
+  .boot .bt-ign { grid-column: 2; grid-row: 1; }
+  .boot .bt-hint { grid-column: 2; grid-row: 2; }
+  .boot .bt-log, .boot .bt-hi { grid-column: 2; grid-row: 1; }
+  .boot .bt-log { gap: 4px; font-size: 12.5px; margin: 0; }
+  .boot .bt-skip { grid-column: 2; grid-row: 3; margin-top: 0; }
+  .boot.eyed .bt-log { margin-top: 0; }
+  .boot.eyed.standby .bt-ign { margin-top: 0; }
+  .boot.go .bt-log { animation: btLogOut .25s ease forwards; animation-delay: calc(.55s + var(--n, 8) * .15s); }
+  .bt-sit .bs-tx b { font-size: 38px; }
+}
+@keyframes btLogOut { to { opacity: 0; visibility: hidden; } }
+@media (orientation: landscape) and (max-height: 560px) and (prefers-reduced-motion: reduce) { .boot.go .bt-log { display: none; } }

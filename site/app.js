@@ -1755,7 +1755,7 @@ function maybeBoot(force = false) {
       <div class="bt-name">冷眼　台股 ETF 指揮系統</div>
       ${gate ? `<button class="bt-ign" type="button" aria-label="啟動冷眼"><span class="bt-ring" aria-hidden="true"></span><span class="bt-ign-in"><b>啟動</b><small class="num">IGNITION</small></span></button>
       <div class="bt-hint">駕駛員 ${esc(userName())}，系統待命中</div>` : ''}
-      <ol class="bt-log">${lines.map((l, i) => `<li style="--i:${i}" class="${l.ok === false ? 'warn' : ''}${l.me ? ' me' : ''}"><span class="bt-k">${esc(l.k)}</span><span class="bt-v">${esc(l.v)}</span><span class="bt-s">${esc(l.t)}</span></li>`).join('')}</ol>
+      <ol class="bt-log" style="--n:${lines.length}">${lines.map((l, i) => `<li style="--i:${i}" class="${l.ok === false ? 'warn' : ''}${l.me ? ' me' : ''}"><span class="bt-k">${esc(l.k)}</span><span class="bt-v">${esc(l.v)}</span><span class="bt-s">${esc(l.t)}</span></li>`).join('')}</ol>
       ${eyeMode ? `<div class="bt-hi bt-sit" style="--i:${lines.length}">${eyeSitHTML(bootSit(tx), esc, fmt)}</div>` : `<div class="bt-hi" style="--i:${lines.length}">歡迎回來，${esc(userName())}${tx ? `<small>加權 <b class="num">${fmt.n(tx.px, 0)}</b> <b class="num ${dirCls(tx.ch)}">${fmt.pct(tx.pc)}</b>・${esc(tx.when)}</small>` : ''}</div>`}
       <button class="bt-skip" type="button">${gate ? '不用聲音，直接進入' : '點一下略過'}</button>
     </div>`;

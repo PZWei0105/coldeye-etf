@@ -167,7 +167,15 @@ export function eyeStart(boot, { labels = [], anchor = () => null, bus = () => n
     const left = box.left - br.left + 10, width = Math.max(120, box.width - 20);
     const x = left + width * ((col + 0.5) / per);
     const log = logEl();
-    const yTop = log && log.getBoundingClientRect().height ? log.getBoundingClientRect().top - br.top - 40 : cy + R * 0.66 + 22;
+    const lr = log ? log.getBoundingClientRect() : null;
+    const a = anchor(); const ar = a ? a.getBoundingClientRect() : null;
+    // 手機橫拿：開機清單在標誌右邊（左右兩欄），名字排在眼睛正下方、只占左邊那一欄
+    if (lr && ar && lr.width && lr.left > ar.right) {
+      const colW = 2 * (cx - (box.left - br.left));
+      const lw = Math.max(120, colW - 20), lx = box.left - br.left + 10 + lw * ((col + 0.5) / per);
+      return [lx, Math.min(br.height - 44, cy + R + 10) + row * 20];
+    }
+    const yTop = lr && lr.height ? lr.top - br.top - 40 : cy + R * 0.66 + 22;
     return [x, Math.max(cy + R * 0.5, yTop) + row * 20];
   }
   function drawLabels(cx, cy, R, now, k) {
