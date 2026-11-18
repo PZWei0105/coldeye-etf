@@ -129,6 +129,19 @@ const SOUNDS = {
   },
   online: () => [880, 1108.7, 1318.5, 1760].forEach((f, i) => tone(f, i * 0.065, 0.18, { gain: 0.05, wet: 0.4 })),
   stamp: () => { noise(0, 0.07, { type: 'lowpass', f: 900, gain: 0.14 }); tone(98, 0, 0.22, { gain: 0.18, glide: 55 }); tone(1975.5, 0.08, 0.3, { gain: 0.03, wet: 0.5 }); },
+  // 2026/11/18 超級大更新：冷眼睜開（虹膜轉起來的一串亮音＋一口氣）、戰況揭曉、歷史風暴的雷聲
+  iris: () => {
+    noise(0, 0.6, { f: 400, glide: 6000, q: 3, gain: 0.04, attack: 0.18 });
+    [440, 554.4, 659.3, 880, 1108.7, 1318.5].forEach((f, i) => tone(f, 0.08 + i * 0.05, 0.5, { type: 'triangle', gain: 0.035, attack: 0.02, wet: 0.45 }));
+    tone(2637, 0.42, 0.7, { gain: 0.025, wet: 0.6 });
+  },
+  reveal: () => { tone(110, 0, 0.5, { gain: 0.12, glide: 55 }); [659.3, 987.8, 1318.5].forEach((f, i) => tone(f, 0.04 + i * 0.03, 0.9, { gain: 0.045, attack: 0.01, wet: 0.5 })); noise(0, 0.25, { type: 'lowpass', f: 2400, glide: 300, gain: 0.05 }); },
+  storm: () => {
+    noise(0, 0.12, { type: 'highpass', f: 3000, gain: 0.08 });
+    noise(0.05, 1.0, { type: 'lowpass', f: 380, glide: 90, gain: 0.2, attack: 0.03 });
+    noise(0.55, 0.95, { type: 'lowpass', f: 220, glide: 60, gain: 0.14, attack: 0.08 });
+    tone(55, 0.05, 1.3, { type: 'sawtooth', gain: 0.05, glide: 33, lp: 160, attack: 0.05 });
+  },
 };
 const lastAt = new Map();
 let recent = [];
@@ -148,7 +161,7 @@ export function sfx(name) {
 }
 
 // ------------------------------------------------------------------ 震動（Android 有效；iPhone 的網頁不支援）
-const HAPTIC = { tap: 6, nav: 8, ok: 14, open: 10, lock: [16, 40, 26], stamp: [22, 30, 14], alert: [30, 70, 30, 70, 30], err: [50, 40, 50], warn: [14, 50, 14], stop: [40, 60, 40], hit: [12, 30, 12, 30, 40], miss: [45], ignite: [20, 60, 20, 60, 60], online: [10, 40, 10] };
+const HAPTIC = { tap: 6, nav: 8, ok: 14, open: 10, lock: [16, 40, 26], stamp: [22, 30, 14], alert: [30, 70, 30, 70, 30], err: [50, 40, 50], warn: [14, 50, 14], stop: [40, 60, 40], hit: [12, 30, 12, 30, 40], miss: [45], ignite: [20, 60, 20, 60, 60], online: [10, 40, 10], storm: [40, 80, 20, 60, 30] };
 export function haptic(kind = 'tap') {
   if (prefs().haptic === false) return;
   // 瀏覽器規定：使用者點過畫面之後才能震動（不然只會在主控台留下錯誤）

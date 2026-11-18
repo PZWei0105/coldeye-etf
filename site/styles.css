@@ -2339,3 +2339,116 @@ body.dm-deep .act-row { padding-top: 9px; padding-bottom: 9px; }
 
 /* 設定：介面效果 */
 .hud-set .hs-intro { margin: 0; padding: 12px 16px 10px; font-size: 12.5px; color: var(--frost-3); line-height: 1.7; }
+
+/* ================================================================ 2026/11/18 超級大更新 */
+/* ---------- 開機「睜眼」：canvas 墊在開機畫面最底下，標誌就是瞳孔 ---------- */
+.bt-eye { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+.boot.eyemode .bt-in { position: relative; z-index: 1; }
+.boot.eyed .bt-mark { box-shadow: none; }
+.boot.eyed.go .bt-mark { animation: markIn .6s cubic-bezier(.2, .8, .2, 1) both, ignite .9s ease-out both, eyeBeat 2.4s ease-in-out 1.4s infinite; }
+@keyframes eyeBeat { 50% { filter: drop-shadow(0 0 10px var(--glacier)); } }
+.boot.eyed .bt-name { text-shadow: 0 0 12px var(--void), 0 0 4px var(--void); }
+.boot.eyed.go .bt-name { visibility: hidden; }
+.boot.eyed .bt-log { margin-top: clamp(74px, calc(19.8vmin - 22px), 106px); padding: 10px 12px; background: color-mix(in srgb, var(--void) 72%, transparent); box-shadow: inset 0 0 0 1px var(--frame); clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px); }
+.boot.eyed.standby .bt-ign { margin-top: 78px; }
+/* 戰況板 */
+.bt-sit { width: 100%; font: inherit; letter-spacing: 0; gap: 10px; }
+.bt-sit .bs-hello { font: 900 22px/1.3 var(--f-serif); letter-spacing: .08em; }
+.bt-sit .bs-tx { display: grid; justify-items: center; gap: 2px; }
+.bt-sit .bs-tx small { font: 500 12px var(--f-sans); color: var(--frost-2); letter-spacing: .06em; }
+.bt-sit .bs-tx b { font: 700 44px/1.05 var(--f-num); letter-spacing: .02em; color: var(--frost); text-shadow: 0 0 22px color-mix(in srgb, var(--glacier) 55%, transparent); }
+.bt-sit .bs-tx em { font: 600 15px var(--f-num); font-style: normal; }
+.bt-sit .bs-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 8px; width: 100%; }
+.bt-sit .bs-c {
+  display: grid; justify-items: center; gap: 1px; padding: 9px 6px 8px; min-width: 0;
+  background: color-mix(in srgb, var(--void) 70%, transparent); box-shadow: inset 0 0 0 1px var(--frame-2);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  opacity: 0; animation: bsIn .45s cubic-bezier(.2, .8, .2, 1) forwards; animation-delay: calc(.75s + var(--i, 0) * .15s);
+}
+.bt-sit .bs-c:nth-child(2) { animation-delay: calc(.9s + var(--i, 0) * .15s); }
+.bt-sit .bs-c:nth-child(3) { animation-delay: calc(1.05s + var(--i, 0) * .15s); }
+.bt-sit .bs-c small { font: 500 11px var(--f-sans); color: var(--frost-3); letter-spacing: .08em; }
+.bt-sit .bs-c b { font: 700 17px/1.25 var(--f-num); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.bt-sit .bs-c em { font: 500 11.5px var(--f-num); font-style: normal; color: var(--frost-2); white-space: nowrap; }
+.bt-sit .bs-c.me { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--aurora) 60%, transparent); }
+.bt-sit .bs-c.rain b, .bt-sit .bs-c.cloud b { color: var(--amber); }
+.bt-sit .bs-c.sun b { color: var(--glacier); }
+@keyframes bsIn { from { opacity: 0; transform: translateY(8px) scale(.96); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .bt-sit .bs-c { animation: none; opacity: 1; } }
+body.nofx .bt-sit .bs-c { animation: none; opacity: 1; }
+
+/* ---------- 歷史風暴重演：部位分頁的卡片 ---------- */
+.storm-card .sc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
+@media (min-width: 700px) { .storm-card .sc-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.sc-tile {
+  position: relative; display: grid; gap: 2px; justify-items: start; text-align: left; padding: 10px 12px 11px; border: 0; color: var(--frost); overflow: hidden;
+  background: linear-gradient(165deg, color-mix(in srgb, var(--glacier) 10%, var(--hull-2)), var(--hull) 75%); box-shadow: inset 0 0 0 1px var(--frame);
+  clip-path: polygon(9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 9px);
+}
+.sc-tile:active { transform: scale(.98); }
+.sc-tile .sc-y { font: 600 11px var(--f-num); letter-spacing: .14em; color: var(--glacier); }
+.sc-tile .sc-n { font: 900 15px/1.25 var(--f-serif); letter-spacing: .04em; }
+.sc-tile .sc-v { display: grid; gap: 0; margin-top: 4px; }
+.sc-tile .sc-v b { font: 700 22px/1.1 var(--f-num); }
+.sc-tile .sc-v b.sc-go { font: 700 14px var(--f-sans); color: var(--glacier); }
+.sc-tile .sc-v small { font-size: 11px; color: var(--frost-3); }
+.sc-tile .sc-bolt { position: absolute; right: 8px; top: 8px; width: 18px; height: 18px; color: color-mix(in srgb, var(--amber) 70%, transparent); }
+.sc-tile .sc-bolt svg { width: 100%; height: 100%; display: block; }
+
+/* ---------- 歷史風暴重演：全螢幕頁 ---------- */
+.storm .st-tabs { display: flex; width: 100%; margin-bottom: 12px; }
+.storm .st-tabs button { flex: 1; display: grid; gap: 1px; padding: 7px 4px; font-size: 12.5px; line-height: 1.2; }
+.storm .st-tabs button .num { font-size: 11px; letter-spacing: .1em; color: var(--frost-3); }
+.storm .st-tabs button[aria-pressed="true"] .num { color: var(--glacier); }
+.st-hero {
+  position: relative; isolation: isolate; overflow: hidden; display: grid; justify-items: center; text-align: center; gap: 6px; padding: 18px 16px 18px;
+  background: radial-gradient(90% 70% at 50% 0%, color-mix(in srgb, var(--amber) 9%, transparent), transparent 70%), linear-gradient(180deg, color-mix(in srgb, var(--void) 60%, var(--hull)), var(--hull));
+  box-shadow: inset 0 0 0 1px var(--frame-2);
+  clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+}
+.st-hero > * { position: relative; z-index: 1; }
+.st-hero .st-sky { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+.st-hero .st-rain { position: absolute; inset: -40% -10% 0; opacity: .0; background: repeating-linear-gradient(105deg, transparent 0 13px, color-mix(in srgb, var(--glacier) 22%, transparent) 13px 14px); }
+.st-hero.go .st-rain { animation: stRain .55s linear infinite, stRainIn .6s ease forwards; }
+.st-hero.done .st-rain { opacity: .35; }
+.st-hero .st-flash { position: absolute; inset: 0; background: radial-gradient(70% 60% at 60% 0%, #fff, transparent 70%); opacity: 0; }
+.st-hero.go .st-flash { animation: stFlash 1.1s ease-out .05s 1; }
+@keyframes stRain { to { transform: translate(-14px, 40px); } }
+@keyframes stRainIn { to { opacity: .55; } }
+@keyframes stFlash { 0% { opacity: 0; } 6% { opacity: .75; } 12% { opacity: .08; } 20% { opacity: .55; } 45% { opacity: 0; } 100% { opacity: 0; } }
+.st-hd { display: flex; align-items: baseline; gap: 10px; }
+.st-hd .st-yr { font: 700 13px var(--f-num); letter-spacing: .2em; color: var(--amber); }
+.st-hd h2 { margin: 0; font: 900 24px/1.2 var(--f-serif); letter-spacing: .1em; }
+.st-span { margin: 0; font-size: 13px; color: var(--frost-2); }
+.st-big { display: grid; justify-items: center; gap: 0; margin: 4px 0 2px; }
+.st-big .st-lbl { font-size: 12.5px; color: var(--frost-3); letter-spacing: .06em; }
+.st-big > b { font: 700 60px/1.02 var(--f-num); letter-spacing: -.01em; text-shadow: 0 0 26px color-mix(in srgb, currentColor 40%, transparent); }
+.st-big .st-amt { font-size: 14px; color: var(--frost-2); }
+.st-big .st-amt b { font: 700 18px var(--f-num); }
+.st-rec, .st-vs { margin: 0; font-size: 13.5px; line-height: 1.6; color: var(--frost-2); }
+.st-rec b, .st-vs b { color: var(--frost); }
+.st-vs { padding-top: 6px; border-top: 1px dashed var(--frame); width: 100%; }
+.st-load { display: flex; align-items: center; gap: 10px; padding: 34px 0; color: var(--frost-2); font-size: 14px; }
+.st-spin { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--frame); border-top-color: var(--glacier); animation: spin .8s linear infinite; }
+.st-key { display: inline-block; width: 14px; height: 0; border-top: 2.5px solid var(--aurora); vertical-align: middle; margin: 0 4px 0 6px; }
+.st-key.b { border-top: 2px dashed var(--glacier); }
+.st-chart svg { width: 100%; height: auto; display: block; }
+.st-items .st-it { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(60px, 1fr) auto; gap: 10px; align-items: center; padding: 11px 14px; border-top: 1px solid var(--seam); }
+.st-items .st-it:first-child { border-top: 0; }
+.st-items .st-it.worst { background: var(--amber-wash); }
+.st-it .st-nm { display: grid; min-width: 0; }
+.st-it .st-nm b { font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-it .st-nm small { font-size: 11.5px; line-height: 1.45; color: var(--frost-3); }
+.st-it .st-bar { height: 8px; background: var(--seam); position: relative; overflow: hidden; }
+.st-it .st-bar i { position: absolute; left: 0; top: 0; bottom: 0; width: var(--w); background: var(--down); transform-origin: left; }
+.st-it .st-bar i.pos { background: var(--up); }
+.st-hero.go ~ .st-items .st-bar i, .st-items .st-bar i { animation: stBar .7s cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes stBar { from { transform: scaleX(0); } }
+.st-it .st-v { display: grid; justify-items: end; }
+.st-it .st-v b { font: 700 15px var(--f-num); }
+.st-it .st-v small { font-size: 11px; color: var(--frost-3); }
+.st-notes p, .st-how p { margin: 0 0 8px; font-size: 13px; line-height: 1.7; color: var(--frost-2); }
+.st-how .btn { margin: 4px 0 10px; }
+@media (prefers-reduced-motion: reduce) { .st-hero .st-rain, .st-hero .st-flash, .st-items .st-bar i { animation: none !important; } .st-hero .st-rain { opacity: .3; } }
+body.nofx .st-hero .st-rain, body.nofx .st-hero .st-flash, body.nofx .st-items .st-bar i { animation: none !important; }
+body.nofx .st-hero .st-rain { opacity: .3; }

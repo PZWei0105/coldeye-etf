@@ -29,6 +29,8 @@ import { xrayPfHTML, bindXrayPf, searchStocks, openStock, coachXray, xrayRulesHT
 import { planCardHTML, bindPlanCard, planTagHTML, planStripHTML, openTemp, refreshTemp, tempRulesHTML, compact, globalTickerHTML, bindGlobalTicker } from './plan.js';
 import { dayReportHTML, bindDayReport, rotationHTML, bindRotation } from './pulse.js';
 import { investHTML, bindInvest } from './invest.js';
+import { stormCardHTML, bindStormCard, openStorm } from './storm.js';
+import { eyeStart, eyeSitHTML, EYE_STYLES } from './eye.js';
 import { openLesson } from './lessons.js';
 import { AIDE } from './aide.js';
 import {
@@ -952,6 +954,7 @@ function renderPF() {
   }
   html += divCalHTML(P, v.clientWidth);
   html += riskHTML(P);
+  html += stormCardHTML(P);
   if (P.closed.length) {
     html += `<div class="sec-h"><h2>已出清</h2></div><section class="panel list">${P.closed.map((x) => `<button class="w-row closed" data-code="${x.code}"><span class="w-id"><span class="w-name">${esc(x.name)}</span><span class="w-code num">${x.code}</span></span><span class="w-px"><span class="small muted" data-term="rpnl">已實現</span><span class="p num ${dirCls(x.h.realized)}">${money(x.h.realized, true)}</span></span></button>`).join('')}</section>`;
   }
@@ -989,6 +992,7 @@ function renderPF() {
   bindPlanCard(v);
   bindInvest(v);
   bindDayReport(v);
+  bindStormCard(v);
 }
 
 // ------------------------------------------------------------------ 資產走勢：用交易紀錄＋官方收盤價重算每一天
@@ -1456,6 +1460,8 @@ function drawSettings() {
       <div class="srow"><div><div class="h">語音播報</div><div class="d">${FX.hasVoice() ? '每天開機時，副官把晨報念給你聽（只用裝置內建的國語語音，台灣口音優先、不用粵語；不連網，只有網路語音的裝置不會念）' : esc(FX.voiceWhy())}</div></div><span class="row-btns"><button class="btn small ghost" id="s-say"${FX.hasVoice() ? '' : ' disabled'}>${ICON.speaker}試聽</button><button class="switch" role="switch" id="s-voice" aria-checked="${settings.voice !== false}" aria-label="語音播報"></button></span></div>
       ${voiceRowHTML()}
       <div class="srow"><div><div class="h">開機要點一下啟動</div><div class="d">手機規定要先點一下才能出聲。打開：每天第一次開啟時按「啟動」，有完整的點火音效和語音；關掉：自動開機、不出聲</div></div><button class="switch" role="switch" id="s-ignite" aria-checked="${settings.ignite !== false}" aria-label="開機要點一下啟動"></button></div>
+      <div class="srow"><div><div class="h">開機動畫</div><div class="d">睜眼：冷眼睜開，資料來源一個一個鎖進瞳孔，最後揭曉今天的戰況（大盤、你的今日損益、市場溫度）；經典：原本的開機畫面</div></div><div class="seg mini" role="group" aria-label="開機動畫">${EYE_STYLES.map(([k, t]) => `<button data-boot="${k}" aria-pressed="${(settings.bootStyle === 'classic' ? 'classic' : 'eye') === k}">${t}</button>`).join('')}</div></div>
+      <div class="srow"><div><div class="h">重播開機畫面</div><div class="d">開機畫面每天第一次打開才出現；想再看一次就按這裡</div></div><button class="btn small ghost" id="s-replay">${ICON.play || ''}重播</button></div>
       <div class="srow"><div><div class="h">畫面特效</div><div class="d">切換分頁的掃描、副官檢查的逐條鎖定、蓋章與結果揭曉（手機設定「減少動態效果」時自動關閉）</div></div><button class="switch" role="switch" id="s-fx" aria-checked="${settings.fx !== false}" aria-label="畫面特效"></button></div>
       <div class="srow"><div><div class="h">震動回饋</div><div class="d">Android 手機有效（iPhone 的網頁不支援震動）</div></div><button class="switch" role="switch" id="s-haptic" aria-checked="${settings.haptic !== false}" aria-label="震動回饋"></button></div>
       <div class="srow"><div><div class="h">交易自動記進決策日記</div><div class="d">在冷眼記今天的交易（含模擬倉）時，副官自動記下這個決定，20 個交易日後對答案</div></div><button class="switch" role="switch" id="s-autoj" aria-checked="${settings.autoJ !== false}" aria-label="交易自動記進決策日記"></button></div>
@@ -1592,6 +1598,14 @@ function bindSettings() {
   flip('#s-sfx', 'sfx', (on) => { if (on) { FX.unlock(); FX.sfx('online'); } });
   flip('#s-voice', 'voice', (on) => { if (!on) FX.stopSpeak(); });
   flip('#s-ignite', 'ignite');
+  $$('[data-boot]', sh).forEach((b) => b.addEventListener('click', () => {
+    settings.bootStyle = b.dataset.boot === 'classic' ? 'classic' : 'eye';
+    saveSettings();
+    $$('[data-boot]', sh).forEach((z) => z.setAttribute('aria-pressed', z === b));
+    FX.sfx('nav');
+  }));
+  const rp = $('#s-replay', sh);
+  if (rp) rp.addEventListener('click', () => { closeDetail(); setTimeout(() => maybeBoot(true), 380); });
   flip('#s-fx', 'fx', (on) => { paintMode(); if (on) FX.stamp('特效開啟', 'glacier'); });
   flip('#s-haptic', 'haptic', (on) => { if (on) FX.haptic('lock'); });
   flip('#s-autoj', 'autoJ');
@@ -1709,11 +1723,29 @@ function bootLines() {
  * 「開機要點一下啟動」打開時（預設）：先停在待命畫面，按「啟動」才點火——手機規定要先點一下才能出聲，
  * 所以點火音效、每一行的連線聲、最後的語音晨報都從這一下開始；不想要聲音可以按「直接進入」。
  */
-function maybeBoot() {
-  if (settings.boot === false) return;
+// 睜眼開機（2026/11/18）：環上的名字（短一點才放得下）
+const EYE_LABEL = { '證交所': 'TWSE', '證交所 MIS': 'MIS', '櫃買中心': 'TPEx', '集保結算所': 'TDCC', '美國財政部': 'UST', '中央社・金管會・央行': 'NEWS', '規則引擎': 'RULES', '駕駛員': 'PILOT' };
+/** 開機戰況板要用的真實數字（沒有的不放） */
+function bootSit(tx) {
+  const P = S.P;
+  const t = marketTemp();
+  const day = P && P.holdings.length && isNum(P.totals.day) && !isPaper()
+    ? { amt: money(P.totals.day, true), pct: isNum(P.totals.dayPct) ? P.totals.dayPct * 100 : null, masked: !!settings.privacy } : null;
+  return {
+    name: userName(), tx: tx ? { px: tx.px, pc: tx.pc, when: tx.when } : null, day,
+    temp: t ? { level: t.level, n: (t.flags || []).length } : null,
+    asof: S.summary ? S.summary.asof : null, count: S.summary ? S.summary.etfs.length : 0,
+  };
+}
+function maybeBoot(force = false) {
+  if (settings.boot === false && !force) return;
+  const eyeMode = settings.bootStyle !== 'classic';
   const d = today();
-  if (store.get('bootDay', 0) === d) return;
+  // 睜眼第一次上線：今天已經開過也播一次（不然要等到明天才看得到）
+  const intro = eyeMode && !store.get('eyeIntro', 0);
+  if (!force && !intro && store.get('bootDay', 0) === d) return;
   store.set('bootDay', d);
+  if (eyeMode) store.set('eyeIntro', 1);
   const el = $('#boot');
   const tx = S.summary ? liveTaiex() : null;
   const lines = bootLines();
@@ -1724,19 +1756,25 @@ function maybeBoot() {
       ${gate ? `<button class="bt-ign" type="button" aria-label="啟動冷眼"><span class="bt-ring" aria-hidden="true"></span><span class="bt-ign-in"><b>啟動</b><small class="num">IGNITION</small></span></button>
       <div class="bt-hint">駕駛員 ${esc(userName())}，系統待命中</div>` : ''}
       <ol class="bt-log">${lines.map((l, i) => `<li style="--i:${i}" class="${l.ok === false ? 'warn' : ''}${l.me ? ' me' : ''}"><span class="bt-k">${esc(l.k)}</span><span class="bt-v">${esc(l.v)}</span><span class="bt-s">${esc(l.t)}</span></li>`).join('')}</ol>
-      <div class="bt-hi" style="--i:${lines.length}">歡迎回來，${esc(userName())}${tx ? `<small>加權 <b class="num">${fmt.n(tx.px, 0)}</b> <b class="num ${dirCls(tx.ch)}">${fmt.pct(tx.pc)}</b>・${esc(tx.when)}</small>` : ''}</div>
+      ${eyeMode ? `<div class="bt-hi bt-sit" style="--i:${lines.length}">${eyeSitHTML(bootSit(tx), esc, fmt)}</div>` : `<div class="bt-hi" style="--i:${lines.length}">歡迎回來，${esc(userName())}${tx ? `<small>加權 <b class="num">${fmt.n(tx.px, 0)}</b> <b class="num ${dirCls(tx.ch)}">${fmt.pct(tx.pc)}</b>・${esc(tx.when)}</small>` : ''}</div>`}
       <button class="bt-skip" type="button">${gate ? '不用聲音，直接進入' : '點一下略過'}</button>
     </div>`;
   el.hidden = false;
   el.classList.toggle('standby', gate);
+  el.classList.toggle('eyemode', eyeMode);
   document.body.classList.add('booting');
+  // 冷眼睜開：畫面特效打開、沒有「減少動態效果」才畫（不然就是原本的開機畫面＋戰況板）
+  const eye = eyeMode && settings.fx !== false && !reduceMotion()
+    ? eyeStart(el, { labels: lines.map((l) => EYE_LABEL[l.k] || l.k), anchor: () => $('.bt-mark', el), bus: () => $('.bt-in', el), log: () => $('.bt-log', el) }) : null;
+  el.classList.toggle('eyed', !!eye);
   let voiced = false;
   const done = () => {
     if (el.hidden || el.classList.contains('out')) return;
     S.bootDone = null;
     el.classList.add('out');
     setTimeout(() => {
-      el.hidden = true; el.classList.remove('out', 'go', 'standby'); el.innerHTML = '';
+      if (eye) eye.stop();
+      el.hidden = true; el.classList.remove('out', 'go', 'standby', 'eyed', 'eyemode'); el.innerHTML = '';
       document.body.classList.remove('booting');
       S.shownAt = performance.now();   // 開機畫面結束才算「剛打開」（有新版要換時看這個，見 swSafe）
       S.firstPaint = true; S.animUntil = 0;
@@ -1745,19 +1783,35 @@ function maybeBoot() {
     }, reduceMotion() ? 0 : 380);
   };
   S.bootDone = done;
-  const total = reduceMotion() ? 900 : 650 + lines.length * 150 + 1100;
+  // 市場溫度（global.json）常常在開機畫面出來之後才到：到了就把戰況板那一排補上（只換那一排，不重播動畫）
+  S.bootSit = eyeMode ? () => {
+    const row = $('.bt-sit .bs-row', el);
+    if (el.hidden || !row) return;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = eyeSitHTML(bootSit(tx), esc, fmt);
+    const nr = $('.bs-row', tmp);
+    if (nr && nr.children.length > row.children.length) { row.innerHTML = nr.innerHTML; $$('.bs-c', row).forEach((c) => { c.style.animation = 'none'; c.style.opacity = '1'; }); }
+  } : null;
+  const total = reduceMotion() ? (eyeMode ? 1600 : 900) : 650 + lines.length * 150 + 1100 + (eyeMode ? 1100 : 0);
   const run = (withSound) => {
     el.classList.remove('standby');
     el.classList.add('go');
     voiced = withSound;
     const sk = $('.bt-skip', el);
     if (sk) sk.textContent = '點一下略過';
+    if (eye) {
+      eye.open();
+      lines.forEach((l, i) => setTimeout(() => eye.lock(i, l.ok === false), 450 + i * 150));
+    }
+    if (eyeMode && tx) setTimeout(() => countUp($('[data-tx]', el), tx.px, (v) => fmt.n(v, 0), 1000), reduceMotion() ? 0 : 550 + lines.length * 150);
     if (withSound) {
       FX.unlock();
       if (settings.voice !== false) FX.primeSpeech();
       FX.cue('ignite');
+      if (eye) setTimeout(() => FX.sfx('iris'), 820);
       lines.forEach((l, i) => setTimeout(() => FX.sfx(l.ok === false ? 'warn' : 'tick'), 450 + i * 150));
       setTimeout(() => FX.cue('online'), 600 + lines.length * 150);
+      if (eyeMode) setTimeout(() => FX.sfx('reveal'), 650 + lines.length * 150 + 250);
     }
     setTimeout(done, total + (withSound ? 500 : 0));
   };
@@ -1842,6 +1896,7 @@ window.addEventListener('popstate', () => {
   if (h === 'cases') { if (S.openCode !== '__cases') openCase(S.caseId || null, false); return; }
   if (h === 'coach') { if (S.openCode !== '__coach') openCoach(S.coachId || null, false); return; }
   if (h === 'temp') { if (S.openCode !== '__temp') openTemp(false); return; }
+  if (h === 'storm') { if (S.openCode !== '__storm') openStorm(null, false); return; }
   if (h && S.rows.has(h)) { openDetail(h, false); return; }
   if (S.openCode) closeDetail(true);
 });
@@ -2039,7 +2094,7 @@ async function boot() {
   if (!cached) maybeBoot();
   render();
   // 全球市場與市場溫度：不擋開機，抓到之後把用到它的畫面換新（溫度只提醒、不改股數，所以不用重算部位）
-  ensureGlobal({ force: true }).then(() => { refreshTemp(); if (S.tab === 'home' || S.tab === 'pf' || S.tab === 'news') viewRender(); });
+  ensureGlobal({ force: true }).then(() => { refreshTemp(); if (S.bootSit) S.bootSit(); if (S.tab === 'home' || S.tab === 'pf' || S.tab === 'news') viewRender(); });
   refreshEvals();
   runPlans();   // 定期定額：到期的每一期自動記一筆預估（國泰規則）
   const h = location.hash.replace('#', '');
@@ -2049,6 +2104,7 @@ async function boot() {
   else if (h === 'cases') openCase(null, false);
   else if (h === 'coach') openCoach(null, false);
   else if (h === 'temp') openTemp(false);
+  else if (h === 'storm') openStorm(null, false);
   else if (h && S.rows.has(h)) openDetail(h, false);
   // 畫面開著時每分鐘看一次後台的版本檔，哪一份資料變了就重抓那一份（見 syncTick）；網路恢復時馬上看一次
   // 介面有沒有新版本（sw.js）：畫面開著時每 10 分鐘問一次，回到 App 時馬上問（swCheck 最多每分鐘一次）

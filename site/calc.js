@@ -1,6 +1,7 @@
 /* 冷眼 — 純計算：大盤之瞳、冷眼晨報、存股時光機、模擬倉基準、ETF 對決、熱力圖版面。
    全部是純函式，不碰畫面、不連網；同樣的輸入永遠得到同樣的結果（tests/calc_test.mjs 會檢查）。 */
 import { FEE_RATE, tradeCost, daysBetween, addDays, normLot, sortLots, sellValue, taxCat } from './pf.js';
+import { trIndex } from './aide.js';
 
 const isNum = (x) => typeof x === 'number' && isFinite(x);
 const round = (x, n = 0) => { const k = 10 ** n; return Math.round(x * k) / k; };
@@ -1428,4 +1429,87 @@ export function rollPlan(was, now) {
     out.unshift({ c, o, r, i: k });
   }
   return out.some((x) => x.r) ? out : null;
+}
+
+// ------------------------------------------------------------------ 歷史風暴重演（2026/11/18）
+/**
+ * 一檔還沒上市、或歷史資料不夠早時，用哪一檔同類的 ETF 代替（畫面一定寫出來是代替的）。
+ * 主動式：代號尾碼 D 是債券，其他是股票。期貨／商品沒有夠久又可比的同類：不代替，算「沒算進去」。
+ */
+export const STORM_PROXY = { broad: '0050', div: '0056', theme: '0050', overseas: '00646', bond: '00679B', lev: '00631L', inv: '00632R', active: '0050' };
+export const stormProxyOf = (code, k) => (k === 'active' && /D$/.test(String(code)) ? '00679B' : STORM_PROXY[k] || null);
+export const STORM_TAIL = 520;   // 谷底之後最多往後看多少個交易日（約兩年）找「回到原點」
+
+const at = (D, d) => { let lo = 0, hi = D.length - 1, ans = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (D[m] <= d) { ans = m; lo = m + 1; } else hi = m - 1; } return ans; };
+
+/**
+ * 把一段真的發生過的下跌，套在現在的部位比例上（不是預測）。
+ * sc：{ from, to }（找下跌的期間）；bench：基準的歷史（0050）；
+ * holds：[{ code, name, k, w }]（w＝占總資產的比例）；cashW：現金占總資產的比例；
+ * hists：{ 代號: { d, p, splits, divs } }（含代替用的 ETF）。
+ * 起點＝基準在這段期間「最大跌幅」開始的那天（高點）；部位每一天的值＝現金＋每一檔 w ×（含息報酬指數 ÷ 起點那天）。
+ * 某一檔當時沒有資料：用同類代替（stormProxyOf）；連代替的都沒有：不算進去，其他照比例放大（coverage 寫出算了多少）。
+ * 回傳 null（基準沒資料）或 { peakD, lowD, dates, port, bench, drop, lowAt, back, backN, backPk, bDrop, bLowAt, bBack, bBackN, items, skipped, coverage, cashW }。
+ */
+export function stormRun(sc, bench, holds, cashW, hists) {
+  if (!bench || !bench.d || bench.d.length < 3) return null;
+  const BD = bench.d, BT = trIndex(bench);
+  const i0 = BD.findIndex((d) => d >= sc.from);
+  let i1 = sc.to ? at(BD, sc.to) : BD.length - 1;
+  if (i0 < 0 || i1 <= i0) return null;
+  // 基準在這段期間的最大跌幅：高點（跌之前）→ 谷底
+  let pk = i0, best = 0, bPk = i0, bLow = i0;
+  for (let k = i0; k <= i1; k++) {
+    if (BT[k] > BT[pk]) pk = k;
+    const dd = BT[k] / BT[pk] - 1;
+    if (dd < best) { best = dd; bPk = pk; bLow = k; }
+  }
+  if (best >= 0) return null;
+  const peakD = BD[bPk];
+  const end = Math.min(BD.length - 1, Math.max(i1, bLow) + STORM_TAIL);
+  const dates = BD.slice(bPk, end + 1);
+  const used = [], skipped = [];
+  let wIn = 0;
+  for (const h of holds || []) {
+    if (!isNum(h.w) || h.w <= 0) continue;
+    const own = hists[h.code];
+    const okAt = (x) => x && x.d && x.d.length && x.d[0] <= peakD && x.d[x.d.length - 1] >= BD[bLow];
+    let src = okAt(own) ? h.code : null;
+    if (!src) { const px = stormProxyOf(h.code, h.k); if (px && okAt(hists[px])) src = px; }
+    if (!src) { skipped.push({ code: h.code, name: h.name, w: h.w }); continue; }
+    const S0 = hists[src], T = trIndex(S0);
+    const j0 = at(S0.d, peakD);
+    const base = j0 >= 0 ? T[j0] : null;
+    if (!(base > 0)) { skipped.push({ code: h.code, name: h.name, w: h.w }); continue; }
+    // 每一天用那天（或之前最後一次成交）的報酬指數
+    const path = new Array(dates.length);
+    let j = j0;
+    for (let q = 0; q < dates.length; q++) {
+      while (j + 1 < S0.d.length && S0.d[j + 1] <= dates[q]) j++;
+      path[q] = T[j] / base;
+    }
+    used.push({ code: h.code, name: h.name, k: h.k, w: h.w, src, proxy: src !== h.code, path });
+    wIn += h.w;
+  }
+  const cw = isNum(cashW) && cashW > 0 ? cashW : 0;
+  const tot = wIn + cw;
+  if (!(tot > 0) || !used.length) return { peakD, lowD: BD[bLow], dates, port: null, bench: null, items: [], skipped, coverage: 0, cashW: cw };
+  const port = dates.map((_, q) => (cw + used.reduce((a, u) => a + u.w * u.path[q], 0)) / tot * 100);
+  const bIdx = dates.map((_, q) => BT[bPk + q] / BT[bPk] * 100);
+  // 部位的谷底：在找下跌的期間裡（含基準的谷底那天）找最低
+  const lastQ = Math.max(i1, bLow) - bPk;
+  const low = (arr) => { let m = 0; for (let q = 1; q <= lastQ && q < arr.length; q++) if (arr[q] < arr[m]) m = q; return m; };
+  const back = (arr, from) => { for (let q = from + 1; q < arr.length; q++) if (arr[q] >= 100) return q; return null; };
+  const lq = low(port), bq = low(bIdx);
+  const rq = back(port, lq), brq = back(bIdx, bq);
+  const items = used.map((u) => {
+    const ret = u.path[lq] - 1;
+    return { code: u.code, name: u.name, w: u.w, src: u.src, proxy: u.proxy, ret, contrib: u.w / tot * ret };
+  }).sort((a, b) => a.contrib - b.contrib);
+  return {
+    peakD, lowD: BD[bLow], dates, port, bench: bIdx,
+    drop: port[lq] / 100 - 1, lowAt: dates[lq], lowN: lq, back: rq != null ? dates[rq] : null, backN: rq != null ? rq - lq : null, backPk: rq,
+    bDrop: bIdx[bq] / 100 - 1, bLowAt: dates[bq], bBack: brq != null ? dates[brq] : null, bBackN: brq != null ? brq - bq : null,
+    items, skipped, coverage: tot, cashW: cw / tot, until: dates[dates.length - 1],
+  };
 }
