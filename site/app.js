@@ -33,6 +33,7 @@ import { investHTML, bindInvest } from './invest.js';
 import { stormCardHTML, bindStormCard, openStorm } from './storm.js';
 import { eyeStart, eyeSitHTML, EYE_STYLES } from './eye.js';
 import { initSkin, skinOpening, skinScheme, skinColor, skinInfo, skinSettingsHTML, bindSkinSettings, skinHooks, skinLive, holdMusic, releaseMusic, musicOn } from './skin.js';
+import { lockGate, lockWatch, lockSettingsHTML, bindLockSettings } from './lock.js';
 import { openLesson } from './lessons.js';
 import { AIDE } from './aide.js';
 import {
@@ -1447,6 +1448,8 @@ function drawSettings() {
     <div class="sec-h"><h2>更新紀錄</h2><span class="aside">${UPDATES.length ? fmt.dy(UPDATES[0].d) : ''}</span></div>
     <section class="panel set"><div class="srow"><div><div class="h">${UPDATES.length ? esc(UPDATES[0].title) : '—'}</div><div class="d">冷眼最近加了什麼、怎麼用</div></div><button class="btn small ghost" id="s-upd">打開</button></div></section>
 
+    ${lockSettingsHTML()}
+
     ${skinSettingsHTML()}
 
     ${hudSettingsHTML()}
@@ -1648,6 +1651,12 @@ function bindSettings() {
     if (!FX.speak(briefSpeech(true), { force: true })) toast(FX.voiceWhy());
   });
   bindVoiceRow(sh);
+  // 上鎖（lock.js）：現在上鎖、什麼時候要再輸入。改完這一頁重畫（捲動位置不動）
+  bindLockSettings(sh, () => {
+    const y = sh.scrollTop;
+    drawSettings();
+    sh.scrollTop = y;
+  });
   // 換裝與配樂（skin.js）：換一套、配樂開關與音量、看開場、回到原本。改完這一頁重畫（捲動位置不動）
   bindSkinSettings(sh, () => {
     const y = sh.scrollTop;
@@ -2106,6 +2115,9 @@ async function refreshNews(v) {
 async function boot() {
   applyTheme();
   FX.bind(() => settings);
+  // 上鎖（lock.js）：這支手機記得、又不用再輸入就直接過，畫面一點都不會多；要輸入密語就等打開，之後照「什麼時候要再輸入」處理離開與回來
+  await lockGate();
+  lockWatch({ sfx: (n) => FX.sfx(n) });
   // 換裝（skin.js）：先套上這支手機選的那一套（CSS 已經由 index.html 開頭放進去，這裡補上聲音、配樂、開場）
   skinHooks.theme = applyTheme;
   skinHooks.after = () => { renderHeader(); if (S.openCode) S.viewStale = true; else render(); };

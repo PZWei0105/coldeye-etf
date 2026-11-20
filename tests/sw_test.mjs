@@ -55,8 +55,12 @@ put('b1', 'v1');
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 await ctx.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
-await ctx.addInitScript((latest) => {
+// 上鎖（lock.js）：測試的手機當作已經用密語打開過（記住這支手機），不然開機會停在輸入密語
+const { LockCore, RING } = await import('../site/lock.js');
+const LOCK_REC = JSON.stringify(LockCore.trust(null, RING, Date.now()));
+await ctx.addInitScript(([latest, lockRec]) => {
   try {
+    if (!localStorage.getItem('coldeye-lock')) localStorage.setItem('coldeye-lock', lockRec);
     if (!localStorage.getItem('coldeye.settings')) {
       localStorage.setItem('coldeye.settings', JSON.stringify({ boot: false, sfx: false, voice: false, theme: 'dark', watch: ['0050'] }));
       localStorage.setItem('coldeye.seenUpd', JSON.stringify(latest));
@@ -68,7 +72,7 @@ await ctx.addInitScript((latest) => {
       ServiceWorkerContainer.prototype.startMessages = function () {};
     }
   } catch (e) { /* */ }
-}, LATEST);
+}, [LATEST, LOCK_REC]);
 const page = await ctx.newPage();
 let loads = 0;
 const errs = [];

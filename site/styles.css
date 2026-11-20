@@ -2608,6 +2608,80 @@ body.dm-deep .fz-row { gap: 3px; padding-top: 6px; }
 .cf-prev b { color: var(--aurora); }
 .cf-prev .bad { color: var(--amber); }
 
+/* ---------------------------------------------------------------- 上鎖（lock.js，2026/11/21）
+   閉著的眼睛＋紫色封印（紫＝你自己）。密語對了：封印轉開散去、「封」字章彈掉、眼皮張開，再淡出。
+   全部用顏色變數，換裝跟著換；畫面特效關掉（lock.js 讀設定）或「減少動態效果」時不播動畫。 */
+html.lk-on, html.lk-on body { overflow: hidden; }
+.lk {
+  position: fixed; inset: 0; z-index: 900; display: grid; place-items: center; overflow-y: auto;
+  padding: max(24px, env(safe-area-inset-top, 0px)) var(--gut-r) max(24px, env(safe-area-inset-bottom, 0px)) var(--gut);
+  background:
+    radial-gradient(60% 40% at 50% 28%, color-mix(in srgb, var(--aurora) 13%, transparent), transparent 70%),
+    linear-gradient(color-mix(in srgb, var(--glacier) 6%, transparent) 1px, transparent 1px) 0 0 / 28px 28px,
+    linear-gradient(90deg, color-mix(in srgb, var(--glacier) 6%, transparent) 1px, transparent 1px) 0 0 / 28px 28px,
+    var(--void);
+  color: var(--frost); font: 15px/1.5 var(--f-sans); -webkit-tap-highlight-color: transparent; animation: fade .25s;
+}
+.lk[hidden] { display: none; }
+.lk-in { width: min(380px, 100%); display: grid; gap: 10px; justify-items: center; text-align: center; }
+.lk-mark { position: relative; width: 132px; height: 132px; margin-bottom: 4px; }
+.lk-svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.lk-seal { transform-box: fill-box; transform-origin: center; animation: lkSpin 24s linear infinite; }
+.lk-s1 { fill: none; stroke: var(--aurora); stroke-width: 1.5; stroke-dasharray: 3 5; }
+.lk-s2 { fill: none; stroke: var(--aurora); stroke-width: 1; opacity: .45; }
+.lk-bolt { stroke: var(--aurora); stroke-width: 3; }
+.lk-lid-l { fill: none; stroke: var(--glacier); stroke-width: 3; stroke-linecap: round; }
+.lk-lash { fill: none; stroke: var(--glacier); stroke-width: 2.2; stroke-linecap: round; opacity: .75; }
+/* 閉著的眼睛慢慢呼吸（跟開機畫面待命時那條細縫同一個意思） */
+.lk-lid { animation: lkBreath 3.4s ease-in-out infinite; }
+@keyframes lkBreath { 50% { opacity: .62; } }
+.lk-open { transform-box: fill-box; transform-origin: center; transform: scaleY(0); opacity: 0; }
+.lk-almond { fill: color-mix(in srgb, var(--glacier) 12%, var(--void)); stroke: var(--glacier); stroke-width: 2.5; }
+.lk-iris { fill: var(--glacier); }
+.lk-pupil { fill: var(--void); }
+.lk-stamp {
+  position: absolute; right: 0; bottom: 4px; width: 34px; height: 34px; display: grid; place-items: center;
+  font: 900 18px/1 var(--f-serif); color: var(--aurora); border: 2px solid var(--aurora); transform: rotate(-12deg);
+  background: color-mix(in srgb, var(--aurora) 12%, var(--void));
+}
+.lk-kick { margin: 2px 0 0; font: 700 12px/1 var(--f-sans); letter-spacing: .3em; padding-left: .3em; color: var(--frost-2); }
+.lk-title { margin: 0; font: 900 26px/1.25 var(--f-serif); letter-spacing: .12em; padding-left: .12em; color: var(--frost); }
+.lk-sub { margin: 0; color: var(--frost-2); font-size: 14.5px; }
+.lk-form { width: 100%; display: grid; gap: 10px; margin-top: 8px; }
+.lk-field { position: relative; display: block; }
+.lk .lk-input { height: 52px; font-size: 18px; letter-spacing: .06em; padding: 0 52px; text-align: center; }
+.lk .lk-input.masked { -webkit-text-security: disc; }
+.lk-eyebtn { position: absolute; right: 4px; top: 4px; width: 44px; height: 44px; border: 0; padding: 0; background: none; color: var(--frost-3); display: grid; place-items: center; }
+.lk-eyebtn svg { width: 20px; height: 20px; }
+.lk-eyebtn[aria-pressed="true"] { color: var(--glacier); }
+.lk .lk-go { height: 52px; font-size: 17px; letter-spacing: .4em; padding-left: .4em; }
+.lk .lk-go:disabled { opacity: .6; }
+.lk-msg { margin: 0; min-height: 1.5em; font-weight: 700; font-size: 14px; color: var(--glacier); }
+.lk-msg.bad { color: var(--amber); }
+.lk-note { margin: 6px 0 0; font-size: 12.5px; line-height: 1.65; color: var(--frost-3); }
+.lk.cover .lk-kick { font-size: 15px; letter-spacing: .5em; padding-left: .5em; }
+/* 比對中：一道掃描光在眼睛上來回 */
+.lk.busy .lk-mark::after { content: ""; position: absolute; left: 10%; right: 10%; height: 2px; top: 50%; background: var(--glacier); box-shadow: 0 0 12px var(--glacier); animation: lkScan .9s ease-in-out infinite alternate; }
+@keyframes lkScan { from { top: 20%; } to { top: 80%; } }
+@keyframes lkSpin { to { transform: rotate(360deg); } }
+/* 打開 */
+.lk.opening .lk-seal { animation: lkSealOff .7s cubic-bezier(.5, 0, .2, 1) forwards; }
+@keyframes lkSealOff { to { transform: rotate(160deg) scale(1.35); opacity: 0; } }
+.lk.opening .lk-stamp { animation: lkStampOff .45s ease-in forwards; }
+@keyframes lkStampOff { to { transform: rotate(18deg) scale(1.8); opacity: 0; } }
+.lk.opening .lk-lid { animation: lkLidOff .25s ease .12s forwards; }
+@keyframes lkLidOff { to { opacity: 0; } }
+.lk.opening .lk-open { animation: lkEyeOpen .5s cubic-bezier(.2, .8, .2, 1) .22s forwards; }
+@keyframes lkEyeOpen { to { transform: scaleY(1); opacity: 1; } }
+.lk.opening .lk-iris { animation: lkIris .6s ease-out .45s both; }
+@keyframes lkIris { 40% { filter: drop-shadow(0 0 14px var(--glacier)); } to { filter: drop-shadow(0 0 4px var(--glacier)); } }
+.lk.opening .lk-in > :not(.lk-mark) { transition: opacity .3s; opacity: 0; }
+/* 電腦、電視：大一點；手機橫拿（矮）：眼睛縮小、字靠緊，一個畫面放得下 */
+@media (min-width: 900px) and (min-height: 700px) { .lk-in { width: 420px; } .lk-mark { width: 168px; height: 168px; } .lk-stamp { width: 42px; height: 42px; font-size: 22px; } .lk-title { font-size: 32px; } .lk-sub { font-size: 15.5px; } }
+@media (max-height: 540px) { .lk-in { gap: 6px; } .lk-mark { width: 84px; height: 84px; margin: 0; } .lk-stamp { width: 26px; height: 26px; font-size: 14px; } .lk-title { font-size: 21px; } .lk-form { margin-top: 2px; } .lk .lk-input, .lk .lk-go { height: 46px; } .lk-note { font-size: 11.5px; } }
+@media (prefers-reduced-motion: reduce) { .lk, .lk-seal, .lk-lid, .lk.busy .lk-mark::after { animation: none; } }
+body.nofx .lk-seal, body.nofx .lk-lid, body.nofx .lk.busy .lk-mark::after { animation: none !important; }
+
 /* ================================================================ 2026/11/21 換裝與配樂（skin.js） */
 /* 設定頁的換裝選單：每一張卡片用那一套自己的三個顏色畫一個小預覽（不用載入那一套的字型） */
 .skin-set .hs-intro { margin: 0; padding: 12px 16px 10px; font-size: 12.5px; color: var(--frost-3); line-height: 1.7; }
@@ -2632,3 +2706,4 @@ body.dm-deep .fz-row { gap: 3px; padding-top: 6px; }
 .skin-flash[data-k="hud"] { position: fixed; inset: 0; z-index: 200; pointer-events: none; }
 .skin-flash[data-k="hud"] i { position: absolute; left: 0; right: 0; top: 0; height: 3px; background: var(--glacier); box-shadow: 0 0 24px 6px color-mix(in srgb, var(--glacier) 55%, transparent); animation: hfScan .7s cubic-bezier(.4, 0, .2, 1) forwards; }
 @keyframes hfScan { from { transform: translateY(0); opacity: 1; } to { transform: translateY(100vh); opacity: .2; } }
+
