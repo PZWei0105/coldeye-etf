@@ -60,6 +60,21 @@ jobs:
           gh api -X PUT "repos/${{ github.repository }}/actions/workflows/wake.yml/enable" || true
         env:
           GH_TOKEN: ${{ github.token }}
+      # 護欄（pipeline/guard.py，2026/11/21）：介面（site/）改過才用無頭瀏覽器驗收一次，平常只多一兩秒；
+      # 沒過就把網站的介面換回上一個好的版本（資料照樣最新），截圖放在這一輪的 guard-shots。
+      # 護欄自己出任何問題（裝不起來、逾時）都照原本的做法上線，不會擋住資料更新。
+      - if: steps.pipe.outputs.deploy == 'true'
+        id: guard
+        continue-on-error: true
+        timeout-minutes: 12
+        run: python -m pipeline.guard
+      - if: steps.pipe.outputs.deploy == 'true' && hashFiles('guard-shots/**') != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: guard-shots-${{ github.run_id }}
+          path: guard-shots
+          retention-days: 7
       - if: steps.pipe.outputs.deploy == 'true'
         uses: actions/upload-pages-artifact@v3
         with:

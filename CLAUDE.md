@@ -17,6 +17,16 @@
 - 注意股、處置股（`extra_flags`）是當天的公告，只能套在最新一天；回測與歷史訊號不能用（`engine.analyze` 只在最後一根套用）。
 - 已知限制：已下市 ETF 的最後 20 個交易日（算不出 20 日後報酬）與清算價值沒有進入回測。
 
+## 上鎖（2026/11/21，PZ：「設定一個跟電子書一樣的密碼，讓冷眼……有輸入密碼開啟的功能」；「冷眼……永遠獨立！……不能被搞壞，也不能夠外洩」）
+- 打開冷眼先停在「冷眼已上鎖」（`site/lock.js`），輸入《下回分解》書房的密語或備用碼按「睜眼」才進來。**密語跟書房同一組**：書房的 keyring（PZ-Games 的 `apps/next-chapter/books/keyring.json`，公開檔）**複製一份**寫在 `lock.js` 的 `RING`，打得開裡面包著的總鑰匙＝密語對；開出來的鑰匙馬上抹掉、不存。執行時**絕不去讀書房的檔案**（冷眼永遠獨立：書房改版、搬家、離線都不能讓冷眼打不開）。驗密語的正規化與格式跟書房一字不差（書房的 `src/crypt.js`、`tools/pzcrypt.py`），純邏輯 `LockCore` 複製自《PZ App 引擎》門鎖 1.0.0（PZ-Games 的 `_build/appkit/src/20_lock.js`），之後各自維護、不自動同步。
+- **守的是什麼要講清楚**：持股、交易、日記、計畫本來就只在手機的 localStorage，從來不上傳（原則第五條），網站上只有官方公開資料；這把鎖守的是「別人拿到這支手機、或在這台電腦上打開冷眼」。不要說成「資料加密」。
+- 這支手機的紀錄存在 localStorage 的 **`coldeye-lock`**（**不是** `coldeye.` 開頭：app.js 的 `HAD_SAVE`、備份、清除都只看 `coldeye.` 開頭），格式 `{ v: 1, ring: 鑰匙圈指紋, at, pol, hid, lk }`；只存在這支手機、不進備份。上鎖、忘記密語都不會動到任何持股資料。
+- 三種「什麼時候要再輸入」：`trust` 記住這支手機（預設，跟書房一樣）／`away` 離開 5 分鐘以上／`every` 每次離開（10 秒內回來不算）。`away`、`every` 離開時先把畫面蓋住（多工切換的縮圖看不到持股）；`away` 在前景被系統關掉（沒有離開時間）、時鐘倒流時保守地要求輸入。設定頁「上鎖」：現在上鎖（`lk: true`，重新打開也要輸入）、改政策。
+- 開機：`app.js` 的 `boot()` 一開頭 `await lockGate()`（在 `initSkin`、`renderShell` 之前，**門後面什麼都還沒畫**），記住又不用再輸入就直接過、**畫面一點都不多**（11/21 實測：記住這支手機時六個分頁和改之前逐張截圖 0 像素差）；密語對了先讓冷眼在門後面開機、眼睛睜開的動畫播完再把門拿掉。門掛在 `<html>` 底下（`renderShell` 會換掉整個 body 的內容），上鎖時整個 body 設成 `inert`；Esc 在捕獲階段擋下（不准傳到 app.js 關開機畫面）。開機時的門不出聲（不呼叫 `FX.unlock`：那會讓配樂在開機畫面之前先響）；開機之後回來上鎖時，打開那一下用 `FX.sfx('iris')`、錯了 `err`。
+- 密語輸入框是 `type="text"`（iPhone 的密碼欄位不給中文輸入法，他的密語是中文），眼睛按鈕切 `-webkit-text-security`；iPhone 不自動跳鍵盤。
+- 書房換了密語（pz-novels 的 `shelf.py` 換密語、keyring.json 換新）：照新的 keyring.json 改 `RING`，記住的裝置因為指紋不同會自動要求重新輸入。痞子葳說兩個都忘了：照他說的新密語用 pzcrypt 的 `make_keyring` 做一份新的 `RING`（書房那邊要不要跟著換問他）。
+- 測試：`node tests/lock_test.mjs`（用 pzcrypt 同格式做的測試鑰匙圈驗證密語、備用碼打得開、錯的打不開；真的 `RING` 只驗格式與錯的密語打不開；三種政策的每一種情況；鍵名與開機順序）。瀏覽器測試要先在 localStorage 放一筆記住的紀錄（`LockCore.trust(null, RING, Date.now())`，見 `tests/sw_test.mjs`、護欄 `pipeline/guard.py`），不然會停在門。
+
 ## 副官（投資小秘書）與決策日記
 - 副官是 App 內的固定規則檢查，**不連任何 AI、不替使用者決定買賣**。檢查與巡檢的門檻全部在 `site/aide.js` 的 `AIDE` 常數；改了要同步設定頁「副官怎麼檢查、怎麼對答案」（`aide.js` 的 `aideRulesHTML`，照常數產生）。
 - 決策日記存在 localStorage 的 `coldeye.journal`，一律經過 `core.js` 的 `saveJournal()` 寫入；和持股一樣只在手機，不可上傳。還原備份用「合併」（`aide.js` 的 `sanitizeJournal` 逐欄重建、只補回手機沒有的紀錄），不會刪掉或蓋掉現有的。
@@ -120,6 +130,7 @@
 
 ## 怎麼操作
 - 修改程式後推到 `main` 會觸發 workflow，執行 `control/job.json` 指定的工作；只改介面時把 job 設成 `deploy`。
+- **護欄：介面要先通過自動驗收才會換到手機上**（`pipeline/guard.py`，2026/11/21，PZ：「以後不管怎麼更改、更新、增加新功能，都不會把冷眼搞壞」）。每一輪 `publish` 之後、上傳網站之前（`coldeye.yml` 的 guard 步驟）看介面指紋（＝`site_fingerprint`、sw.js 的 BUILD）：驗收過的照常上線（平常只多一兩秒）；新的指紋用這一輪的真實資料在無頭瀏覽器打開（手機 390：六個分頁、設定頁、單檔頁 0050；電腦 1440：三個分頁；交易終端換裝；沒打開過的手機要停在上鎖的門）——沒有程式錯誤、每一頁有內容、沒有 undefined／NaN／[object Object] 才算過。過了記進 **`guard` 分支**的 `good.json`（指紋、commit、時間，留 20 個）；**沒過就把網站的介面換回上一個好的版本、資料照樣最新**，先用同一份資料驗上一個好的版本——它也沒過就是資料的問題、照原本的做法上線。沒過的指紋之後每一輪直接用好的版本、不重驗，直到程式又改了。驗收工具裝不起來、護欄自己出錯都照原本的做法上線（不會比以前差）。**推了介面之後一定要看那一輪 Actions 的「冷眼護欄」摘要**（沒過的原因、截圖 artifact `guard-shots-<run id>`）；或 `python -m pipeline.guard status`。**回滾**：`python -m pipeline.guard rollback [n]`（釘住第 n 個好的版本，寫 `control/ui-pin.json`，commit 推上去下一輪就換）、`python -m pipeline.guard unpin` 取消。驗收時先在瀏覽器放一筆「記住這支手機」的上鎖紀錄（`lock_record`，用 Node 跑 `lock.js` 算）。測試：`python3 tests/guard_test.py [data 資料夾]`（判斷、換回好的版本；給資料夾會真的開瀏覽器驗一次好的、一次弄壞的）。
 - 雲端 Claude 工作環境連不到台灣官方網站，資料一律由 GitHub Actions 抓；要實測新端點就把 job 設成 `probe` 並編輯 `control/probe.json`，結果會推到 `probe-results` 分支。
 - 手動執行：`gh workflow run` 在這個環境不能用，改用 REST：`gh api -X POST repos/PZWei0105/coldeye-etf/actions/workflows/coldeye.yml/dispatches -f ref=main -f 'inputs[mode]=backfill'`（mode：auto / intraday / eod / backfill / probe / deploy / global / night）。
 - **證交所 MIS 當機時不要卡住一輪**（`util.py` 的 `BREAKER_HOSTS`／`BREAK_AFTER`）：同一個程序裡 MIS 連續 3 次「重試完還是失敗」（404 不算）就當作這一輪它掛了，之後的 MIS 請求直接丟 `HostDown`（不送出），`stock_quotes`、`tape.fetch_books` 收到就不再一批一批試；任何一次成功就歸零。2026/11/2 11:15～11:37 MIS 一直回 502，以前那一輪重試了 23 分鐘、接力停住。測試：`python3 tests/breaker_test.py`。

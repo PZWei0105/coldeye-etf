@@ -7,3 +7,5 @@ node_modules/
 .venv/
 .tape/
 .tape-days/
+.guard/
+guard-shots/
