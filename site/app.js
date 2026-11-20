@@ -28,6 +28,7 @@ import { openCoach, hooks as coachHooks, coachRulesHTML, coachPacket } from './c
 import { xrayPfHTML, bindXrayPf, searchStocks, openStock, coachXray, xrayRulesHTML, refreshStockq, ensureHold } from './xray.js';
 import { planCardHTML, bindPlanCard, planTagHTML, planStripHTML, openTemp, refreshTemp, tempRulesHTML, compact, globalTickerHTML, bindGlobalTicker } from './plan.js';
 import { dayReportHTML, bindDayReport, rotationHTML, bindRotation } from './pulse.js';
+import { forceOrdersHTML, freeCardHTML, forceChipHTML, forceRowHTML, coreFollowHTML, bindForce, forceActions, forceBriefAdv } from './forceview.js';
 import { investHTML, bindInvest } from './invest.js';
 import { stormCardHTML, bindStormCard, openStorm } from './storm.js';
 import { eyeStart, eyeSitHTML, EYE_STYLES } from './eye.js';
@@ -45,7 +46,7 @@ const HAD_SAVE = (() => { try { return Object.keys(localStorage).some((k) => k.s
 // ------------------------------------------------------------------ 分頁
 const TABS = [
   { id: 'home', t: '指揮台', svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 1.8v3M12 19.2v3M1.8 12h3M19.2 12h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>' },
-  { id: 'pf', t: '部位', svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.6a8.4 8.4 0 1 0 8.4 8.4H12z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14.6 2.4a7.6 7.6 0 0 1 7 7H14.6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>' },
+  { id: 'pf', t: '兵力', svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.6 10.2 12 5.6l7.4 4.6M4.6 14.6 12 10l7.4 4.6M4.6 19 12 14.4l7.4 4.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
   { id: 'radar', t: '雷達', svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="4.4" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".7"/><path d="M12 12 18 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="15.6" cy="15" r="1.4" fill="currentColor"/></svg>' },
   { id: 'aide', t: '副官', svg: ICON.aide, core: true },
   { id: 'news', t: '情報', svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h11l5 5V19a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M8 11h8M8 14.5h8M8 18h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>' },
@@ -252,6 +253,11 @@ function go(tab) {
   window.scrollTo({ top: 0 });
   if (changed) { FX.cue('nav'); FX.pulse($('#view'), 'fx-swap', 520); }
 }
+/** 到兵力分頁、捲到今日指令 */
+function goForce() {
+  go('pf');
+  requestAnimationFrame(() => { const c = $('#fz-cmd'); if (c && c.previousElementSibling) c.previousElementSibling.scrollIntoView({ block: 'start', behavior: reduceMotion() ? 'auto' : 'smooth' }); });
+}
 function paintBadge() {
   const n = aideBadge();
   const b = $('.dock .core-tab .badge');
@@ -354,6 +360,7 @@ function renderHome() {
   $$('[data-act="dca"]', v).forEach((b) => b.addEventListener('click', () => openPending()));
   $$('[data-act^="coach-"]', v).forEach((b) => b.addEventListener('click', () => openCoach(b.dataset.act.slice(6))));
   $$('[data-act="temp"]', v).forEach((b) => b.addEventListener('click', () => openTemp()));
+  $$('[data-act="force"]', v).forEach((b) => b.addEventListener('click', () => goForce()));
   const apg = $('#ap-go', v);
   if (apg) apg.addEventListener('click', () => { go('pf'); requestAnimationFrame(() => { const c = $('.ap-card'); if (c) c.previousElementSibling.scrollIntoView({ block: 'start', behavior: reduceMotion() ? 'auto' : 'smooth' }); }); });
   bindHero(v, P);
@@ -541,7 +548,7 @@ function briefItems() {
     br: S.breadth,
     watch: settings.watch.map((c) => S.rows.get(c)).filter(Boolean),
     held: new Set(S.P ? S.P.holdings.map((x) => x.code) : []),
-    adv: S.adv, changes: S.changes, q: quote, today: today(),
+    adv: forceBriefAdv() || S.adv, changes: S.changes, q: quote, today: today(),
     names: { st: { 1: '偏多', 0: '中性', '-1': '偏空' }, ps: Object.fromEntries(Object.entries(POS).map(([k, v]) => [k, v.t])) },
     premWarn: (r) => premBand(r)[0], rowOf: (c) => S.rows.get(c),
   });
@@ -611,19 +618,10 @@ function buildActions(P, max = 9) {
     out.push({ pri: 2, code: c, chip: chip('提醒', 'info'), title: r.n, text: `到價提醒已照 ${splitName(xs[0].sk || xs[0].was / xs[0].px)} 換算：${xs.map((a) => `<b class="num">${fmt.px(a.was)}</b> → <b class="num">${fmt.px(a.px)}</b>`).join('、')}` });
   }
   if (P) {
+    // 兵力（force.js）：照你的股數——定期定額買的核心照扣、自己買的機動照訊號——要賣的、要買的（持有和關注的）、交易受限的，
+    // 有指令或持股有減碼／先不加碼時另外一句結論（點了到兵力分頁）。不再用不分核心、機動的通用建議（以前會叫你把定期定額的也賣三分之一）
+    out.push(...forceActions(chip));
     for (const x of P.holdings) {
-      const a = S.adv.get(x.code);
-      if (!a) continue;
-      if (a.key === 'trim' || a.key === 'rebalance') {
-        out.push({ pri: 0, code: x.code, chip: chip(a.label, 'warn2'), title: x.name, text: a.sell ? `建議賣出 ${sharesOf(a.sell.n)}：${esc(a.sell.why)}` : esc((a.lines.find((l) => l.kind === 'con') || a.lines[0] || {}).text || '') });
-      } else if (a.key === 'pause' || a.key === 'hold_off') {
-        const why = a.lines.find((l) => l.kind === 'con');
-        out.push({ pri: 2, code: x.code, chip: chip(a.label, 'warn'), title: x.name, text: esc(why ? why.text : '規則建議先觀察') });
-      } else if (a.key === 'add') {
-        const p = a.plan;
-        const amt = p && p.n > 0 ? (settings.privacy ? `約總資產 <b class="num">${(p.spend / P.totals.T * 100).toFixed(1)}%</b>` : `約 <b class="num">${compact(p.spend)}</b>元`) : '';
-        out.push({ pri: 1, code: x.code, chip: chip(a.label, 'go'), title: x.name, text: p && p.n > 0 ? `加碼計畫：這次${amt}（${sharesOf(p.n)}），分 ${p.parts.length} 批；出場線 <b class="num">${fmt.px(p.stop)}</b>` : `訊號可加碼，但${esc(PF.planWhy(p, { cat: x.cat }))}` });
-      }
       if (x.nextDiv && PF.daysBetween(today(), x.nextDiv.d) <= PF.DIV_SOON_DAYS) {
         out.push({ pri: 2, code: x.code, chip: chip('除息', 'info'), title: x.name, text: `${fmt.d(x.nextDiv.d)} 除息${x.nextDiv.cash ? `，每單位 ${cash3(x.nextDiv.cash)} 元，預估領 <b class="num">${money(x.nextDiv.amt)}</b> 元` : '，金額待公告'}` });
       }
@@ -902,11 +900,11 @@ function renderPF() {
     return;
   }
   if (!P || (!P.holdings.length && !P.closed.length && !(P.totals.cash > 0) && !isPaper())) {
-    v.innerHTML = `${head}<div class="sec-h"><h2>我的部位</h2></div>
+    v.innerHTML = `${head}<div class="sec-h"><h2>我的兵力</h2></div>
       <section class="panel pad onboard">
         <p class="lead">記下你的持股，冷眼會幫你：</p>
-        <ul class="ticks"><li>用移動平均法算成本，扣掉手續費與證交稅算出真實損益</li><li>依除息紀錄算出已經領到的配息、預估一年領多少</li><li>依你的紀律（比重上限、單筆最多虧多少）算出加碼、減碼的股數</li><li>每天提醒除息、到價、訊號變化</li></ul>
-        <div class="row-btns"><button class="btn primary" id="pf-add">${ICON.plus}記一筆交易</button><button class="btn ghost" id="pf-cash">設定可投入現金</button><button class="btn ghost" id="pf-bk">從備份還原</button></div>
+        <ul class="ticks"><li>用移動平均法算成本，扣掉手續費與證交稅算出真實損益</li><li>把定期定額買的（核心）和自己買的（機動）分開，每天給你明確的指令：加多少、減多少、留多少</li><li>依你的紀律（比重上限、單筆最多虧多少）和自由資金，算出加碼、減碼的股數</li><li>每天提醒除息、到價、訊號變化</li></ul>
+        <div class="row-btns"><button class="btn primary" id="pf-add">${ICON.plus}記一筆交易</button><button class="btn ghost" id="pf-cash">設定自由資金</button><button class="btn ghost" id="pf-bk">從備份還原</button></div>
         <p class="small muted">已經有持股？「記一筆」時勾選「不記得日期」，輸入目前股數與平均成本就可以。資料只存在這支手機，不會上傳。想先練習，切到上面的「模擬倉」。</p>
       </section>${dcaStripHTML()}`;
     bindModeSwitch(v);
@@ -920,10 +918,12 @@ function renderPF() {
   const M = dmode();
   let html = head;
   if (isPaper()) html += paperHeadHTML(P);
-  html += `<div class="sec-h"><h2>${isPaper() ? '模擬部位' : '我的部位'}</h2>${isPaper() ? '' : `<button class="btn primary small" id="pf-add">${ICON.plus}記一筆</button>`}${haloHTML('live')}</div>
+  // 兵力：一打開就是今日指令（照你的股數、自由資金與紀律算的），下面才是總覽、自由資金、每一檔的核心／機動
+  html += forceOrdersHTML(P);
+  html += `<div class="sec-h"><h2>${isPaper() ? '模擬部位' : '我的兵力'}</h2>${isPaper() ? '' : `<button class="btn primary small" id="pf-add">${ICON.plus}記一筆</button>`}${haloHTML('live')}</div>
     <section class="panel pf-top">
       <div class="pt-main"><div class="k">總資產</div><div class="pt-v num"${rollAttr('T', money(t.T))}>${money(t.T)}</div>
-        <div class="pt-sub">持股市值 <b class="num"${rollAttr('mv', money(t.mv))}>${money(t.mv)}</b>　＋　現金 ${isPaper() ? `<b class="num">${money(t.cash)}</b><small class="muted">（自動計算）</small>` : `<button class="link num" id="pf-cash">${money(t.cash)}</button>`}</div></div>
+        <div class="pt-sub">持股市值 <b class="num"${rollAttr('mv', money(t.mv))}>${money(t.mv)}</b>　＋　${isPaper() ? `現金 <b class="num">${money(t.cash)}</b><small class="muted">（自動計算）</small>` : `<span data-term="free">自由資金</span> <button class="link num" id="pf-cash">${money(t.cash)}</button>`}</div></div>
       <div class="pt-grid">
         <div><span data-term="upnl">未實現損益</span><b class="num ${dirCls(t.pnl)}"${rollAttr('pnl', money(t.pnl, true))}>${money(t.pnl, true)}</b><small class="num ${dirCls(t.pnl)}"${rollAttr('pnlPct', fmt.r(t.pct))}>${fmt.r(t.pct)}</small></div>
         <div><span>${dayTag(P.holdings.map((x) => x.q && x.q.date))}</span><b class="num ${dirCls(t.day)}"${rollAttr('day', money(t.day, true))}>${money(t.day, true)}</b><small class="num ${dirCls(t.day)}"${rollAttr('dayPct', fmt.r(t.dayPct, 2))}>${fmt.r(t.dayPct, 2)}</small></div>
@@ -937,8 +937,16 @@ function renderPF() {
   if (M === 'cruise') {
     if (P.holdings.length) html += holdsHTML(P);
     else if (isPaper()) html += PAPER_EMPTY;
-    html += cruiseHintHTML('部位只放總覽和持股。投入總覽、今日戰報、加碼計畫、定期定額、交易紀錄在「作戰」。');
+    html += cruiseHintHTML('兵力只放今日指令、總覽和兵力配置。自由資金、定期定額、投入總覽、今日戰報、加碼計畫、交易紀錄在「作戰」。');
   } else {
+  html += freeCardHTML(P);
+  if (P.holdings.length) {
+    html += holdsHTML(P);
+    html += coreFollowHTML();
+    html += dcaStripHTML();
+  } else if (isPaper()) {
+    html += PAPER_EMPTY;
+  }
   html += investHTML(P);
   html += dayReportHTML(P);
   html += planCardHTML(P);
@@ -946,12 +954,6 @@ function renderPF() {
   html += allocHTML(P);
   html += xrayPfHTML();
   if (P.holdings.length) html += `<section class="panel pad aide-strip slim"><div class="as-h"><span class="ac-core">${coreSVG('mini')}</span><div><b>想討論整體配置？</b><span class="small muted">副官巡檢在「副官」分頁；也可以把配置（預設只寫比例）帶去問 Claude。</span></div></div><div class="row-btns"><button class="btn small ghost" id="pf-aide">${ICON.aide}看副官巡檢</button><button class="btn small ghost" id="pf-ask">${ICON.comms}帶配置去問 Claude</button></div></section>`;
-  if (P.holdings.length) {
-    html += holdsHTML(P);
-    html += dcaStripHTML();
-  } else if (isPaper()) {
-    html += PAPER_EMPTY;
-  }
   html += divCalHTML(P, v.clientWidth);
   html += riskHTML(P);
   html += stormCardHTML(P);
@@ -993,6 +995,7 @@ function renderPF() {
   bindInvest(v);
   bindDayReport(v);
   bindStormCard(v);
+  bindForce(v);
 }
 
 // ------------------------------------------------------------------ 資產走勢：用交易紀錄＋官方收盤價重算每一天
@@ -1080,7 +1083,7 @@ function allocHTML(P) {
 
 const PAPER_EMPTY = '<section class="panel pad calm"><b>模擬倉還是空的。</b><span class="muted">到「雷達」挑一檔，在單檔頁按「記一筆」就能模擬下單；也可以照冷眼的加碼建議買買看。</span></section>';
 function holdsHTML(P) {
-  return `<div class="sec-h"><h2>持股</h2><span class="aside">${P.holdings.length} 檔　依市值排序</span>${haloHTML('live')}</div>
+  return `<div class="sec-h"><h2 data-term="force">兵力配置</h2><span class="aside"><span data-term="core">核心</span>＝定期定額・<span data-term="mobile">機動</span>＝自己買</span>${haloHTML('live')}</div>
     <section class="panel list holds">${P.holdings.map(holdRow).join('')}</section>`;
 }
 /** 巡航模式：說明其他東西在哪，一鍵切回作戰 */
@@ -1094,10 +1097,10 @@ function holdRow(x) {
   const a = S.adv.get(x.code);
   const q = x.q || {};
   return `<button class="h-row" data-code="${x.code}">
-    <span class="h-top"><i class="h-dot" style="background:${slotVar(x.slot)}"></i><span class="h-name">${esc(x.name)}<small class="num">${x.code}</small></span>${actChip(a)}${planTagHTML(a)}</span>
+    <span class="h-top"><i class="h-dot" style="background:${slotVar(x.slot)}"></i><span class="h-name">${esc(x.name)}<small class="num">${x.code}</small></span>${forceChipHTML(x.code) || `${actChip(a)}${planTagHTML(a)}`}</span>
     <span class="h-mid"><span>${sharesOf(x.h.sh)}　均價 <b class="num">${settings.privacy ? '••••' : fmt.px(x.h.avg)}</b></span><span>現價 <b class="num"${pxAttr(x.code, x.px)}${rollAttr('px:' + x.code, fmt.px(x.px))}>${fmt.px(x.px)}</b> <span class="num ${dirCls(q.pc)}">${fmt.pct(q.pc)}</span></span></span>
     <span class="h-bot"><span class="num ${dirCls(x.pnl)}">${rollSpan('hp:' + x.code, money(x.pnl, true))}<small>${fmt.r(x.pct)}</small></span><span class="muted">${x.divRecv > 0 ? `已領息 <span class="num">${money(x.divRecv)}</span>　` : ''}比重 <span class="num">${fmt.r(x.w, 1, false)}</span></span></span>
-  ${dmode() === 'deep' ? holdDeepHTML(x) : ''}</button>`;
+  ${forceRowHTML(x.code)}${dmode() === 'deep' ? holdDeepHTML(x) : ''}</button>`;
 }
 /** 深潛模式：每一檔多一排——市值、投入（還在手上的成本）、今天賺賠、預估一年配息 */
 function holdDeepHTML(x) {
@@ -1476,7 +1479,10 @@ function drawSettings() {
         <div class="seg">${Object.entries(PF.PROFILES).map(([k, p]) => `<button data-risk="${k}" aria-pressed="${settings.risk === k}">${p.name}</button>`).join('')}</div></div>
       <div class="tbl-wrap"><table class="t caps"><thead><tr><th>類型</th><th class="r">保守</th><th class="r">穩健</th><th class="r">積極</th></tr></thead><tbody>${capRows}<tr class="co"><td><span data-term="cocap">單一公司（穿透）</span></td>${['cons', 'mid', 'aggr'].map((p) => `<td class="r num${p === settings.risk ? ' on' : ''}">${(PF.CO_CAP[p] * 100).toFixed(0)}%</td>`).join('')}</tr></tbody></table></div>
       <p class="small muted pad-x">每一類的上限同時是「單檔上限」和「同一類合計的上限」（例如 0050、006208 合起來也不能超過市值型的上限）；單一公司是把你的 ETF 拆開、透過 ETF 間接持有同一家公司的上限。</p>
-      <div class="srow"><div><div class="h" data-term="reserve">緊急預備金</div><div class="d">不拿去加碼的錢（生活費、臨時要用的）。加碼計畫先扣掉它、再扣掉定期定額接下來一個月要扣的錢，剩下的才分給 ETF。只用在真實部位${settings.privacy ? '。隱藏金額開著：金額不顯示，按「修改」在現金那裡改' : ''}</div></div>${settings.privacy ? '<button class="btn small" id="s-reserve-edit">修改</button>' : `<input class="input short num" id="s-reserve" inputmode="numeric" value="${settings.reserve || 0}">`}</div>
+      <div class="srow"><div><div class="h" data-term="reserve">緊急預備金</div><div class="d">不拿去加碼的錢（生活費、臨時要用的）。自由資金先扣掉它，剩下的才分給 ETF。只用在真實部位${settings.privacy ? '。隱藏金額開著：金額不顯示，按「修改」在自由資金那裡改' : ''}</div></div>${settings.privacy ? '<button class="btn small" id="s-reserve-edit">修改</button>' : `<input class="input short num" id="s-reserve" inputmode="numeric" value="${settings.reserve || 0}">`}</div>
+      <div class="srow col"><div><div class="h" data-term="free">定期定額的錢</div><div class="d">另外扣：定期定額不算在自由資金裡，自由資金只管單筆加碼。從自由資金扣：每扣一期自由資金就少一期，扣款前先留一個月的錢。</div></div>
+        <div class="seg">${[['sep', '另外扣'], ['free', '從自由資金扣']].map(([k, t]) => `<button data-dcafund="${k}" aria-pressed="${(settings.dcaFund === 'free' ? 'free' : 'sep') === k}">${t}</button>`).join('')}</div></div>
+      <div class="srow"><div><div class="h" data-term="corefollow">核心也跟減碼訊號</div><div class="d">關著（預設）：定期定額買的核心照扣、不跟減碼訊號賣，只有比重超過上限才減。打開：減碼時核心和機動一起，這一輪先減三分之一。兵力分頁有你的每一檔的回測</div></div><button class="switch" role="switch" id="s-corefollow" aria-checked="${settings.coreFollow === true}" aria-label="核心也跟減碼訊號"></button></div>
       <div class="srow col"><div><div class="h">我的紀律</div><div class="d">加碼試算時會列出來，下單前對一次</div></div>
         <ul class="rules-ed">${(settings.rules || []).map((r, i) => `<li><span>${esc(r)}</span><button class="mini-btn" data-rr="${i}" aria-label="刪除這條">${ICON.x}</button></li>`).join('')}</ul>
         <div class="addrow"><input class="input" id="s-rule" maxlength="40" placeholder="新增一條，例如：除息前不追高"><button class="btn small" id="s-rule-add">新增</button></div>
@@ -1558,6 +1564,22 @@ function bindSettings() {
   });
   const resEdit = $('#s-reserve-edit', sh);
   if (resEdit) resEdit.addEventListener('click', () => openCashForm());
+  $$('[data-dcafund]', sh).forEach((b) => b.addEventListener('click', () => {
+    settings.dcaFund = b.dataset.dcafund === 'free' ? 'free' : 'sep';
+    saveSettings();
+    $$('[data-dcafund]', sh).forEach((z) => z.setAttribute('aria-pressed', z === b));
+    computePF();
+    S.viewStale = true;
+    toast(settings.dcaFund === 'free' ? '定期定額從自由資金扣' : '定期定額另外扣，不算在自由資金', null);
+  }));
+  const cfSw = $('#s-corefollow', sh);
+  if (cfSw) cfSw.addEventListener('click', (e) => {
+    settings.coreFollow = !(settings.coreFollow === true);
+    saveSettings();
+    e.currentTarget.setAttribute('aria-checked', settings.coreFollow);
+    computePF();
+    S.viewStale = true;
+  });
   const resIn = $('#s-reserve', sh);
   if (resIn) resIn.addEventListener('change', (e) => {
     const raw = String(e.target.value).replace(/[^0-9.]/g, '');
@@ -1676,7 +1698,9 @@ function posRulesHTML() {
   return `<p><b>移動防守線</b>近 22 個交易日最高收盤，減 3 倍 ATR（平均真實波幅）。價格創高就跟著上移；下跌時多半停在原地，但波動變大、或高點超過 22 個交易日時也會往下移；收盤跌破代表前一段上漲已經中斷。</p>
     <p><b>部位訊號</b>依序判斷，先符合先決定：① 觀點偏空且收盤跌破防守線 → 減碼；② 觀點偏空、跌破防守線、注意／處置中、或溢價超過警戒 → 先不加碼；③ 觀點偏多但短線漲多（RSI ≥ 75、爆量上漲、或比月線高出 2 倍 ATR）→ 漲多分批；④ 觀點偏多 → 可加碼；⑤ 其他 → 續抱。</p>
     <p><b>加上你的部位</b>先看注意／處置，再看減碼訊號，接著檢查比重：超過該類型上限 2 個百分點以上就建議調節。</p>
-    <p><b>加碼計畫</b>可動用的錢＝現金 − 緊急預備金 − 定期定額接下來一個月要扣的錢（今天起到下個月同一天之前，每個扣款日一期；國泰扣款失敗不補扣、連續 3 次會終止，所以先留著）− 上次更新現金之後定期定額已經扣走的（現金是你自己填的，扣款之後記得更新；模擬倉沒有這幾項）。可動用的錢分 ${PF.CASH_SLICES} 份，分給你持有的和關注的 ETF，照順序每一檔最多拿 1 份：訊號「可加碼」的先（信心高的先），再來是「續抱」裡想小額加碼的；實際花掉的從可動用的錢扣掉，分完就停，排在後面的只拿得到剩下的。每一檔的股數取這幾個的最小值：① 單筆最多虧損（${P.cons.name} ${(P.cons.loss * 100).toFixed(1)}%、${P.mid.name} ${(P.mid.loss * 100).toFixed(0)}%、${P.aggr.name} ${(P.aggr.loss * 100).toFixed(0)}% 的總資產）÷ 每股到出場線的最壞虧損（含來回手續費與證交稅）；② 這一檔的上限剩下的空間；③ 同一類合計的上限剩下的空間（上限和單檔一樣，例如 0050 和 006208 合起來也不能超過市值型的上限）；④ 單一公司的上限（把 ETF 拆開，透過 ETF 間接持有同一家公司：${P.cons.name} ${PF.CO_CAP.cons * 100}%、${P.mid.name} ${PF.CO_CAP.mid * 100}%、${P.aggr.name} ${PF.CO_CAP.aggr * 100}% 的總資產；在這檔裡占不到 ${PF.CO_MIN * 100}% 的公司不算；你持有的 ETF 還沒拿到成分股明細時會標出來）；⑤ 分到的錢（三批各自的手續費、最低收費都算進去，不會超過）。排在前面的用掉了同類型、同一家公司的空間，後面的就少，不會兩檔各算一次。之後：觀點中性、或信心不到 ${PF.CONF_FULL}，股數減半；溢價（盤中用即時的，其他時候用最近一次收盤的）超過警戒線（台股 ETF 0.5%，海外、債券、期貨 1%）減半、超過 ${PF.PREM_CUT[1]} 倍先不買。市場溫度不改股數（回測沒有變好），只提醒風險。</p>
+    <p><b>兵力</b>每一檔的股數分成核心（定期定額買的）和機動（你自己單筆買的）；賣出照國泰的規則先賣機動，不夠才賣核心。核心照扣、不跟減碼訊號賣，只有兩種情況會動：比重超過上限 ${PF.OVER_TOL * 100} 個百分點以上，要賣回上限（機動先賣，不夠才動到核心）；或你打開「核心也跟減碼訊號」。機動照部位訊號：減碼是「這一輪」減一次——從訊號轉成減碼那天起算（看每 5 個交易日一次的訊號取樣），那之後已經賣過的算進去，夠了就不再叫你賣；幅度照下面的「減碼幅度」。可加碼的照加碼計畫，用自由資金買（持有的和關注的都算）。每一檔再寫建議持有幾股、上限幾股（這一類的上限 × 總資產 ÷ 現價）。</p>
+    <p><b>自由資金</b>你設定的金額，加上之後在冷眼記的單筆買賣（買進扣成交金額＋手續費、賣出加回成交金額－手續費－證交稅；記一筆時取消勾選「用自由資金」就不算；設定那天以前的交易已經算在金額裡）。存入、提出、直接改成都會從那一刻重新算起。定期定額預設另外扣、不算在自由資金裡；在設定選「從自由資金扣」，每扣一期就從自由資金扣掉，扣款前也先留一個月的錢。</p>
+    <p><b>加碼計畫</b>可動用的錢＝自由資金 − 緊急預備金（選了「定期定額從自由資金扣」再減掉定期定額接下來一個月要扣的錢：今天起到下個月同一天之前，每個扣款日一期；國泰扣款失敗不補扣、連續 3 次會終止，所以先留著；模擬倉沒有這幾項）。可動用的錢分 ${PF.CASH_SLICES} 份，分給你持有的和關注的 ETF，照順序每一檔最多拿 1 份：訊號「可加碼」的先（信心高的先），再來是「續抱」裡想小額加碼的；實際花掉的從可動用的錢扣掉，分完就停，排在後面的只拿得到剩下的。每一檔的股數取這幾個的最小值：① 單筆最多虧損（${P.cons.name} ${(P.cons.loss * 100).toFixed(1)}%、${P.mid.name} ${(P.mid.loss * 100).toFixed(0)}%、${P.aggr.name} ${(P.aggr.loss * 100).toFixed(0)}% 的總資產）÷ 每股到出場線的最壞虧損（含來回手續費與證交稅）；② 這一檔的上限剩下的空間；③ 同一類合計的上限剩下的空間（上限和單檔一樣，例如 0050 和 006208 合起來也不能超過市值型的上限）；④ 單一公司的上限（把 ETF 拆開，透過 ETF 間接持有同一家公司：${P.cons.name} ${PF.CO_CAP.cons * 100}%、${P.mid.name} ${PF.CO_CAP.mid * 100}%、${P.aggr.name} ${PF.CO_CAP.aggr * 100}% 的總資產；在這檔裡占不到 ${PF.CO_MIN * 100}% 的公司不算；你持有的 ETF 還沒拿到成分股明細時會標出來）；⑤ 分到的錢（三批各自的手續費、最低收費都算進去，不會超過）。排在前面的用掉了同類型、同一家公司的空間，後面的就少，不會兩檔各算一次。之後：觀點中性、或信心不到 ${PF.CONF_FULL}，股數減半；溢價（盤中用即時的，其他時候用最近一次收盤的）超過警戒線（台股 ETF 0.5%，海外、債券、期貨 1%）減半、超過 ${PF.PREM_CUT[1]} 倍先不買。市場溫度不改股數（回測沒有變好），只提醒風險。</p>
     <p><b>分三批</b>第一批現價附近（除不盡的零頭放這批）；第二、三批等拉回價，沒等到就一週、兩週後照時間買——回測顯示挑時機的優勢很小，這樣可以避免一直追不到。「跌到出場線約虧多少」用三批都以現價成交的最壞情況計算。</p>
     <p><b>出場線</b>偏多時用作廢線，其他用移動防守線。<b>減碼幅度</b>市值型、高股息、海外、債券先減三分之一；產業主題、主動式、期貨先減一半；槓桿與反向全部出場。</p>
     <p><b>成本不影響方向</b>平均成本只用來算損益、損益兩平與「跌到防守線還剩多少獲利」，不會讓規則變成攤平建議。</p>
@@ -1853,7 +1877,10 @@ bus.on((what, data) => {
   if (what === 'lotedit') { onLotEdit(data); return; }
   // 加碼計畫的單一公司上限要用成分股明細：還沒載入的抓回來，再重算一次（同一檔一分鐘最多試一次；換了一批資料就重新算起）
   if (what === 'needhold') { holdFetch(data); return; }
+  // 兵力：減碼中的持股要看歷史檔（這一輪減碼從哪天開始），抓到之後重算
+  if (what === 'needhist') { histFetch(data); return; }
   if (what === 'batch' || what === 'holddata') holdTried.clear();
+  if (what === 'batch') histTried.clear();
   if (what === 'book' || what === 'watch' || what === 'alerts') {
     if (what !== 'alerts') diffSeen();
     computePF();
@@ -1873,6 +1900,20 @@ bus.on((what, data) => {
 });
 const holdTried = new Map();
 let holdRetry = null;
+const histTried = new Map();
+/** 兵力用的歷史檔（減碼這一輪從哪天開始）：同一檔一分鐘最多試一次，抓到就重算、重畫 */
+function histFetch(codes) {
+  const now = Date.now();
+  const todo = (codes || []).filter((c) => !(histTried.get(c) > now - 60000));
+  if (!todo.length) return;
+  for (const c of todo) histTried.set(c, now);
+  Promise.all(todo.map((c) => ensureHist(c).catch(() => null))).then((res) => {
+    if (!res.some(Boolean) || !S.summary) return;
+    computePF();
+    viewRender();
+    if (S.openCode && !S.openCode.startsWith('__')) renderDetail(S.openCode);
+  });
+}
 function holdFetch(codes) {
   const now = Date.now();
   const todo = (codes || []).filter((c) => !(holdTried.get(c) > now - 60000));

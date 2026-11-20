@@ -270,6 +270,11 @@ export function aideCheck(x) {
         push(withTp(info('cost', `全部賣出：手續費${x.privacy ? '' : `約 ${ntS(c.fee)} 元`}、證交稅${free ? '免' : x.privacy ? '0.1%' : `約 ${ntS(c.tax)} 元`}，已實現損益約 ${rp}。`),
           `全部賣出：手續費${free ? '（證交稅免）' : '加證交稅'}約占賣出金額的 ${gross > 0 ? ((c.fee + c.tax) / gross * 100).toFixed(2) : '—'}%，已實現損益約 ${rp}。`));
       }
+      if (hold.core > 0 && !hold.coreFollow) {
+        const share = hold.sh > 0 ? hold.core / hold.sh : null;
+        push(withTp(info('core', `其中 ${sharesText(hold.core)}是定期定額買的核心：兵力的規則是核心照扣、不跟減碼訊號賣（比重超過上限才減）。想賣的話，先賣自己單筆買的機動。`),
+          `其中約 ${pctU(share)} 是定期定額買的核心：兵力的規則是核心照扣、不跟減碼訊號賣（比重超過上限才減）。想賣的話，先賣自己單筆買的機動。`));
+      }
       if (isNum(hold.pnlPct) && hold.pnlPct < 0) push(info('sunk', `帳面虧損 ${pctS(hold.pnlPct)}：成本高低不會影響之後的漲跌。問自己：「如果現在手上是現金，我會買這檔嗎？」不會，賣出才有道理。`));
       else if (isNum(hold.pnlPct) && hold.pnlPct > 0) push(info('gain', `帳面獲利 ${pctS(hold.pnlPct)}：可以分批賣，不用一次賣光。`));
       if (['broad', 'div'].includes(row.k)) push(info('long', '市值型、高股息常是長期存股的部位：短期偏空不一定要全賣，可以只減一部分。'));
@@ -815,16 +820,18 @@ export function packPf(p) {
   L.push(SEP(`我的配置（${p.when}；${p.bookName || '真實部位'}${p.showAmt ? '' : '，只寫比例'}）`));
   const t = p.totals;
   L.push(`風險屬性：${p.profileName}（單筆最多虧總資產 ${(p.profileLoss * 100).toFixed(1)}%）`);
-  if (p.showAmt) L.push(`總資產約 ${ntS(t.T)} 元（持股 ${ntS(t.mv)}、現金 ${ntS(t.cash)}）`);
-  L.push(`組成：持股 ${pctU(t.T > 0 ? t.mv / t.T : null, 1)}、現金 ${pctU(t.T > 0 ? t.cash / t.T : null, 1)}｜未實現損益 ${pctS(t.pct)}｜預估一年配息約總資產的 ${t.T > 0 ? (t.annual / t.T * 100).toFixed(2) : '—'}%`);
+  const cn = p.bookName === '模擬倉' ? '現金' : '自由資金';
+  if (p.showAmt) L.push(`總資產約 ${ntS(t.T)} 元（持股 ${ntS(t.mv)}、${cn} ${ntS(t.cash)}）`);
+  L.push(`組成：持股 ${pctU(t.T > 0 ? t.mv / t.T : null, 1)}、${cn} ${pctU(t.T > 0 ? t.cash / t.T : null, 1)}｜未實現損益 ${pctS(t.pct)}｜預估一年配息約總資產的 ${t.T > 0 ? (t.annual / t.T * 100).toFixed(2) : '—'}%`);
+  if (p.force) L.push(`冷眼的兵力規則：定期定額買的是「核心」，${p.force.coreFollow ? '我打開了「核心也跟減碼訊號」' : '照扣、不跟減碼訊號賣（比重超過上限才減）'}；自己單筆買的是「機動」，照規則訊號加減。今天的兵力指令：${p.force.head}`);
   if (p.bench) L.push(`模擬倉成績：${pctS(p.bench.ret, 2)}；同期全買 0050 ${pctS(p.bench.b, 2)}（第 ${p.bench.days} 天）`);
-  L.push('持股（比重｜類別與我的上限｜未實現｜冷眼依紀律的建議｜規則觀點）：');
-  for (const h of p.holdings) L.push(`・${h.name}（${h.code}）｜${pctU(h.w, 1)}｜${catN(h.cat)}，上限 ${pctU(h.cap)}｜${pctS(h.pnlPct)}｜${h.label || '—'}｜${h.st == null ? '資料不足' : `${ST_T[String(h.st)]}／${PS_T[h.ps] || '—'}`}${p.showAmt && isNum(h.sh) ? `｜${sharesText(h.sh)}，平均成本 ${pxS(h.avg)}，市值約 ${ntS(h.mv)} 元` : ''}`);
+  L.push(`持股（比重｜類別與我的上限｜未實現｜${p.force ? '兵力指令' : '冷眼依紀律的建議'}｜規則觀點${p.force ? '｜定期定額買的（核心）占這一檔' : ''}）：`);
+  for (const h of p.holdings) L.push(`・${h.name}（${h.code}）｜${pctU(h.w, 1)}｜${catN(h.cat)}，上限 ${pctU(h.cap)}｜${pctS(h.pnlPct)}｜${(p.showAmt ? h.label : String(h.label || '').replace(/\d[\d,]*\s*張(\s*\d[\d,]*\s*股)?|\d[\d,]*\s*股/g, '若干股')) || '—'}｜${h.st == null ? '資料不足' : `${ST_T[String(h.st)]}／${PS_T[h.ps] || '—'}`}${p.force && isNum(h.core) ? `｜核心 ${pctU(h.sh > 0 ? h.core / h.sh : null)}` : ''}${p.showAmt && isNum(h.sh) ? `｜${sharesText(h.sh)}，平均成本 ${pxS(h.avg)}，市值約 ${ntS(h.mv)} 元` : ''}`);
   if (p.audit && p.audit.length) { L.push('', SEP('副官巡檢（固定規則）')); const mark = { ok: '✓', info: '・', warn: '⚠', stop: '⛔' }; for (const i of p.audit) L.push(`${mark[i.lvl]} ${i.t}`); }
   if (p.plan && (p.plan.length || p.deploy)) {
-    L.push('', SEP('冷眼的加碼計畫（固定規則：可動用的錢＝現金－緊急預備金－定期定額要扣的；分 3 份，照順序每一檔最多 1 份：可加碼的先、信心高的先，再照紀律算股數）'));
+    L.push('', SEP(`冷眼的加碼計畫（固定規則：可動用的錢＝${p.deploy && p.deploy.sep ? '自由資金－緊急預備金（定期定額另外扣）' : '自由資金－緊急預備金－定期定額要扣的'}；分 3 份，照順序每一檔最多 1 份：可加碼的先、信心高的先，再照紀律算股數）`));
     const t = p.totals;
-    if (p.deploy) L.push(p.showAmt ? `可動用的錢約 ${ntS(p.deploy.usable)} 元（緊急預備金 ${ntS(p.deploy.emergency)}、定期定額保留 ${ntS(p.deploy.dca)}）` : `可動用的錢約占總資產 ${pctU(t.T > 0 ? p.deploy.usable / t.T : null, 1)}`);
+    if (p.deploy) L.push(p.showAmt ? `可動用的錢約 ${ntS(p.deploy.usable)} 元（緊急預備金 ${ntS(p.deploy.emergency)}${p.deploy.sep ? '' : `、定期定額保留 ${ntS(p.deploy.dca)}`}）` : `可動用的錢約占總資產 ${pctU(t.T > 0 ? p.deploy.usable / t.T : null, 1)}`);
     if (!p.plan.length) L.push('這次沒有分到加碼的 ETF。');
     for (const x of p.plan) L.push(`・${x.name}（${x.code}）｜${x.label}｜這次最多約占總資產 ${pctU(x.w, 1)}${p.showAmt ? `（約 ${ntS(x.amt)} 元、${sharesText(x.sh)}）` : ''}｜${x.why}｜出場線 ${pxS(x.stop)}`);
   }

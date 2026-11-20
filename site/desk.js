@@ -12,6 +12,7 @@ import * as A from './aide.js';
 import * as FX from './fx.js';
 import { coachStripHTML, bindCoachStrip } from './coach.js';
 import { benchValue } from './calc.js';
+import { forceItemOf } from './forceview.js';
 
 const STI = { bull: ICON.up, bear: ICON.down, wait: ICON.flat, swap: ICON.swap };
 const nameOf = (c) => (S.rows.get(c) || {}).n || c;
@@ -68,7 +69,18 @@ function rankOf(row) {
 function holdInfo(code) {
   const x = heldOf(code);
   if (!x || !(x.h.sh > 0)) return null;
-  return { sh: x.h.sh, avg: x.h.avg, cost: x.h.cost, w: x.w, pnlPct: x.pct, mv: x.mv, cap: PF.capOf(settings.risk, x.cat) };
+  // 兵力：其中幾股是定期定額買的核心（核心照扣、不跟減碼訊號賣，除非你打開「核心也跟減碼訊號」）
+  const fi = forceItemOf(code);
+  return {
+    sh: x.h.sh, avg: x.h.avg, cost: x.h.cost, w: x.w, pnlPct: x.pct, mv: x.mv, cap: PF.capOf(settings.risk, x.cat),
+    core: fi ? fi.core : 0, coreFollow: settings.coreFollow === true && !isPaper(), force: fi ? fi.say : null,
+  };
+}
+/** 帶去問 Claude 的「冷眼依我的紀律給的建議」：持有的照兵力指令，沒持有的照通用建議 */
+function adviceForPack(code) {
+  const fi = forceItemOf(code);
+  if (fi) return { label: `${fi.chip ? fi.chip[0] : ''}（兵力：${fi.say}）` };
+  return adviceFor(code);
 }
 function snapOf(row) {
   const q = quote(row);
@@ -890,7 +902,7 @@ export function openAsk(kind, o = {}) {
       const ck = e && e.checks ? { verdict: e.checks.verdict, items: e.checks.items || [] } : null;
       return A.packEtf({
         kind, short: st.short, when: whenText(), row, q: quote(row), det, stats: statsOf(row), today: td, market: marketNow(),
-        hold: holdInfo(code), showAmt: st.amt, profileName: PF.PROFILES[settings.risk].name, bookName: bookName(), adv: adviceFor(code),
+        hold: holdInfo(code), showAmt: st.amt, profileName: PF.PROFILES[settings.risk].name, bookName: bookName(), adv: adviceForPack(code),
         row2, q2: row2 ? quote(row2) : null, det2, stats2: row2 ? statsOf(row2) : null, hold2: row2 ? holdInfo(row2.c) : null,
         checks: ck, idea, question: st.q.trim(),
       });
@@ -898,7 +910,10 @@ export function openAsk(kind, o = {}) {
     if (kind === 'pf') {
       if (!P) return '';
       const stress = PF.stressToStops(P.holdings, { T: P.totals.T });
-      const holdings = P.holdings.map((x) => ({ name: x.name, code: x.code, cat: x.cat, w: x.w, cap: PF.capOf(settings.risk, x.cat), pnlPct: x.pct, label: (S.adv.get(x.code) || {}).label, st: x.row ? x.row.st : null, ps: x.row ? x.row.ps : null, sh: x.h.sh, avg: x.h.avg, mv: x.mv }));
+      const holdings = P.holdings.map((x) => {
+        const fi = forceItemOf(x.code);
+        return { name: x.name, code: x.code, cat: x.cat, w: x.w, cap: PF.capOf(settings.risk, x.cat), pnlPct: x.pct, label: fi ? fi.say : (S.adv.get(x.code) || {}).label, st: x.row ? x.row.st : null, ps: x.row ? x.row.ps : null, sh: x.h.sh, avg: x.h.avg, mv: x.mv, core: fi ? fi.core : null };
+      });
       let bench = null;
       if (isPaper() && book.start) {
         const dv = S.divs && S.divs[book.start.code || '0050'];
@@ -921,7 +936,8 @@ export function openAsk(kind, o = {}) {
       return A.packPf({
         short: st.short, when: whenText(), profileName: PF.PROFILES[settings.risk].name, profileLoss: PF.PROFILES[settings.risk].loss,
         totals: P.totals, holdings, stress, audit: A.auditPf(P, settings.risk, td, stress), showAmt: st.amt, question: st.q.trim(), bookName: bookName(), bench, market: marketNow(),
-        plan, deploy: dep ? { usable: dep.usable, emergency: dep.emergency || 0, dca: ((dep.dca && dep.dca.total) || 0) + ((dep.spent && dep.spent.total) || 0) } : null, temp: marketTemp(),
+        plan, deploy: dep ? { usable: dep.usable, emergency: dep.emergency || 0, dca: ((dep.dca && dep.dca.total) || 0) + ((dep.spent && dep.spent.total) || 0), sep: dep.sep !== false } : null, temp: marketTemp(),
+        force: S.force && !isPaper() ? { head: S.force.head, coreFollow: settings.coreFollow === true } : null,
       });
     }
     if (kind === 'market') {

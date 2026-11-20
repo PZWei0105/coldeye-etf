@@ -1,5 +1,5 @@
 /* 冷眼 — 加碼計畫與市場溫度。
-   - 加碼計畫卡（部位分頁的第二張）：可動用的錢＝現金－緊急預備金－定期定額接下來一個月要扣的（－上次更新現金之後已經扣的），
+   - 加碼計畫卡（兵力分頁）：可動用的錢＝自由資金－緊急預備金（選了「定期定額從自由資金扣」再減定期定額接下來一個月要扣的），
      分 3 份、照順序（可加碼的先、信心高的先）每一檔最多一份（pf.js 的 allocAdds）；每一檔旁邊標「可加碼多少」（planTagHTML）。
    - 全球市場與市場溫度（#temp）：後台 data/global.json（Cboe、Nasdaq、央行、期交所、美國財政部，pipeline/globalmkt.py）。
      溫度只提醒、不改股數；回測一律並列：溫度 vs 任何一天、照冷眼加碼 vs 每月定期定額（pipeline/addsim.py）。
@@ -49,7 +49,7 @@ function simCmp(r) {
 /** 加碼計畫卡上的一句 */
 function simShort(r) {
   const c = simCmp(r);
-  const keep = '定期定額要扣的錢先留著、不拿來算加碼，加碼計畫管的是額外的錢。';
+  const keep = settings.dcaFund === 'free' ? '定期定額要扣的錢先留著、不拿來算加碼，加碼計畫管的是額外的錢。' : '定期定額另外扣，加碼計畫只管自由資金。';
   if (c.tradeoff) return `這段期間大多是多頭：錢放著沒買就少賺，冷眼換到的是比較小的跌幅。所以${keep}`;
   return `冷眼的最大跌幅${c.dd === '差不多' ? '和定期定額差不多' : c.dd}，期末${c.fin === '差不多' ? '和定期定額差不多' : `比定期定額${c.fin}`}。${keep}`;
 }
@@ -87,7 +87,7 @@ export function planTagHTML(a, T = (S.P && S.P.totals.T) || 0) {
   return `<span class="ap-tag none" data-term="plan">${esc(shortWhy(p))}</span>`;
 }
 
-// ------------------------------------------------------------------ 加碼計畫卡（部位分頁）
+// ------------------------------------------------------------------ 加碼計畫卡（兵力分頁）
 export function planCardHTML(P) {
   if (!P || !(P.totals.T > 0) || !S.alloc) return '';
   const T = P.totals.T;
@@ -123,12 +123,12 @@ export function planCardHTML(P) {
   const lastD = dcaItems.length ? dcaItems[dcaItems.length - 1].d : null;
   const nSpent = ((dep.spent && dep.spent.items) || []).length;
   const eq = cash > 0 ? `<div class="ap-eq">
-      <span>現金 <b class="num">${money(dep.cash)}</b></span>
+      <span>${paper ? '現金' : '自由資金'} <b class="num">${money(dep.cash)}</b></span>
       ${!paper ? `<span>− <button class="link num" id="ap-res" data-term="reserve">緊急預備金 ${money(dep.emergency || 0)}</button></span>` : ''}
       ${!paper && dcaT > 0 ? `<span>− <span data-term="deploy">定期定額保留</span> <b class="num">${money(dcaT)}</b><small>（${dcaItems.length} 期，到 ${fmt.d(lastD)}）</small></span>` : ''}
       ${!paper && spentT > 0 ? `<span>− <button class="link" id="ap-spent" data-term="deploy">定期定額已經扣的</button> <b class="num">${money(spentT)}</b><small>（上次更新現金之後 ${nSpent} 期；更新現金後就不用扣）</small></span>` : ''}
       <span class="ap-use">＝ <span data-term="deploy">可動用</span> <b class="num">${money(dep.usable)}</b></span>
-    </div>` : '<p class="ap-empty">現金是 0：在上面點現金金額，輸入準備拿來加碼的錢，冷眼就會算出每一檔可以加碼多少。</p>';
+    </div>` : `<p class="ap-empty">${paper ? '現金是 0。' : '自由資金是 0：在上面「自由資金」按存入，輸入準備拿來單筆加碼的錢，冷眼就會算出每一檔可以加碼多少。'}</p>`;
   // 分到的錢是「一份」的，原因寫在上面那一句；每一列只寫它自己的（別的上限、只拿到剩下的、減半）
   const rowHTML = (x) => {
     const p = x.a.plan;
@@ -161,7 +161,7 @@ export function planCardHTML(P) {
   const plans0 = rest.filter((x) => x.a.plan);
   const tooSmall = plans0.length > 0 && plans0.every((x) => x.a.plan.limit === 'cash' && !(x.a.plan.cuts || []).includes('prem0'));
   const total = funded.length ? `<p class="ap-sum">${rule}合計 <b class="num">${esc(amtOf(used, T))}</b>（${funded.length} 檔）${settings.privacy ? '' : `，剩 <b class="num">${money(left)}</b> 不動`}。</p>`
-    : (cash > 0 ? `<p class="ap-sum">${!(dep.usable > 0) ? '可動用的錢是 0：現金都留給緊急預備金和定期定額了。' : tooSmall ? `可動用的錢太少：分 ${PF.CASH_SLICES} 份之後，一份不夠買 1 股。` : '這次沒有分到可以加碼的，每一檔的原因寫在下面。'}</p>` : '');
+    : (cash > 0 ? `<p class="ap-sum">${!(dep.usable > 0) ? `可動用的錢是 0：${paper ? '現金' : '自由資金'}都留給緊急預備金${dep.sep === false ? '和定期定額' : ''}了。` : tooSmall ? `可動用的錢太少：分 ${PF.CASH_SLICES} 份之後，一份不夠買 1 股。` : '這次沒有分到可以加碼的，每一檔的原因寫在下面。'}</p>` : '');
   return `<div class="sec-h"><h2>加碼計畫${paper ? '（模擬倉）' : ''}</h2><span class="aside" data-term="plan">依你的紀律・${esc(PF.PROFILES[settings.risk].name)}型</span>${haloHTML('eod')}</div>
     <section class="panel ap-card" aria-label="加碼計畫">
       ${bar}${eq}
@@ -350,7 +350,7 @@ export function tempRulesHTML(rule) {
     <p><b>更新</b>美股盤中、台指期夜盤每 10 分鐘一輪（美股是交易所延遲 15 分鐘的報價）；歷史收盤每天早上 07:45 整理一次。來源：Cboe（VIX、S&P 500）、Nasdaq（那斯達克 100、費城半導體）、中央銀行（新臺幣/美元銀行間收盤匯率）、臺灣期貨交易所（台指期）、美國財政部（公債殖利率）、證交所與櫃買中心。</p>`;
 }
 
-// ------------------------------------------------------------------ 指揮台的一條：加碼計畫的摘要（點了到「部位」的加碼計畫卡）
+// ------------------------------------------------------------------ 指揮台的一條：加碼計畫的摘要（點了到「兵力」的加碼計畫卡）
 export function planStripHTML(P) {
   if (!P || !(P.totals.T > 0) || !S.alloc) return '';
   const T = P.totals.T;

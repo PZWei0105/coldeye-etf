@@ -111,7 +111,7 @@ async function drawStorm(animate = false) {
   const inp = pfInput(S.P);
   const sc = STORMS.find((s) => s.id === cur) || STORMS[0];
   if (!inp) {
-    sh.innerHTML = topHTML() + `<div class="sheet-body tool storm"><section class="panel pad"><h3>還沒有部位可以重演</h3><p class="muted">先在「部位」記一筆交易（或打開模擬倉），冷眼才知道你現在每一檔占多少。</p></section></div>`;
+    sh.innerHTML = topHTML() + `<div class="sheet-body tool storm"><section class="panel pad"><h3>還沒有部位可以重演</h3><p class="muted">先在「兵力」記一筆交易（或打開模擬倉），冷眼才知道你現在每一檔占多少。</p></section></div>`;
     $('#back', sh).addEventListener('click', () => closeDetail());
     return;
   }

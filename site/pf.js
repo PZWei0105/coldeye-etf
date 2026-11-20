@@ -589,7 +589,7 @@ export function advise(H, ctx) {
     const amt = nd.cash ? Math.floor(nd.cash * H.sh + 1e-9) : null;
     add('info', `${Math.floor(nd.d / 100) % 100}/${nd.d % 100} 除息${nd.cash ? `，每單位 ${nd.cash} 元，預估可領 ${ntS(amt)} 元` : '，金額待公告'}。除息當天股價會扣掉配息，總報酬不變${amt >= NHI_THRESHOLD ? '；單次 2 萬元以上，股利與利息所得的部分會先扣 2.11% 二代健保補充保費' : ''}。`);
   }
-  if (T <= 0) add('info', '在「部位」輸入可投入的現金或持股，才能依你的資金算出建議股數。');
+  if (T <= 0) add('info', '在「兵力」輸入自由資金或持股，才能依你的資金算出建議股數。');
   return out;
 }
 
@@ -631,8 +631,8 @@ export function planWhy(p, o = {}) {
     if (p.cuts && p.cuts.includes('prem0')) return `溢價超過警戒線 ${PREM_CUT[1]} 倍，先不買`;
     switch (p.limit) {
       case 'cash':
-        if (!(p.cashAll > 0)) return '還沒設定可投入現金';
-        if (!(p.cash > 0)) return '現金扣掉緊急預備金、定期定額要扣的錢，沒有可以動用的';
+        if (!(p.cashAll > 0)) return '還沒設定自由資金';
+        if (!(p.cash > 0)) return '自由資金扣掉緊急預備金（和要留給定期定額的錢）之後，沒有可以動用的';
         if (planShort(p)) return p.cashShare > 0.5 ? '可動用的錢分給排在前面的之後，剩下的不夠買 1 股' : '可動用的錢已經分給排在前面的了';
         return `可動用的錢分 ${CASH_SLICES} 份，一份不夠買 1 股`;
       case 'cap': return `這一檔已經到比重上限 ${pc(p.cap)}`;
@@ -670,7 +670,7 @@ export function noPlanWhy(a, row) {
  *  cap  這一檔的比重上限還剩多少
  *  cat  同類型合計上限還剩多少（ctx.room.cat；加碼計畫裡排在前面的已經扣掉）
  *  co   單一公司（穿透）上限還剩多少（ctx.room.co：這檔裡每一家公司的比例與剩下的空間）
- *  cash 分到的可動用現金 ctx.cashShare（ctx.cash 已經扣掉緊急預備金、定期定額保留款；一份＝可動用的 1/3，
+ *  cash 分到的可動用現金 ctx.cashShare（ctx.cash 已經扣掉緊急預備金；選了「定期定額從自由資金扣」才再扣保留款；一份＝可動用的 1/3，
  *       排在前面的先拿，所以後面的可能只剩一點或沒有）；總花費含每一批的最低手續費，不會超過分到的錢
  * 之後：觀點中性、信心不到 70 再減半；溢價超過警戒線減半、超過 2 倍先不買。
  * 市場溫度不改股數：拿溫度去打折加碼金額，2020/4～2026/10 的回測沒有變好（pipeline/addsim.py），溫度只用來提醒風險。
@@ -921,7 +921,7 @@ export function simulateAdd(H, sh, px, ctx) {
     if (r.hot) chk(null, '短線漲多：可以買，但建議分批');
   }
   if (newW != null) chk(newW <= cap + 1e-9, `買進後占總資產 ${pctS(newW)}，你的上限 ${pctS(cap, 0)}`);
-  else chk(null, '還沒輸入現金或持股，無法檢查比重與單筆風險');
+  else chk(null, `還沒輸入${ctx.cashName || '現金'}或持股，無法檢查比重與單筆風險`);
   // 同類型合計（例如 0050 和 006208 都是市值型，合起來也不能超過上限）：同一類還有別檔時才另外列
   if (T > 0 && ctx.catMV && cat) {
     const others = (ctx.catMV[cat] || 0) - H.sh * (H.px || px);
@@ -961,20 +961,21 @@ export function simulateAdd(H, sh, px, ctx) {
       chk(risk <= budget + 1e-9, `跌到出場線 ${pxS(stop)} 約虧 ${ntS(risk)} 元，你的單筆上限 ${ntS(budget)} 元（總資產 ${pctS(prof.loss)}）`);
     }
   }
-  // 可動用的錢＝現金扣掉緊急預備金、定期定額接下來要扣的、上次更新現金之後定期定額已經扣的（ctx.reserve 是 core.js 的 deployOf）
+  // 可動用的錢＝現金（真實部位叫自由資金）扣掉緊急預備金；選了「定期定額從自由資金扣」再扣定期定額接下來要扣的（ctx.reserve 是 core.js 的 deployOf）
   const rs = ctx.reserve || null;
   const emg = (rs && rs.emergency) || 0;
   const dcaNext = (rs && rs.dca && rs.dca.total) || 0;
   const dcaDone = (rs && rs.spent && rs.spent.total) || 0;
+  const cn = ctx.cashName || '現金';
   if (cashAll > 0) {
     const usable = isNum(ctx.cash) ? ctx.cash : cashAll;
     const parts = [emg > 0 ? `緊急預備金 ${ntS(emg)} 元` : '', dcaNext > 0 ? `定期定額接下來要扣的 ${ntS(dcaNext)} 元` : '', dcaDone > 0 ? `更新現金之後定期定額已經扣的 ${ntS(dcaDone)} 元` : ''].filter(Boolean);
-    const tail = parts.length ? `（現金 ${ntS(cashAll)} 元，扣掉${parts.join('、')}）` : '';
+    const tail = parts.length ? `（${cn} ${ntS(cashAll)} 元，扣掉${parts.join('、')}）` : '';
     const uses = [emg > 0 ? '緊急預備金' : '', dcaNext > 0 ? '定期定額要扣的錢（扣款失敗不補扣，連續 3 次會被終止）' : '', dcaDone > 0 ? '已經被定期定額扣走的錢' : ''].filter(Boolean);
     if (c.net <= usable + 1e-9) chk(true, `需要 ${ntS(c.net)} 元，可動用 ${ntS(usable)} 元${tail}`);
     else if (c.net <= cashAll + 1e-9) chk(false, `需要 ${ntS(c.net)} 元，超過可動用的 ${ntS(usable)} 元${uses.length ? `：會用到${uses.join('或')}` : ''}`);
-    else chk(false, `需要 ${ntS(c.net)} 元，超過現金 ${ntS(cashAll)} 元`);
-  } else chk(null, '還沒設定可投入現金，無法檢查資金是否足夠');
+    else chk(false, `需要 ${ntS(c.net)} 元，超過${cn} ${ntS(cashAll)} 元`);
+  } else chk(null, `還沒設定${cn === '現金' ? '可投入現金' : cn}，無法檢查資金是否足夠`);
   if (H.sh > 0 && isNum(H.avg) && px < H.avg && r && r.st < 0) chk(false, '偏空時往下買是攤平，不是加碼');
   if (cat === 'lev' || cat === 'inv') chk(null, '槓桿／反向型只適合短線');
   const fails = checks.filter((x) => x.ok === false).length;
@@ -1056,12 +1057,18 @@ export function readBackup(obj) {
       if (l.dca != null) { const x = cleanDca(l.dca); if (x) l.dca = x; else delete l.dca; }
       if (l.snap != null && !(l.snap && typeof l.snap === 'object' && [1, 0, -1].includes(l.snap.st))) delete l.snap;
       if (l.note != null) { if (typeof l.note === 'string') l.note = l.note.slice(0, 200); else delete l.note; }
+      // 「不用自由資金」只會是 false（沒有這個欄位＝用自由資金）
+      if ('free' in l && l.free !== false) delete l.free;
+      if (l.at != null && typeof l.at !== 'string') delete l.at;
+      else if (typeof l.at === 'string') l.at = l.at.slice(0, 40);
     }
   };
   checkLots(obj.pf.lots);
   obj.pf.colors = cleanColors(obj.pf.colors);
   if (obj.pf.cash != null && !okNum(obj.pf.cash)) throw new Error('備份裡的現金格式不正確');
   if (obj.pf.cashD != null && !okDate(obj.pf.cashD)) delete obj.pf.cashD;
+  // 自由資金設定的那一刻（ISO 時間，和交易的 at 比先後）：格式不對就拿掉（當作設定那天的交易都已經算在金額裡）
+  if (obj.pf.cashAt != null && !(typeof obj.pf.cashAt === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(obj.pf.cashAt))) delete obj.pf.cashAt;
   if (obj.paper != null) {
     const p = obj.paper;
     const st = p && p.start;
@@ -1105,6 +1112,8 @@ export function readBackup(obj) {
     if (Array.isArray(p.rules)) out.rules = p.rules.filter((r) => typeof r === 'string' && r.trim()).map((r) => r.trim().slice(0, 60)).slice(0, 20);
     for (const k of ['plans', 'dcaSkip', 'dcaNoAsk']) if (Array.isArray(p[k])) out[k] = p[k].slice(0, 3000);
     if (okNum(p.reserve) && p.reserve >= 0) out.reserve = Math.min(Math.round(p.reserve), 1e10);
+    if (p.dcaFund === 'sep' || p.dcaFund === 'free') out.dcaFund = p.dcaFund;
+    if (typeof p.coreFollow === 'boolean') out.coreFollow = p.coreFollow;
     obj.prefs = out;
   }
   return obj;

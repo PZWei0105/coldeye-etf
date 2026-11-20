@@ -229,7 +229,7 @@ t('加碼計畫：沒有可動用的錢時說清楚是緊急預備金、定期�
   assert.equal(a.key, 'add');                        // 訊號照樣可加碼，只是沒有錢
   assert.ok(pf.planWhy(a.plan).includes('緊急預備金'), pf.planWhy(a.plan));
   const b = pf.allocAdds([{ code: 'A', H: H0(A) }], base0({ cash: 0, cashAll: 0 })).adv.get('A');
-  assert.ok(pf.planWhy(b.plan).includes('還沒設定可投入現金'));
+  assert.ok(pf.planWhy(b.plan).includes('還沒設定自由資金'));
 });
 
 t('加碼計畫：照順序分（可加碼的先），觀點中性的關注 ETF 不會把可加碼的那幾檔稀釋掉', () => {

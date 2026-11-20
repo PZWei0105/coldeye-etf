@@ -134,7 +134,7 @@ async function runOnce({ quiet = false } = {}) {
   return { added, removed: res.del, ask: res.ask, moved: res.moved };
 }
 /**
- * 定期定額記的那一筆被刪掉了（「部位」或核對時刪的）：這一期記在 dcaSkip，之後不再自動補回來。
+ * 定期定額記的那一筆被刪掉了（「兵力」或核對時刪的）：這一期記在 dcaSkip，之後不再自動補回來。
  * skip === false：你說「只是記錯了」→ 不記成「沒扣到」，冷眼會重新用收盤價估一筆。
  */
 export function onDcaLotDel({ lot, skip } = {}) {
@@ -226,7 +226,7 @@ export function dcaActions(chip) {
   return out;
 }
 
-// ------------------------------------------------------------------ 計畫清單（設定頁、「部位」頁）
+// ------------------------------------------------------------------ 計畫清單（設定頁、「兵力」頁）
 function statusOf(p) {
   const mine = realLots().filter((l) => C.isDcaLot(l) && l.dca.plan === p.id);
   const pend = mine.filter((l) => l.dca.est === true).length;
@@ -309,7 +309,7 @@ export function plansHTML() {
     ${noticeHTML()}${ps.length ? planRows(ps) : ''}
     <div class="row-btns"><button type="button" class="btn small" data-dca="add">${ICON.plus}新增定期定額</button>${n ? `<button type="button" class="btn small ghost" data-dca="pend">核對（${n}）</button>` : ''}</div></div>`;
 }
-/** 「部位」頁的定期定額小卡：沒有計畫時是一句邀請，有計畫時列出狀態 */
+/** 「兵力」頁的定期定額小卡：沒有計畫時是一句邀請，有計畫時列出狀態 */
 export function dcaStripHTML() {
   if (isPaper()) return '';
   const ps = sortPlans(settings.plans || []);
@@ -521,7 +521,7 @@ export function openPlanForm(id, after) {
       savePlans((st) => { st.plans = st.plans.filter((p) => p.id !== old.id); });
       if (withEst) updateRealBook((bk) => { bk.lots = bk.lots.filter((l) => !(C.isDcaLot(l) && l.dca.plan === old.id && l.dca.est === true)); });
       if (card.isConnected) closeModal();
-      toast(withEst ? '已刪除定期定額計畫和還沒核對的預估（核對過的留著）' : '已刪除定期定額計畫（已經記的交易留著，要刪請到「部位」）', null);
+      toast(withEst ? '已刪除定期定額計畫和還沒核對的預估（核對過的留著）' : '已刪除定期定額計畫（已經記的交易留著，要刪請到「兵力」）', null);
       bus.emit('book');
       if (after) after();
       runPlans({ quiet: true });

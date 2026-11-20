@@ -1,6 +1,7 @@
 /* 冷眼 — 共用核心：狀態、設定、資料載入、格式、圖示、小元件。 */
 import * as PF from './pf.js';
-import { breadth, normPlan, planSkipKeys, normSkips, normNoAsk, calClosed, dcaReserve, dcaSpent, mergeSplit, pendingSplit, scaleRow, scaleDetail, alertSplit, haltNear } from './calc.js';
+import { breadth, normPlan, planSkipKeys, normSkips, normNoAsk, calClosed, dcaReserve, mergeSplit, pendingSplit, scaleRow, scaleDetail, alertSplit, haltNear } from './calc.js';
+import { freeCash, forceOrders, trimFrom } from './force.js';
 import * as FX from './fx.js';
 
 export { PF };
@@ -43,6 +44,8 @@ export const settings = Object.assign({
   plans: [], dcaSkip: [], dcaNoAsk: [],
   // 加碼計畫：緊急預備金（不能動的錢，不算進可動用的現金；只用在真實部位）
   reserve: 0,
+  // 兵力（force.js）：定期定額的錢從哪裡扣（sep＝另外扣、不算在自由資金；free＝從自由資金扣）、核心（定期定額買的）要不要跟減碼訊號
+  dcaFund: 'sep', coreFollow: false,
 }, savedSettings);
 /** 定期定額計畫最多幾個（國泰改設定時，舊的設定會變成一個「已換設定」的計畫留著，所以留多一點空間） */
 export const PLAN_MAX = 60;
@@ -67,8 +70,10 @@ if (!['real', 'paper'].includes(settings.mode)) settings.mode = 'real';
 if (![1, 2, 3].includes(settings.vol)) settings.vol = 2;
 if (!PF.PROFILES[settings.risk]) settings.risk = 'mid';
 settings.reserve = normReserve(settings.reserve);
+if (!['sep', 'free'].includes(settings.dcaFund)) settings.dcaFund = 'sep';
+settings.coreFollow = settings.coreFollow === true;
 settings.fee = Object.assign({ ...PF.DEFAULT_FEE }, settings.fee || {});
-delete settings.capital;   // 舊版的「投資本金」改由「部位」裡的現金與持股計算
+delete settings.capital;   // 舊版的「投資本金」改由「兵力」裡的自由資金與持股計算
 const DCA_KEYS = ['plans', 'dcaSkip', 'dcaNoAsk'];
 /**
  * 存設定。定期定額的計畫與刪掉的那幾期一律經過 savePlans（先讀最新的、再改、再存）：
@@ -186,7 +191,7 @@ export const S = {
   verOffline: false, summaryNet: false, stockq: null, stockqAt: 0, global: null, alloc: null, spark: null,
   tab: store.get('tab', 'home'), all: { q: '', cat: '*', sig: '*', sort: 'score' }, newsTab: 'official',
   range: 120, rows: new Map(), deferredInstall: null, P: null, adv: new Map(), openCode: null,
-  firstPaint: true, changes: [],
+  firstPaint: true, changes: [], force: null,
 };
 if (!['home', 'pf', 'radar', 'aide', 'news', 'track'].includes(S.tab)) S.tab = 'home';
 
@@ -629,14 +634,17 @@ export function computePF() {
     const P0 = PF.buildPortfolio({ ...book, cash: 0 }, S.rows, quote, S.divs || {}, settings.fee, td);
     book.cash = Math.max(0, Math.round(paperCash(P0) * 100) / 100);
   }
-  const P = PF.buildPortfolio(book, S.rows, quote, S.divs || {}, settings.fee, td);
+  // 真實部位：自由資金＝你設定的金額＋之後記的單筆買賣（定期定額照設定另外扣或從這裡扣，force.js 的 freeCash）
+  const free = isPaper() ? null : freeCash(book, { dcaFree: !dcaSep(), today: td });
+  const P = PF.buildPortfolio(free ? { ...book, cash: Math.max(0, free.now) } : book, S.rows, quote, S.divs || {}, settings.fee, td);
+  P.free = free;
   const codes = P.holdings.map((x) => x.code);
   const colors = PF.assignColors(book, codes);
   if (JSON.stringify(colors) !== JSON.stringify(book.colors || {})) { book.colors = colors; saveBook(); }
   for (const x of P.holdings) x.slot = colors[x.code] ?? null;
   // 真實部位的現金是哪天更新的（cashD）：這個功能之前填的現金，當作今天的數字（之後定期定額自動入帳扣的錢才算得出來）
   if (!isPaper() && book.cash > 0 && !book.cashD) { book.cashD = td; saveBook(); }
-  // 加碼計畫：可動用的錢（現金減掉緊急預備金、定期定額保留款）分給你持有和關注的 ETF，
+  // 加碼計畫：可動用的錢（自由資金減掉緊急預備金；選了「定期定額從自由資金扣」才再減定期定額保留款）分給你持有和關注的 ETF，
   // 同類型、同一家公司（穿透）的空間一起算，不會兩檔各算一次（pf.js 的 allocAdds）
   P.deploy = deployOf(P);
   const base = addBase(P);
@@ -657,25 +665,45 @@ export function computePF() {
   P.left = A.left;
   P.lists = base.lists;
   P.coPending = base.coPending;
+  // 兵力：照你的股數（定期定額＝核心、自己買的＝機動）、自由資金與紀律，算出今天每一檔要加多少、減多少、留多少
+  S.force = forceOf(P, A);
   S.P = P;
   // 單一公司（穿透）要用成分股明細：還沒載入的請 app.js 去抓（xray.js 的 ensureHold），抓到之後重算一次
   const pend = Object.keys(base.lists).filter((c) => base.lists[c] === undefined && S.rows.has(c));
   if (pend.length) bus.emit('needhold', pend);
   return P;
 }
+/** 定期定額的錢另外扣（預設）：不算在自由資金裡，也不用從自由資金先留 */
+export const dcaSep = () => settings.dcaFund !== 'free';
 /**
- * 可動用的錢：現金減掉緊急預備金、定期定額接下來一個月要扣的、上次更新現金之後定期定額已經扣走的
- * （都只算真實部位；模擬倉的現金由交易自動算，全部可以用）
+ * 可動用的錢：自由資金（P.totals.cash，真實部位已經加減過設定之後的單筆買賣）減掉緊急預備金；
+ * 選「定期定額從自由資金扣」的話，再減掉定期定額接下來一個月要扣的（已經扣掉的那幾期在 freeCash 就扣過了）。
+ * 模擬倉的現金由交易自動算，全部可以用。
  */
 export function deployOf(P) {
   const cash = P ? P.totals.cash : 0;
   const none = { total: 0, items: [] };
-  if (isPaper()) return { cash, emergency: 0, dca: none, spent: none, usable: cash };
+  if (isPaper()) return { cash, emergency: 0, dca: none, spent: none, usable: cash, sep: true };
   const emergency = settings.reserve || 0;
-  const td = today();
-  const dca = dcaReserve(settings.plans, book.lots, td, { months: PF.DCA_RESERVE_MONTHS }, S.cal, settings.dcaSkip);
-  const spent = dcaSpent(book.lots, book.cashD, td);
-  return { cash, emergency, dca, spent, usable: Math.max(0, cash - emergency - dca.total - spent.total) };
+  const sep = dcaSep();
+  const dca = sep ? none : dcaReserve(settings.plans, book.lots, today(), { months: PF.DCA_RESERVE_MONTHS }, S.cal, settings.dcaSkip);
+  return { cash, emergency, dca, spent: none, usable: Math.max(0, cash - emergency - dca.total), sep };
+}
+/**
+ * 兵力指令（force.js 的 forceOrders）。減碼「這一輪」從哪天開始要看歷史檔的訊號取樣：
+ * 減碼中的持股還沒有歷史檔的，請 app.js 抓（needhist），抓到之後重算；還沒抓到時當作今天才開始（前幾天賣的先不算）。
+ */
+function forceOf(P, A) {
+  const need = P.holdings.filter((x) => x.row && x.row.ps === 'trim' && !S.hist[x.code] && !(S.histMeta[x.code] && S.histMeta[x.code].status === 404)).map((x) => x.code);
+  if (need.length) bus.emit('needhist', need);
+  const dep = P.deploy || deployOf(P);
+  return forceOrders({
+    holdings: P.holdings, lots: book.lots, splitsOf, adv: (c) => A.adv.get(c) || null, order: A.order, rowOf: (c) => S.rows.get(c) || null,
+    T: P.totals.T, profile: settings.risk, fee: settings.fee, today: today(), coreFollow: !isPaper() && settings.coreFollow === true,
+    cashName: isPaper() ? '模擬倉現金' : '自由資金',
+    free: { now: P.free ? P.free.now : P.totals.cash, reserve: dep.emergency || 0, usable: dep.usable },
+    since: (c) => (S.hist[c] ? trimFrom(S.hist[c].sig) : null),
+  });
 }
 /** 成分股明細（透視的快取 S.hold）：明細／null（確定沒有）／undefined（還沒載入） */
 export function listOf(code) {
@@ -694,7 +722,7 @@ export function addBase(P = S.P) {
   for (const x of (P ? P.holdings : [])) if (x.mv > 0) catMV[x.cat] = (catMV[x.cat] || 0) + x.mv;
   const ex = PF.companyExposure(P ? P.holdings : [], lists);
   return {
-    T, cash: dep.usable, cashAll: dep.cash, reserve: dep, profile: settings.risk, fee: settings.fee, today: today(),
+    T, cash: dep.usable, cashAll: dep.cash, reserve: dep, profile: settings.risk, fee: settings.fee, today: today(), cashName: isPaper() ? '現金' : '自由資金',
     catMV, coAmt: ex.amt, coPending: ex.pending, lists, listOf,
     stats: (code) => { const row = S.rows.get(code); return S.track && S.track.pos && row ? (S.track.pos[row.k] || null) : null; },
   };

@@ -1,10 +1,11 @@
-/* 冷眼 — 單檔詳情：我的部位、冷眼建議、瞄準鏡、試算、交易紀錄，以及完整的規則分析。 */
+/* 冷眼 — 單檔詳情：我的兵力（核心／機動與兵力指令）、冷眼建議、瞄準鏡、試算、交易紀錄，以及完整的規則分析。 */
 import {
   $, $$, esc, clamp, isNum, S, PF, settings, saveSettings, book, alerts, fmt, money, sharesOf, cash3, dirCls, arrow,
   catName, ICON, ST, POS, quote, ensureDetail, ensureTrack, heldOf, adviceFor, ctxFor, holdingInput, stanceChip, posChip,
   actChip, gaugeSVG, animateNeedles, toast, bus, today, premBand, slotVar, isPaper, dayTag, quoteWhen, splitNote,
 } from './core.js';
 import { openTradeForm, openAlertForm, closeModal, modalOpen } from './forms.js';
+import { forceItemOf, forceDetailHTML, maskSh } from './forceview.js';
 import { addToDuel, openDuel, openTM } from './tools.js';
 import { aideDetailHTML, bindAideDetail, openIdea } from './desk.js';
 import { openConfirm, dcaTagsHTML } from './dca.js';
@@ -206,9 +207,10 @@ function myPositionHTML(x) {
     ['占總資產', `<span class="num">${fmt.r(x.w, 1, false)}</span>`, 'risk'],
     [dayTag(x.q && x.q.date), `<span class="num ${dirCls(x.day)}">${money(x.day, true)}</span>`],
   ];
-  return `<section class="panel mine" aria-label="我的部位">
-    <div class="mine-h"><h2>${isPaper() ? '模擬部位' : '我的部位'}</h2><button class="btn small" id="m-add">${ICON.plus}記一筆</button></div>
+  return `<section class="panel mine" aria-label="${isPaper() ? '模擬部位' : '我的兵力'}">
+    <div class="mine-h"><h2>${isPaper() ? '模擬部位' : '我的兵力'}</h2><button class="btn small" id="m-add">${ICON.plus}記一筆</button></div>
     <div class="kv">${cells.map(([k, v, t]) => `<div><div class="k"${t ? ` data-term="${t}"` : ''}>${k}</div><div class="v">${v}</div></div>`).join('')}</div>
+    ${forceDetailHTML(x.code)}
     ${h.warnings.length ? `<div class="note warn">${h.warnings.map(esc).join('<br>')}</div>` : ''}
     ${x.undated ? `<div class="note">${x.undated} 筆交易沒填日期，已領配息只算有日期的部分。</div>` : ''}
   </section>`;
@@ -227,14 +229,30 @@ function maskLine(t) {
     .replace(/(每單位 )?([\d,]+(?:\.\d+)?)\s*元/g, (m, unit) => (unit ? m : '•••• 元'));
 }
 function adviceHTML(row, x, a) {
-  const tone = { add: 'go', hold: 'mute', full: 'mute', none: 'mute', hold_off: 'warn', pause: 'warn', trim: 'warn2', rebalance: 'warn2' }[a.key] || 'mute';
+  let tone = { add: 'go', hold: 'mute', full: 'mute', none: 'mute', hold_off: 'warn', pause: 'warn', trim: 'warn2', rebalance: 'warn2' }[a.key] || 'mute';
+  let label = a.label;
+  // 你持有的：建議照兵力（定期定額買的核心照扣、自己買的機動照訊號；force.js），不用不分核心、機動的通用減碼
+  const fi = x ? forceItemOf(row.c) : null;
+  if (fi && fi.chip) {
+    label = maskSh(fi.chip[0]);
+    tone = { warn2: 'warn2', go: 'go', mute: 'mute', warn: 'warn', core: 'core' }[fi.chip[1]] || 'mute';
+  }
   let plan = '';
-  if (a.plan) plan = planHTML(a);
+  if (a.plan && !(fi && fi.sell)) plan = planHTML(a);
   let sell = '';
-  if (a.sell && a.sell.n > 0) sell = sellHTML(a.sell, x);
+  if (fi && fi.sell) {
+    const why = fi.sell.by === 'over' ? `賣回比重上限 ${Math.round(fi.cap * 100)}% 以內` : `這一輪減碼，先減${fi.trim && fi.trim.f >= 1 ? '全部' : fi.trim && fi.trim.f === 0.5 ? '一半' : '三分之一'}`;
+    const from = fi.sell.core && fi.sell.mob ? `機動 ${fi.sell.mob} 股＋核心 ${fi.sell.core} 股` : fi.sell.core ? '核心（定期定額買的）' : '機動（自己買的）';
+    sell = sellHTML(PF.simulateSell(holdingInput(x), fi.sell.n, x.px, ctxFor(row.c), maskSh(`${why}：${from}`)), x);
+  } else if (!fi && a.sell && a.sell.n > 0) {
+    sell = sellHTML(a.sell, x);
+  } else if (fi && a.sell && a.sell.n > 0) {
+    // 通用的減碼規則會叫你賣，兵力不賣：寫清楚為什麼
+    sell = `<div class="plan core-note"><div class="plan-h">${esc(maskSh(fi.say))}</div><div class="plan-sub">${fi.trim && fi.trim.target > 0 ? `這一輪減碼（${fmt.d(fi.trim.from)} 起）已經賣過 ${sharesOf(fi.trim.sold)}，夠了。` : `不分你怎麼買的通用規則會減 ${sharesOf(a.sell.n)}；兵力把定期定額買的核心分開，核心不跟減碼訊號賣${settings.coreFollow ? '' : '（設定、兵力分頁可以改）'}。`}</div></div>`;
+  }
   const lines = a.lines.map((l) => `<li class="ln ${l.kind}"><span class="ic">${KIND_ICON[l.kind] || ICON.dot}</span><span>${esc(maskLine(l.text))}</span>${l.kind === 'stat' && a.ev ? evidenceBars(a.ev) : ''}</li>`).join('');
   return `<section class="panel advice hud tone-${tone}${tone === 'warn2' ? ' hazard' : ''}" aria-label="冷眼建議">
-    <div class="adv-top"><div class="adv-h"><span class="adv-k">冷眼建議</span><span class="adv-label">${esc(a.label)}</span><span class="adv-by">${a.held ? '規則訊號 × 你的紀律' : '如果要買：規則訊號 × 你的紀律'}</span></div></div>
+    <div class="adv-top"><div class="adv-h"><span class="adv-k">冷眼建議</span><span class="adv-label">${esc(label)}</span><span class="adv-by">${a.held ? (fi ? '規則訊號 × 你的紀律 × 你的兵力' : '規則訊號 × 你的紀律') : '如果要買：規則訊號 × 你的紀律'}</span></div></div>
     ${sell}${plan}
     <ul class="lines">${lines}</ul>
     <p class="adv-foot" data-term="risk">${esc(PF.PROFILES[settings.risk].name)}型紀律：單筆最多虧總資產 ${(PF.PROFILES[settings.risk].loss * 100).toFixed(1)}%、${esc(catName(row.k))}單檔上限 ${(PF.capOf(settings.risk, row.k) * 100).toFixed(0)}%。可在設定調整。</p>
@@ -251,7 +269,7 @@ function planHTML(a) {
   const p = a.plan;
   const row = S.rows.get(S.openCode);
   const T = ctxFor(S.openCode).T;
-  if (!(T > 0)) return '<div class="plan empty-plan">在「部位」輸入可投入現金或持股後，這裡會算出建議買多少。</div>';
+  if (!(T > 0)) return '<div class="plan empty-plan">在「兵力」輸入自由資金或持股後，這裡會算出建議買多少。</div>';
   // 這一檔在不在加碼計畫裡（你持有的＋關注的）：不在的話，是用計畫分完之後剩下的錢與空間算「如果另外買這檔」
   const inPlan = !!(S.alloc && S.alloc.adv.has(S.openCode));
   const note = inPlan ? '' : '<div class="plan-sub">這檔不在加碼計畫裡（不是持有或關注的）：這是「如果另外加買這檔」，用加碼計畫分完之後剩下的可動用的錢（最多一份）、扣掉計畫已經用掉的同類型與單一公司空間來算。</div>';

@@ -1,10 +1,11 @@
-/* 冷眼 — 表單：記一筆交易、可投入現金、到價提醒、備份與匯入。 */
+/* 冷眼 — 表單：記一筆交易、自由資金（存入／提出／改成）、到價提醒、備份與匯入。 */
 import {
   $, $$, esc, isNum, S, PF, settings, saveSettings, book, saveBook, alerts, saveAlerts, newId, fmt, money,
   catName, toast, buzz, bus, ICON, quote, today, store, isPaper, replaceBook, otherBook, setBooks, twParts, journal, saveJournal,
   savePlans, normReserve,
 } from './core.js';
 import { TAGS as WHY_TAGS, EMO_TAGS, sanitizeJournal } from './aide.js';
+import { freeCash, dcaMonthly } from './force.js';
 import * as FX from './fx.js';
 
 // ------------------------------------------------------------------ 模擬倉的成交規則
@@ -102,6 +103,8 @@ export function openTradeForm(o = {}) {
     feeTouched: !!(lot && (lot.feeManual || lot.dca)),
     taxTouched: !!(lot && lot.taxManual),
     note: lot ? lot.note || '' : '',
+    // 真實部位、自己買賣的：用自由資金（買進從自由資金扣、賣出加回）；你勾掉的存成 free: false
+    useFree: !(lot && lot.free === false),
   };
   if (f.code && f.px == null) {
     const row = S.rows.get(f.code);
@@ -128,6 +131,7 @@ export function openTradeForm(o = {}) {
         <label class="field" id="f-taxw"><span>證交稅<small id="f-taxh"></small></span><input class="input num" id="f-tax" inputmode="numeric"></label>
       </div>
       <label class="field"><span>筆記（選填）</span><input class="input" id="f-note" maxlength="80" value="${esc(f.note)}" placeholder="例如：拉回月線分批、除息前不追"></label>
+      ${!paper && !dcaLot ? `<label class="check f-free"><input type="checkbox" id="f-free" ${f.useFree ? 'checked' : ''}><span>用自由資金<small id="f-freeh"></small></span></label>` : ''}
       ${!lot && settings.autoJ !== false ? `<div class="field" id="f-whyw"><span class="lab">理由（選填）<small>副官會把今天的交易記進決策日記，20 個交易日後對答案</small></span><div class="tag-pick small">${Object.entries(WHY_TAGS).map(([k, t]) => `<button type="button" class="tg${EMO_TAGS.includes(k) ? ' emo' : ''}" data-why="${k}" aria-pressed="false">${esc(t)}</button>`).join('')}</div></div>` : ''}
       <div class="f-sum" id="f-sum" aria-live="polite"></div>
       <div class="f-err" id="f-err" role="alert"></div>
@@ -218,6 +222,7 @@ export function openTradeForm(o = {}) {
     if (auto && !f.taxTouched) taxEl.value = f.side === 'sell' ? auto.tax : 0;
     const fee = toInt(feeEl.value) || 0;
     const tax = f.side === 'sell' ? (toInt(taxEl.value) || 0) : 0;
+    freeHint(d);
     const sum = $('#f-sum', card);
     if (sh > 0 && px > 0) {
       const amt = sh * px;
@@ -226,6 +231,13 @@ export function openTradeForm(o = {}) {
     } else {
       sum.innerHTML = '<span class="muted">輸入數量與成交價</span>';
     }
+  }
+  /** 「用自由資金」旁邊的說明：買進扣、賣出加回；設定自由資金那天以前的交易不加減（已經算在金額裡） */
+  function freeHint(d) {
+    const h = $('#f-freeh', card);
+    if (!h) return;
+    const before = f.undated || !book.cashD || d < book.cashD;
+    h.textContent = before ? '（這筆在設定自由資金之前，已經算在金額裡，不會再加減）' : f.side === 'sell' ? '（賣出拿回的錢加回自由資金）' : '（從自由資金扣；不是用自由資金買的就取消勾選）';
   }
   $$('[data-side]', card).forEach((b) => b.addEventListener('click', () => {
     f.side = b.dataset.side;
@@ -325,6 +337,7 @@ export function openTradeForm(o = {}) {
       feeManual: !paper && f.feeTouched, taxManual: !paper && f.taxTouched,
       note: $('#f-note', card).value.trim().slice(0, 80), at: lot ? lot.at : new Date().toISOString(),
       snap: lot ? lot.snap : null,
+      ...(!paper && !dcaLot && $('#f-free', card) && !$('#f-free', card).checked ? { free: false } : {}),
       ...(paper ? { qat: S.live ? S.live.at : null } : {}),
       // 定期定額記的：保留是哪個計畫的哪一期；在這裡真的改了股數、價格、手續費或日期，才算核對過
       ...(lot && lot.dca && typeof lot.dca === 'object' ? { dca: { ...lot.dca, est: lot.dca.est === true && Math.round(sh) === lot.sh && +px === lot.px && (isNum(fee) ? fee : 0) === (lot.fee || 0) && d === (lot.d || null) } } : {}),
@@ -386,34 +399,81 @@ function openPaperLot(lot) {
 }
 
 // ------------------------------------------------------------------ 可投入現金
-export function openCashForm() {
+/**
+ * 自由資金（真實部位）：準備拿來單筆加碼、還沒買的錢。可以存入、提出、直接改成某個金額；
+ * 存的時候記下這一刻（cashD、cashAt），之後在冷眼記的單筆買賣會自動加減在它上面（force.js 的 freeCash），所以「現在」＝設定的金額＋之後的買賣。
+ * 也在這裡改緊急預備金、定期定額的錢從哪裡扣（settings.dcaFund：sep 另外扣、free 從自由資金扣）。mode：'in'｜'out'｜'set'
+ */
+export function openCashForm(mode0) {
   if (isPaper()) { openPaperStart(); return; }
+  const td = today();
+  let df = settings.dcaFund === 'free' ? 'free' : 'sep';
+  const nowOf = () => Math.round(freeCash(book, { dcaFree: df === 'free', today: td }).now);
+  let mode = ['in', 'out', 'set'].includes(mode0) ? mode0 : nowOf() > 0 ? 'in' : 'set';
+  const monthly = dcaMonthly(settings.plans, td);
   const card = openModal(`<form class="form" id="cf" novalidate>
-      <h2 class="m-title">可投入的現金</h2>
-      <p class="m-desc">準備拿來買 ETF、但還沒買的錢。冷眼用「持股市值＋這筆現金」當作你的總資產，計算比重上限與每次最多買多少。只存在這支手機。</p>
-      <label class="field"><span>金額（元）</span><input class="input num big" id="c-amt" inputmode="numeric" value="${book.cash || ''}" placeholder="0"></label>
-      <div class="quick">${[50000, 100000, 300000, 500000].map((v) => `<button type="button" class="pill" data-q="${v}">${v / 10000} 萬</button>`).join('')}</div>
+      <h2 class="m-title">自由資金</h2>
+      <p class="m-desc">準備拿來單筆加碼、還沒買的錢。冷眼用「持股市值＋自由資金」當總資產，算比重上限和每次最多買多少。只存在這支手機。</p>
+      <div class="cf-now"><span>現在</span><b class="num" id="c-now"></b><span>元</span></div>
+      <div class="seg wide" role="radiogroup" aria-label="怎麼改">
+        <button type="button" data-cm="in">存入</button><button type="button" data-cm="out">提出</button><button type="button" data-cm="set">直接改成</button>
+      </div>
+      <label class="field"><span id="c-lab">金額（元）</span><input class="input num big" id="c-amt" inputmode="numeric" placeholder="0"></label>
+      <div class="quick">${[10000, 50000, 100000, 500000].map((v) => `<button type="button" class="pill" data-q="${v}">${v / 10000} 萬</button>`).join('')}</div>
+      <p class="cf-prev" id="c-prev" aria-live="polite"></p>
       <label class="field"><span>其中的緊急預備金（元，不拿去加碼）</span><input class="input num" id="c-res" inputmode="numeric" value="${settings.reserve || ''}" placeholder="0"></label>
-      <p class="m-desc small">加碼計畫會先扣掉緊急預備金、再扣掉定期定額接下來一個月要扣的錢，剩下的才分給可以加碼的 ETF。定期定額扣款、買賣之後，記得回來更新這個金額。</p>
+      <div class="field"><span class="lab">定期定額的錢${monthly ? `<small>（每月 ${fmt.n(monthly)} 元）</small>` : ''}</span>
+        <div class="seg wide" role="radiogroup" aria-label="定期定額的錢從哪裡扣"><button type="button" data-df="sep">另外扣，不算在這裡</button><button type="button" data-df="free">從自由資金扣</button></div>
+      </div>
+      <p class="m-desc small" id="c-note"></p>
+      <div class="f-err" id="c-err" role="alert"></div>
       <div class="m-actions"><button type="button" class="btn ghost" data-close>取消</button><button type="submit" class="btn primary">儲存</button></div>
-    </form>`, { label: '可投入的現金' });
+    </form>`, { label: '自由資金' });
   const amt = $('#c-amt', card);
-  $$('[data-q]', card).forEach((b) => b.addEventListener('click', () => { amt.value = b.dataset.q; amt.focus(); }));
+  const err = $('#c-err', card);
+  function draw() {
+    const now = nowOf();
+    $('#c-now', card).textContent = fmt.n(now);
+    $$('[data-cm]', card).forEach((b) => b.setAttribute('aria-pressed', b.dataset.cm === mode));
+    $$('[data-df]', card).forEach((b) => b.setAttribute('aria-pressed', b.dataset.df === df));
+    $('#c-lab', card).textContent = { in: '存入多少（元）', out: '提出多少（元）', set: '改成多少（元）' }[mode];
+    const v = amt.value.trim() === '' ? null : toInt(amt.value);
+    const next = v == null || !(v >= 0) ? null : mode === 'in' ? now + v : mode === 'out' ? now - v : v;
+    $('#c-prev', card).innerHTML = next == null ? '' : next < 0 ? `<span class="bad">提出的比現在的自由資金多</span>` : `儲存之後自由資金 <b class="num">${fmt.n(next)}</b> 元`;
+    $('#c-note', card).textContent = `之後在冷眼記的單筆買進，會自動從自由資金扣、賣出自動加回（記一筆時可以取消勾選）。${df === 'sep' ? '定期定額另外扣，不會動到這裡。' : '定期定額每扣一期也從這裡扣，扣款日前一個月的錢先留著、不拿去加碼。'}`;
+    err.textContent = '';
+  }
+  $$('[data-cm]', card).forEach((b) => b.addEventListener('click', () => { mode = b.dataset.cm; draw(); amt.focus(); }));
+  $$('[data-df]', card).forEach((b) => b.addEventListener('click', () => { df = b.dataset.df; draw(); }));
+  $$('[data-q]', card).forEach((b) => b.addEventListener('click', () => { amt.value = b.dataset.q; draw(); amt.focus(); }));
+  amt.addEventListener('input', draw);
+  draw();
   $('#cf', card).addEventListener('submit', (e) => {
     e.preventDefault();
-    const v = toInt(amt.value);
-    if (!(v >= 0)) { amt.focus(); return; }
     const res = $('#c-res', card);
     const rv = res.value.trim() === '' ? 0 : toInt(res.value);
     if (!(rv >= 0)) { res.focus(); return; }
-    book.cash = Math.round(v);
-    book.cashD = today();   // 現金是今天更新的：之前定期定額扣的錢已經算在這個數字裡
-    saveBook();
+    const raw = amt.value.trim();
+    const v = raw === '' ? null : toInt(raw);
+    if (raw !== '' && !(v >= 0)) { err.textContent = '金額請填數字'; amt.focus(); return; }
+    // 先換定期定額的扣法（會改變「現在」的算法），再算新的金額
+    settings.dcaFund = df;
     settings.reserve = normReserve(rv);
     saveSettings();
+    let msg = '已更新緊急預備金與定期定額的扣法';
+    if (v != null && (v > 0 || mode === 'set')) {
+      const now = nowOf();
+      if (mode === 'out' && v > Math.max(0, now)) { err.textContent = `提出的比現在的自由資金（${fmt.n(now)} 元）多`; return; }
+      const next = Math.max(0, Math.round(mode === 'in' ? now + v : mode === 'out' ? now - v : v));
+      book.cash = next;
+      book.cashD = td;                              // 這一刻之前的買賣都已經算在這個金額裡
+      book.cashAt = new Date().toISOString();       // 同一天之後記的交易，看記下的時間有沒有比這一刻晚
+      saveBook();
+      msg = mode === 'in' ? `已存入 ${fmt.n(v)} 元，自由資金 ${fmt.n(next)} 元` : mode === 'out' ? `已提出 ${fmt.n(v)} 元，自由資金 ${fmt.n(next)} 元` : `自由資金改成 ${fmt.n(next)} 元`;
+    }
     closeModal();
     buzz();
-    toast('現金已更新');
+    toast(settings.privacy ? '自由資金已更新' : msg);
     bus.emit('book');
   });
 }
@@ -517,16 +577,16 @@ const toB64 = (s) => { const bytes = new TextEncoder().encode(s); let bin = ''; 
 const fromB64 = (b) => new TextDecoder().decode(Uint8Array.from(atob(b), (c) => c.charCodeAt(0)));
 
 function backupObject() {
-  const cur = { cash: book.cash, lots: book.lots, colors: book.colors, ...(book.cashD ? { cashD: book.cashD } : {}), ...(book.start ? { start: book.start } : {}) };
+  const cur = { cash: book.cash, lots: book.lots, colors: book.colors, ...(book.cashD ? { cashD: book.cashD } : {}), ...(book.cashAt ? { cashAt: book.cashAt } : {}), ...(book.start ? { start: book.start } : {}) };
   const other = otherBook();
   const real = isPaper() ? (other || { cash: 0, lots: [], colors: {} }) : cur;
   const paper = isPaper() ? cur : other;
   return PF.makeBackup({
-    pf: { cash: real.cash || 0, lots: real.lots || [], colors: real.colors || {}, ...(real.cashD ? { cashD: real.cashD } : {}) },
+    pf: { cash: real.cash || 0, lots: real.lots || [], colors: real.colors || {}, ...(real.cashD ? { cashD: real.cashD } : {}), ...(real.cashAt ? { cashAt: real.cashAt } : {}) },
     ...(paper && paper.start ? { paper } : {}),
     alerts,
     journal: journal.items,
-    prefs: { watch: settings.watch, risk: settings.risk, fee: settings.fee, name: settings.name, rules: settings.rules, reserve: settings.reserve || 0, plans: settings.plans, dcaSkip: settings.dcaSkip, dcaNoAsk: settings.dcaNoAsk },
+    prefs: { watch: settings.watch, risk: settings.risk, fee: settings.fee, name: settings.name, rules: settings.rules, reserve: settings.reserve || 0, dcaFund: settings.dcaFund, coreFollow: settings.coreFollow === true, plans: settings.plans, dcaSkip: settings.dcaSkip, dcaNoAsk: settings.dcaNoAsk },
   });
 }
 export function openBackup() {
@@ -599,15 +659,15 @@ export function openBackup() {
       go.textContent = `確定還原？真實部位：備份 ${obj.pf.lots.length} 筆取代目前 ${nReal} 筆${paperOk(obj) ? `；模擬倉：備份 ${obj.paper.lots.length} 筆取代目前 ${nPaper} 筆` : obj.paper ? '；模擬倉有備份之後的新交易，維持現狀' : '（模擬倉不變）'}${planTxt}${jn ? `；決策日記補回 ${jn} 筆（不會刪掉現有的）` : ''}`;
       return;
     }
-    // 現金是哪天更新的（readBackup 檢查過）：沒有就當作今天（之後定期定額自動入帳扣的錢才算得出來）
-    const real = { cash: obj.pf.cash || 0, lots: obj.pf.lots, colors: obj.pf.colors || {}, cashD: obj.pf.cashD || today() };
+    // 自由資金是哪天、哪一刻設定的（readBackup 檢查過）：之後記的單筆買賣會加減在它上面。沒有就當作現在（之前的交易都已經算在金額裡）
+    const real = { cash: obj.pf.cash || 0, lots: obj.pf.lots, colors: obj.pf.colors || {}, cashD: obj.pf.cashD || today(), ...(obj.pf.cashAt ? { cashAt: obj.pf.cashAt } : obj.pf.cashD ? {} : { cashAt: new Date().toISOString() }) };
     const withPaper = paperOk(obj);
     setBooks(withPaper ? { real, paper: obj.paper } : { real });
     alerts.splice(0, alerts.length, ...(obj.alerts || []));
     saveAlerts();
     if (obj.prefs) {
       // readBackup 已經逐欄檢查過（代號、稱呼、紀律、風險屬性、手續費）
-      for (const k of ['watch', 'risk', 'fee', 'name', 'rules', 'reserve']) if (obj.prefs[k] != null) settings[k] = obj.prefs[k];
+      for (const k of ['watch', 'risk', 'fee', 'name', 'rules', 'reserve', 'dcaFund', 'coreFollow']) if (obj.prefs[k] != null) settings[k] = obj.prefs[k];
       saveSettings();
       // 定期定額計畫換成備份裡的（逐欄檢查、舊版轉新版，同一個 id 只留一個）；刪掉的那幾期、說過「不是同一筆」的合併（只會更少重複）
       const pr = obj.prefs;

@@ -1,4 +1,4 @@
-/* 冷眼 — 投入總覽（部位分頁，「我的部位」下面）：你投入了多少（對照國泰 App 的「總成本」）、市值、
+/* 冷眼 — 投入總覽（兵力分頁）：你投入了多少（對照國泰 App 的「總成本」）、市值、
    現在全部賣掉扣掉手續費與證交稅之後實拿多少、損益；和國泰 App 的數字怎麼對（打進國泰的總成本，冷眼幫你找差在哪）。
    計算都是 calc.js 的純函式（investView、costGap）；定期定額卡的每一檔、每個月扣款在 dca.js（同一個 investView）。 */
 import { $, $$, esc, isNum, S, settings, fmt, money, dirCls, book, today, splitsOf, reduceMotion, isPaper, quoteWhen } from './core.js';
@@ -113,7 +113,7 @@ export function bindInvest(v) {
     } else {
       html = `<p class="iv-off">冷眼記的比國泰<b>少 <span class="num">${money(-g.diff)}</span> 元</b>。可能的原因：</p><ul>
           <li>有幾期定期定額沒記到：例如計畫的「從哪一天開始記」比你第一次扣款晚。到下面「定期定額」點那個計畫，把開始日期往前改，冷眼會補記。</li>
-          <li>有自己買的沒記到：在「部位」按「記一筆」補上。</li>
+          <li>有自己買的沒記到：在「兵力」按「記一筆」補上。</li>
           ${est}
         </ul>`;
     }

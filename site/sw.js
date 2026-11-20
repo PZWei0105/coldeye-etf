@@ -8,7 +8,7 @@
 const BUILD = '__BUILD__';
 const SHELL = `coldeye-shell-${BUILD}`;
 const DATA = 'coldeye-data';
-const SHELL_FILES = ['./', 'index.html', 'styles.css', 'app.js', 'core.js', 'pf.js', 'calc.js', 'viz.js', 'learn.js', 'tools.js', 'sheet.js', 'forms.js', 'aide.js', 'desk.js', 'fx.js', 'dca.js', 'updates.js', 'lessons.js', 'cases.js', 'coach.js', 'xray.js', 'plan.js', 'pulse.js', 'invest.js', 'hud.js', 'storm.js', 'eye.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
+const SHELL_FILES = ['./', 'index.html', 'styles.css', 'app.js', 'core.js', 'pf.js', 'calc.js', 'force.js', 'forceview.js', 'viz.js', 'learn.js', 'tools.js', 'sheet.js', 'forms.js', 'aide.js', 'desk.js', 'fx.js', 'dca.js', 'updates.js', 'lessons.js', 'cases.js', 'coach.js', 'xray.js', 'plan.js', 'pulse.js', 'invest.js', 'hud.js', 'storm.js', 'eye.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 const ACK_MS = 4000;
 
 self.addEventListener('install', (e) => {

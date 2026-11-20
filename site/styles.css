@@ -2471,3 +2471,124 @@ body.nofx .st-hero .st-rain { opacity: .3; }
 }
 @keyframes btLogOut { to { opacity: 0; visibility: hidden; } }
 @media (orientation: landscape) and (max-height: 560px) and (prefers-reduced-motion: reduce) { .boot.go .bt-log { display: none; } }
+
+/* ---------------------------------------------------------------- 兵力（forceview.js，2026/11/20）：今日指令、自由資金、核心／機動
+   極光紫＝你自己（核心、自由資金、你的指令）；冰川藍＝買；琥珀＝要賣。顏色的意思和全站一樣，不用紅綠表示買賣。 */
+.chip.act.self { color: var(--aurora); background: var(--aurora-wash); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--aurora) 55%, transparent); }
+.advice.tone-core { --tone: var(--aurora); --tone-text: var(--aurora); }
+.plan.core-note { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--aurora) 45%, var(--seam)); }
+
+/* 今日指令：四個角是極光紫的刻度（冷眼建議那張的鎖定框角留給單檔頁） */
+.fz-cmd { padding: 14px 16px 12px; display: grid; gap: 10px; --tone: var(--aurora); background: color-mix(in srgb, var(--tone) 52%, transparent); }
+.fz-cmd.tone-warn { --tone: var(--amber); }
+.fz-cmd.tone-go { --tone: var(--glacier); }
+.fz-cmd::after {
+  opacity: .9;
+  background:
+    linear-gradient(var(--tone), var(--tone)) top right / 16px 2px no-repeat,
+    linear-gradient(var(--tone), var(--tone)) top right / 2px 16px no-repeat,
+    linear-gradient(var(--tone), var(--tone)) bottom left / 16px 2px no-repeat,
+    linear-gradient(var(--tone), var(--tone)) bottom left / 2px 16px no-repeat;
+}
+.fz-cmd-h { display: grid; gap: 4px; }
+.fz-k { font-size: 11.5px; letter-spacing: .14em; color: var(--frost-3); }
+.fz-head { margin: 0; font: 900 18px/1.5 var(--f-serif); color: var(--frost); letter-spacing: .02em; }
+.fz-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.fz-o {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) 14px; gap: 10px; align-items: center; width: 100%;
+  padding: 10px 12px; border: 0; background: var(--hull-2); color: inherit; text-align: left;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+div.fz-o { grid-template-columns: auto minmax(0, 1fr); }
+button.fz-o:hover { background: var(--hull-3); }
+.fz-o > svg { width: 14px; height: 14px; color: var(--frost-3); }
+.fz-tag { font: 900 13px/1 var(--f-serif); padding: 7px 7px 6px; min-width: 2.7em; text-align: center; letter-spacing: .04em; clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px); }
+.fz-tag.sell { color: var(--amber-ink); background: var(--amber); }
+.fz-tag.buy { color: var(--glacier-ink); background: var(--glacier); }
+.fz-tag.self { color: var(--aurora-ink); background: var(--aurora); }
+.fz-tag.free { color: var(--aurora); background: var(--aurora-wash); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--aurora) 50%, transparent); }
+.fz-b { display: grid; gap: 2px; min-width: 0; }
+.fz-t { display: flex; align-items: baseline; gap: 4px 8px; flex-wrap: wrap; }
+.fz-t b { font: 700 15px/1.35 var(--f-serif); }
+.fz-n { font: 600 16px/1.2 var(--f-num); color: var(--frost); white-space: nowrap; }
+.fz-o.sell .fz-n { color: var(--amber); }
+.fz-o.buy .fz-n { color: var(--glacier); }
+.fz-b small { font-size: 12px; color: var(--frost-3); line-height: 1.55; }
+.fz-foot { margin: 0; font-size: 12px; color: var(--frost-3); line-height: 1.6; }
+
+/* 自由資金 */
+.fz-free { padding: 14px 16px; display: grid; gap: 10px; }
+.fz-free-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px 14px; flex-wrap: wrap; }
+.fz-free-v b { font: 600 28px/1.1 var(--f-num); color: var(--aurora); }
+.fz-free-v b.bad { color: var(--amber); }
+.fz-free-v small { margin-left: 6px; font-size: 12.5px; color: var(--frost-3); }
+.fz-free-btns { display: flex; gap: 6px; }
+.fz-free-btns svg { width: 13px; height: 13px; }
+.fz-eq { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; color: var(--frost-2); }
+.fz-eq b { color: var(--frost); font-weight: 600; }
+.fz-eq small { color: var(--frost-3); font-size: 11.5px; margin-left: 2px; }
+.fz-eq .link { font-size: 13px; font-weight: 600; color: var(--frost-2); text-decoration: underline dotted color-mix(in srgb, var(--frost-2) 60%, transparent); text-underline-offset: 3px; }
+.fz-eq .fz-use { color: var(--aurora); font-weight: 700; }
+.fz-eq .fz-use b { color: var(--aurora); font-size: 17px; }
+.fz-note { margin: 0; font-size: 12.5px; color: var(--frost-3); line-height: 1.65; }
+.fz-led summary, .fz-bt summary { cursor: pointer; font-size: 13px; color: var(--glacier); font-weight: 700; list-style: none; }
+.fz-led summary::-webkit-details-marker, .fz-bt summary::-webkit-details-marker { display: none; }
+.fz-led summary::before, .fz-bt summary::before { content: "＋"; margin-right: 6px; }
+.fz-led[open] summary::before, .fz-bt[open] summary::before { content: "－"; }
+.fz-led ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; border-top: 1px dashed var(--seam-2); }
+.fz-led li { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; padding: 6px 2px; border-bottom: 1px dashed var(--seam-2); font-size: 12.5px; color: var(--frost-2); }
+.fz-led li .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fz-led li b { font-weight: 600; color: var(--frost); }
+.fz-led li b.in { color: var(--aurora); }
+
+/* 每一檔（兵力配置的一列）：核心／機動的比例條、股數、建議持有與上限、指令、等什麼 */
+.fz-row { display: grid; gap: 5px; padding-top: 8px; margin-top: 2px; border-top: 1px dashed var(--seam-2); }
+.fz-split { display: flex; gap: 2px; height: 6px; }
+.fz-split i { min-width: 0; }
+.fz-split i.c { background: var(--aurora); }
+.fz-split i.m { background: var(--glacier); }
+.fz-sm { display: flex; flex-wrap: wrap; gap: 3px 12px; font-size: 12.5px; color: var(--frost-3); align-items: baseline; }
+.fz-sm b { color: var(--frost); font-weight: 600; }
+.fz-sm small { color: var(--frost-3); font-size: 12px; margin-left: 2px; }
+.fz-sm i { display: inline-block; width: 8px; height: 8px; margin-right: 5px; }
+.fz-sm i.c { background: var(--aurora); }
+.fz-sm i.m { background: var(--glacier); }
+.fz-keep { margin-left: auto; }
+.fz-say { font-size: 13.5px; line-height: 1.5; color: var(--frost); font-weight: 600; }
+.fz-wait { font-size: 12px; color: var(--frost-3); line-height: 1.55; }
+body.dm-deep .fz-row { gap: 3px; padding-top: 6px; }
+
+/* 核心要不要跟減碼訊號（開關＋你的每一檔的回測） */
+.fz-core { display: grid; }
+.fz-core.on { background: color-mix(in srgb, var(--aurora) 45%, transparent); }
+.fz-core .switch[aria-checked="true"] { background: var(--aurora); }
+.fz-bt { padding: 0 16px 14px; }
+.fz-bt-body { display: grid; gap: 10px; margin-top: 10px; }
+.fz-bt-sum { margin: 0; font-size: 13.5px; color: var(--frost); line-height: 1.65; }
+.fz-bt-row { display: grid; gap: 6px; padding: 10px 12px; background: var(--hull-2); clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px); }
+.fz-bt-h { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; }
+.fz-bt-h b { font: 700 15px/1.3 var(--f-serif); }
+.fz-bt-h small { color: var(--frost-3); font-size: 12px; }
+.fz-bt-g { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 2px 12px; align-items: baseline; font-size: 13px; color: var(--frost-2); }
+.fz-bt-g b { font: 600 16px var(--f-num); color: var(--frost); text-align: right; }
+.fz-bt-g b.up { color: var(--up); }
+.fz-bt-g b.down { color: var(--down); }
+.fz-bt-g small { color: var(--frost-3); font-size: 12px; text-align: right; white-space: nowrap; }
+.fz-bt-row p { margin: 0; font-size: 12.5px; color: var(--frost-3); line-height: 1.6; }
+.fz-bt-n, .fz-bt-wait { margin: 0; font-size: 12px; color: var(--frost-3); line-height: 1.7; }
+
+/* 單檔頁「我的兵力」 */
+.fz-mine { display: grid; gap: 6px; padding: 10px 16px 14px; border-top: 1px solid var(--seam); }
+.fz-mine-h { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fz-mine-h b { font-size: 14px; line-height: 1.5; }
+.fz-why { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 12.5px; color: var(--frost-2); line-height: 1.6; }
+.fz-why li { padding-left: 1em; text-indent: -1em; }
+.fz-why li::before { content: "・"; color: var(--frost-3); }
+.fz-mine .fz-wait { margin: 0; }
+
+/* 自由資金表單 */
+.cf-now { display: flex; align-items: baseline; gap: 8px; font-size: 13px; color: var(--frost-3); }
+.cf-now b { font: 600 24px var(--f-num); color: var(--aurora); }
+.cf-prev { margin: -4px 0 0; font-size: 13px; color: var(--frost-2); min-height: 1.3em; }
+.cf-prev b { color: var(--aurora); }
+.cf-prev .bad { color: var(--amber); }
