@@ -28,7 +28,7 @@ const ptS = (x, d = 2) => (isNum(x) ? `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math
 const hm = (iso) => { const m = /T(\d{2}):(\d{2})/.exec(String(iso || '')); return m ? `${m[1]}:${m[2]}` : ''; };
 // 後台 global.json 的日期一律先轉成整數再寫（不把字串原樣放進畫面）
 const day8 = (d) => { const n = +d; return Number.isInteger(n) && n >= 19000101 && n <= 21001231 ? n : null; };
-const ymS = (d) => { const n = day8(d); return n ? `${Math.floor(n / 10000)}/${Math.floor(n / 100) % 100}` : '—'; };
+const ymZ = (d) => { const n = day8(d); return n ? `${Math.floor(n / 10000)} 年 ${Math.floor(n / 100) % 100} 月` : '—'; };
 const dyS = (d) => { const n = day8(d); return n ? fmt.dy(n) : '—'; };
 /** 加碼金額：隱藏金額時改寫成占總資產幾 % */
 const amtOf = (x, T) => (settings.privacy ? (T > 0 ? `總資產 ${(x / T * 100).toFixed(1)}%` : '••••') : `≈ ${compact(x)}`);
@@ -45,13 +45,6 @@ function simCmp(r) {
     tmp: tp == null ? null : Math.abs(tp - 1) < 0.02 ? '幾乎一樣' : tp > 1 ? '多' : '少',
     tradeoff: dd >= 0.02 && fin < 0.9,
   };
-}
-/** 加碼計畫卡上的一句 */
-function simShort(r) {
-  const c = simCmp(r);
-  const keep = settings.dcaFund === 'free' ? '定期定額要扣的錢先留著、不拿來算加碼，加碼計畫管的是額外的錢。' : '定期定額另外扣，加碼計畫只管自由資金。';
-  if (c.tradeoff) return `這段期間大多是多頭：錢放著沒買就少賺，冷眼換到的是比較小的跌幅。所以${keep}`;
-  return `冷眼的最大跌幅${c.dd === '差不多' ? '和定期定額差不多' : c.dd}，期末${c.fin === '差不多' ? '和定期定額差不多' : `比定期定額${c.fin}`}。${keep}`;
 }
 
 // ------------------------------------------------------------------ 市場溫度的小徽章
@@ -149,13 +142,6 @@ export function planCardHTML(P) {
   const t = S.global && S.global.temp;
   const tempLine = t ? `<button class="ap-temp" id="ap-temp">${tempBadgeHTML(t)}<span><b>市場溫度：${esc(t.level)}</b>${t.flags.length ? `（${esc(t.flags.map((f) => f.t).join('、'))}）` : '（沒有警訊）'}${t.notes && t.notes.length ? `；${esc(t.notes.map((z) => z.t).join('、'))}` : ''}。只提醒風險、不改股數</span>${ICON.chev}</button>`
     : '<button class="ap-temp" id="ap-temp"><span class="muted">全球市場與市場溫度</span>' + ICON.chev + '</button>';
-  const sim = S.global && S.global.sim && S.global.sim.res && S.global.sim.res['0050'];
-  const simHTML = sim && sim.dca && sim.rules ? `<button class="ap-bt" id="ap-bt" aria-label="看加碼計畫的回測">
-      <span class="ap-bt-h">回測：每月存 ${compact(sim.monthly)}元（${ymS(sim.from)}～${ymS(sim.to)}，0050）</span>
-      <span class="ap-bt-r"><span>每月定期定額</span><b class="num">${compact(sim.dca.final)}</b><small>最大跌幅 ${pc1(sim.dca.mdd)}</small></span>
-      <span class="ap-bt-r me"><span>照冷眼的加碼計畫</span><b class="num">${compact(sim.rules.final)}</b><small>最大跌幅 ${pc1(sim.rules.mdd)}・平均留 ${pc0(sim.rules.cash)} 現金</small></span>
-      <span class="ap-bt-n">${esc(simShort(sim))}</span>
-    </button>` : '';
   const slice = isNum(A.slice) ? A.slice : 0;
   const rule = `可動用的錢分 <b class="num">${PF.CASH_SLICES}</b> 份${settings.privacy ? '' : `（一份約 <b class="num">${money(slice)}</b>）`}，照順序每一檔最多拿 1 份：可加碼的先、信心高的先，分完就停；再照紀律、信心、溢價調整。`;
   const plans0 = rest.filter((x) => x.a.plan);
@@ -170,7 +156,6 @@ export function planCardHTML(P) {
       ${funded.length ? `<div class="ap-list">${funded.map(rowHTML).join('')}</div>` : ''}
       ${restHTML}
       ${tempLine}
-      ${simHTML}
     </section>`;
 }
 export function bindPlanCard(v) {
@@ -181,12 +166,10 @@ export function bindPlanCard(v) {
   }
   const tb = $('#ap-temp', v);
   if (tb) tb.addEventListener('click', () => openTemp());
-  const bt = $('#ap-bt', v);
-  if (bt) bt.addEventListener('click', () => openTemp(true, 'sim'));
 }
 
 // ------------------------------------------------------------------ 全球市場與市場溫度（#temp）
-export function openTemp(push = true, at = null) {
+export function openTemp(push = true) {
   if (S.openCode !== '__temp') FX.cue('open');
   S.openCode = '__temp';
   if (push && location.hash !== '#temp') history.pushState({ tool: 'temp' }, '', '#temp');
@@ -194,8 +177,8 @@ export function openTemp(push = true, at = null) {
   sh.hidden = false;
   document.body.classList.add('locked');
   sh.scrollTop = 0;
-  drawTemp(true, at);
-  if (!S.global) ensureGlobal({ force: true }).then(() => { if (S.openCode === '__temp') drawTemp(true, at); });
+  drawTemp(true);
+  if (!S.global) ensureGlobal({ force: true }).then(() => { if (S.openCode === '__temp') drawTemp(true); });
 }
 /** 資料同步換了 global.json：開著的話重畫（保留捲動位置，不重播動畫） */
 export function refreshTemp() {
@@ -253,7 +236,7 @@ function ringSVG(lit, total = 7, anim = false) {
   }
   return `<svg class="mt-ring${anim ? ' anim' : ''}" viewBox="0 0 128 128" aria-hidden="true"><circle class="trk" cx="${cx}" cy="${cy}" r="${R - 9}"/>${segs}</svg>`;
 }
-function drawTemp(anim = false, at = null) {
+function drawTemp(anim = false) {
   const sh = $('#sheet');
   const G = S.global;
   const top = `<div class="sheet-top"><button class="icon-btn" id="back" aria-label="返回">${ICON.back}</button><span class="ttl"><b class="ttl-b">全球市場與溫度</b><span>${G && G.at ? `後台 ${fmt.d(+String(G.at).slice(0, 10).replace(/-/g, ''))} ${hm(G.at)} 更新` : '加碼前先看一眼'}</span></span></div>`;
@@ -310,7 +293,7 @@ function drawTemp(anim = false, at = null) {
       <section class="panel tbl-wrap"><table class="t mt-bt"><thead><tr><th>那一天</th><th class="r">天數</th><th class="r">平均</th><th class="r">上漲</th><th class="r">最差10%</th><th class="r">期間跌幅</th></tr></thead><tbody>${rowsB}</tbody></table>
       <p class="small muted pad-x mt-note">${dyS(G.bt.from)}～${dyS(G.bt.to)} 每個交易日用「那天收盤時已經知道的資料」算溫度（不偷看），再看買 0050 之後 ${h} 個交易日的含息報酬；「期間跌幅」是那段時間最低點離買進價多遠（平均）。${read}</p></section>`;
   }
-  // 加碼計畫的回測
+  // 歷史演練：拿過去的真實行情演練加碼計畫的規則（不是你的帳戶；第一句先講假設，2026/11/21 PZ：「2020 四月，我也沒有投資啊」）
   const sim = G.sim && G.sim.res;
   let simHTML = '';
   if (sim && Object.keys(sim).length) {
@@ -321,12 +304,16 @@ function drawTemp(anim = false, at = null) {
     const caps = G.sim.caps && typeof G.sim.caps === 'object' ? G.sim.caps : null;
     const pcN = (x) => (isNum(x) ? `${Math.round(x * 100)}%` : '—');
     const capTxt = caps ? `單檔上限照穩健型（${Object.entries(caps).filter(([k]) => PF.CAT_NAMES[k]).map(([k, v]) => `${PF.CAT_NAMES[k]} ${pcN(v)}`).join('、')}）` : '單檔上限 60%';
-    simHTML = `<div class="sec-h" id="mt-sim"><h2>加碼計畫的回測</h2><span class="aside">照冷眼建議 vs 每月固定金額</span></div>
-      <section class="panel tbl-wrap"><table class="t mt-sim"><thead><tr><th>做法</th><th class="r">期末</th><th class="r">最大跌幅</th><th class="r">最差10%</th><th class="r">現金</th></tr></thead><tbody>${blocks}</tbody></table>
+    const all = Object.values(sim);
+    const f0 = Math.min(...all.map((x) => day8(x.from) || 99999999));
+    const late = all.filter((x) => (day8(x.from) || 0) > f0 + 100);
+    const assume = `假設從 ${ymZ(f0)}起，每個月存 ${compact(G.sim.monthly || r.monthly)}元${late.length ? `（${late.map((x) => `${x.name || x.code}從 ${ymZ(x.from)}上市後`).join('、')}）` : ''}，用${all.map((x) => x.name || x.code).join('、')}過去真的收盤價，演練兩種做法：每個月全部買（定期定額），或照冷眼的加碼計畫買。這不是你的帳戶，也不是預測——是拿過去的行情檢查這套規則。`;
+    simHTML = `<div class="sec-h" id="mt-sim"><h2>歷史演練（不是你的帳戶）</h2><span class="aside">加碼計畫 vs 每月定期定額</span></div>
+      <section class="panel tbl-wrap"><p class="mt-assume">${esc(assume)}</p><table class="t mt-sim"><thead><tr><th>做法</th><th class="r">期末</th><th class="r">最大跌幅</th><th class="r">最差10%</th><th class="r">現金</th></tr></thead><tbody>${blocks}</tbody></table>
       <div class="prose pad mt-read"><p>「最大跌幅」是這個做法的報酬從最高點跌下來最深的一次（不受存錢影響）；「最差10%」是任何一段 20 個交易日裡最差的 10%；「現金」是平均有多少比例的錢留著沒買。</p>
         <p>每個月第一個交易日存一筆錢：定期定額當天全部買；冷眼的加碼計畫把錢先放著，訊號「可加碼／漲多分批」的日子照紀律買，觀點中性的「續抱」日子買一半（單筆最多虧總資產 1%、${capTxt}、現金分 3 份、信心不到 70 減半），「減碼」時賣三分之一、超過上限賣回上限。用那天收盤時已經知道的資料，不偷看；用收盤價成交、含息。和 App 現在的算法不完全一樣：只有一檔、出場線一律用移動防守線，沒有算手續費、單一公司上限和溢價（沒有歷史的成分股明細與盤中溢價）。</p>
         <p>結果：照冷眼的加碼計畫，<b>最大跌幅 ${pc1(r.rules.mdd)}</b>，${c.dd === '差不多' ? '和' : '比'}定期定額的 ${pc1(r.dca.mdd)} ${c.dd}；平均留了 <b>${pc0(r.rules.cash)}</b> 的現金，<b>期末 ${compact(r.rules.final)}，${c.fin === '差不多' ? '和' : '比'}定期定額的 ${compact(r.dca.final)} ${c.fin}</b>${c.tradeoff ? '（這段期間大多是多頭，錢放著沒買就少賺）' : ''}。${r.rules_temp ? `加上市場溫度打折（陰減半、雨剩四分之一）期末 ${compact(r.rules_temp.final)}，${c.tmp === '幾乎一樣' ? '和沒打折的幾乎一樣' : `比沒打折的${c.tmp}`}${c.tmp === '多' ? '；冷眼目前還是不拿溫度改股數（第一次回測沒有變好，結果改變時要連最大跌幅、最差 10% 一起重新評估）' : '——所以冷眼不拿溫度改股數'}。` : ''}</p>
-        <p>這代表：加碼計畫不是用來取代定期定額的。冷眼把定期定額接下來要扣的錢先留著、不拿來算加碼；加碼計畫管的是額外的錢，它的好處是不追高、跌的時候比較少，代價是多頭的時候少賺。過去的結果不代表未來。</p></div></section>`;
+        <p>這代表：加碼計畫不是用來取代定期定額的。定期定額照扣（${settings.dcaFund === 'free' ? '你選了從自由資金扣：冷眼先留一個月要扣的錢、不拿來算加碼' : '另外扣，不算在自由資金裡'}）；加碼計畫只管自由資金這些額外的錢，它的好處是不追高、跌的時候比較少，代價是多頭的時候少賺。過去的結果不代表未來。</p></div></section>`;
   }
   const srcs = Object.values(G.src || {}).filter((s) => s && typeof s.n === 'string').map((s) => (typeof s.u === 'string' && /^https:\/\//.test(s.u) ? `<li><a href="${esc(s.u)}" target="_blank" rel="noopener">${esc(s.n)}</a></li>` : `<li>${esc(s.n)}</li>`)).join('');
   sh.innerHTML = top + `<div class="sheet-body tool mt">
@@ -336,7 +323,6 @@ function drawTemp(anim = false, at = null) {
     <p class="disclaim">市場溫度是固定規則數警訊，不連 AI、不預測漲跌，也不替你決定買賣。美股報價是交易所延遲 15 分鐘的報價，畫面上的時間是美東時間。</p>
   </div>`;
   $('#back', sh).addEventListener('click', () => closeDetail());
-  if (at === 'sim') { const el = $('#mt-sim', sh); if (el) requestAnimationFrame(() => el.scrollIntoView({ block: 'start' })); }
   if (anim && settings.fx !== false) FX.sfx('scan');
 }
 

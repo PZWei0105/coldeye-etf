@@ -701,7 +701,11 @@ function forceOf(P, A) {
     holdings: P.holdings, lots: book.lots, splitsOf, adv: (c) => A.adv.get(c) || null, order: A.order, rowOf: (c) => S.rows.get(c) || null,
     T: P.totals.T, profile: settings.risk, fee: settings.fee, today: today(), coreFollow: !isPaper() && settings.coreFollow === true,
     cashName: isPaper() ? '模擬倉現金' : '自由資金',
-    free: { now: P.free ? P.free.now : P.totals.cash, reserve: dep.emergency || 0, usable: dep.usable },
+    free: {
+      now: P.free ? P.free.now : P.totals.cash, reserve: dep.emergency || 0, dca: dep.sep ? 0 : (dep.dca && dep.dca.total) || 0, usable: dep.usable,
+      // 真實部位：設定過自由資金（有設定的日子，或舊資料有金額）才算得出能加碼多少；模擬倉的現金自動算
+      set: isPaper() || !!(P.free && (P.free.d || P.free.base > 0)),
+    },
     since: (c) => (S.hist[c] ? trimFrom(S.hist[c].sig) : null),
   });
 }

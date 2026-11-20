@@ -823,7 +823,7 @@ export function packPf(p) {
   const cn = p.bookName === '模擬倉' ? '現金' : '自由資金';
   if (p.showAmt) L.push(`總資產約 ${ntS(t.T)} 元（持股 ${ntS(t.mv)}、${cn} ${ntS(t.cash)}）`);
   L.push(`組成：持股 ${pctU(t.T > 0 ? t.mv / t.T : null, 1)}、${cn} ${pctU(t.T > 0 ? t.cash / t.T : null, 1)}｜未實現損益 ${pctS(t.pct)}｜預估一年配息約總資產的 ${t.T > 0 ? (t.annual / t.T * 100).toFixed(2) : '—'}%`);
-  if (p.force) L.push(`冷眼的兵力規則：定期定額買的是「核心」，${p.force.coreFollow ? '我打開了「核心也跟減碼訊號」' : '照扣、不跟減碼訊號賣（比重超過上限才減）'}；自己單筆買的是「機動」，照規則訊號加減。今天的兵力指令：${p.force.head}`);
+  if (p.force) L.push(`冷眼的兵力規則：定期定額買的是「核心」，${p.force.coreFollow ? '我打開了「核心也跟減碼訊號」' : '照扣、不跟減碼訊號賣（比重超過上限才減）'}；自己單筆買的是「機動」，照規則訊號加減。今天的兵力指令——${p.force.head}`);
   if (p.bench) L.push(`模擬倉成績：${pctS(p.bench.ret, 2)}；同期全買 0050 ${pctS(p.bench.b, 2)}（第 ${p.bench.days} 天）`);
   L.push(`持股（比重｜類別與我的上限｜未實現｜${p.force ? '兵力指令' : '冷眼依紀律的建議'}｜規則觀點${p.force ? '｜定期定額買的（核心）占這一檔' : ''}）：`);
   for (const h of p.holdings) L.push(`・${h.name}（${h.code}）｜${pctU(h.w, 1)}｜${catN(h.cat)}，上限 ${pctU(h.cap)}｜${pctS(h.pnlPct)}｜${(p.showAmt ? h.label : String(h.label || '').replace(/\d[\d,]*\s*張(\s*\d[\d,]*\s*股)?|\d[\d,]*\s*股/g, '若干股')) || '—'}｜${h.st == null ? '資料不足' : `${ST_T[String(h.st)]}／${PS_T[h.ps] || '—'}`}${p.force && isNum(h.core) ? `｜核心 ${pctU(h.sh > 0 ? h.core / h.sh : null)}` : ''}${p.showAmt && isNum(h.sh) ? `｜${sharesText(h.sh)}，平均成本 ${pxS(h.avg)}，市值約 ${ntS(h.mv)} 元` : ''}`);

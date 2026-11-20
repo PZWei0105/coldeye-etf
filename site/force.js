@@ -7,7 +7,7 @@
      這一輪已經賣過就不再叫你賣；這一輪從哪天開始看歷史檔的訊號取樣（trimFrom）。加碼照加碼計畫（pf.js 的 allocAdds）用自由資金買。
    - 自由資金＝你設定的金額＋之後記的單筆買賣（freeCash）。定期定額預設另外扣、不算在自由資金裡（settings.dcaFund）。
    金額一律回傳數字，文字裡不寫金額（畫面再照「隱藏金額」決定怎麼寫）。 */
-import { TRIM_FRAC, TRIM_DEFAULT, OVER_TOL, CAT_NAMES, capOf, sellValue, taxCat, normLot, sharesText, planWhy, addDays, tradeCost } from './pf.js';
+import { TRIM_FRAC, TRIM_DEFAULT, OVER_TOL, CAT_NAMES, capOf, sellValue, taxCat, normLot, sharesText, planWhy, noPlanWhy, addDays, tradeCost } from './pf.js';
 import { dcaPart, isDcaLot, signalOn, deductionDays, sharesFor, firstMonth, planDays } from './calc.js';
 
 const isNum = (x) => typeof x === 'number' && isFinite(x);
@@ -78,20 +78,23 @@ export function trimFrom(sig) {
 const SIG_T = {
   trim: '減碼', caution: '先不加碼', add: '可加碼', wait: '漲多分批', hold: '續抱',
 };
-/** 規則訊號的一句（為什麼） */
-function signalWhy(r, px) {
+/** 規則訊號的原因（白話，不含「規則「減碼」：」） */
+function sigReason(r, px) {
   switch (r.ps) {
-    case 'trim': return `規則「減碼」：觀點偏空，收盤 ${pxS(px)} 跌破移動防守線 ${pxS(r.dl)}`;
+    case 'trim': return `觀點偏空，收盤 ${pxS(px)} 跌破移動防守線 ${pxS(r.dl)}`;
     case 'caution': {
       const fl = r.fl || [];
-      const why = r.st < 0 ? '觀點偏空' : isNum(r.dl) && px < r.dl ? `收盤跌破移動防守線 ${pxS(r.dl)}` : fl.includes('disposal') || fl.includes('notice') ? '注意／處置中' : '溢價偏高';
-      return `規則「先不加碼」：${why}`;
+      return r.st < 0 ? '觀點偏空' : isNum(r.dl) && px < r.dl ? `收盤跌破移動防守線 ${pxS(r.dl)}` : fl.includes('disposal') || fl.includes('notice') ? '注意／處置中' : '溢價偏高';
     }
-    case 'add': return `規則「可加碼」：觀點偏多${isNum(r.cf) ? `，信心 ${r.cf}` : ''}`;
-    case 'wait': return '規則「漲多分批」：觀點偏多，但短線漲多';
-    case 'hold': return '規則「續抱」：觀點中性';
+    case 'add': return `觀點偏多${isNum(r.cf) ? `，信心 ${r.cf}` : ''}`;
+    case 'wait': return '觀點偏多，但短線漲多';
+    case 'hold': return '觀點中性';
     default: return '';
   }
+}
+/** 規則訊號的一句（為什麼） */
+function signalWhy(r, px) {
+  return SIG_T[r.ps] ? `規則「${SIG_T[r.ps]}」：${sigReason(r, px)}` : '';
 }
 /** 等什麼：轉回不偏空的價位（只寫規則算得出來的） */
 function waitLine(r, px) {
@@ -100,7 +103,8 @@ function waitLine(r, px) {
   if (r.st === 0 && isNum(r.r1)) return `收盤站上 ${pxS(r.r1)} 轉偏多`;
   return null;
 }
-const buyOf = (p) => ({ n: p.n, spend: p.spend, parts: p.parts.length, stop: p.stop, stopName: p.stopName, newW: p.newW });
+/** 加碼計畫的一檔 → 兵力的「買」；lim＝股數受限於什麼（為什麼只買這麼多，pf.js 的 planWhy） */
+const buyOf = (p, cat) => ({ n: p.n, spend: p.spend, parts: p.parts.length, stop: p.stop, stopName: p.stopName, newW: p.newW, lim: planWhy(p, { cat }) });
 
 function forceItem(x, inp) {
   const T = inp.T || 0;
@@ -118,6 +122,7 @@ function forceItem(x, inp) {
   const it = {
     code: x.code, name: x.name, cat, catName: CAT_NAMES[cat] || '同類', px, w: x.w, cap, sh, core, mob, ps: r ? r.ps || null : null,
     act: 'keep', sell: null, buy: null, small: null, trim: null, over: 0, why: [], wait: null, chip: null, say: '', hold: null,
+    sig: null, noAdd: '',
   };
   const why = (t) => { if (t) it.why.push(t); };
   const done = () => { it.hold = { now: sh, after: sh - (it.sell ? it.sell.n : 0) + (it.buy ? it.buy.n : 0), max }; return it; };
@@ -127,6 +132,8 @@ function forceItem(x, inp) {
     it.chip = ['資料不足', 'mute'];
     it.say = '資料不足，先不動';
     why(r && r.young ? `上市只有 ${r.young} 個交易日，規則至少要 70 個交易日的資料` : '暫時沒有這檔的價格或規則觀點');
+    it.sig = { k: 'none', t: '資料不足', why: '' };
+    it.noAdd = it.why[0];
     if (core > 0) why(`${sharesText(core)}是定期定額買的核心：照扣`);
     return done();
   }
@@ -136,9 +143,12 @@ function forceItem(x, inp) {
     it.chip = ['交易受限', 'warn'];
     it.say = `被列為${fl.includes('disposal') ? '處置' : '注意'}標的：不加也不減`;
     why('交易受限的時候買賣都比較難照計畫成交，等解除再說');
+    it.sig = { k: 'pause', t: '交易受限', why: `被列為${fl.includes('disposal') ? '處置' : '注意'}標的` };
+    it.noAdd = `被列為${fl.includes('disposal') ? '處置' : '注意'}標的，買賣都比較難照計畫成交：等解除再說`;
     return done();
   }
   why(signalWhy(r, px));
+  it.sig = { k: r.ps || 'hold', t: SIG_T[r.ps] || '續抱', why: sigReason(r, px) };
 
   // ---- 減碼：這一輪減一次
   let need = 0;
@@ -154,8 +164,12 @@ function forceItem(x, inp) {
     it.trim = { from: t0, known: okDay(s0), f, base: base0, target, sold, need };
   }
   // ---- 比重超過上限：賣回上限以內（機動先賣，不夠才賣到核心）
-  const over = T > 0 && isNum(x.w) && x.w > cap + OVER_TOL && isNum(x.mv) ? Math.min(sh, Math.ceil((x.mv - cap * T) / px - 1e-9)) : 0;
+  // 還沒設定自由資金（真實部位）：總資產只算得到持股，比重會被高估，先不照比重上限賣（設定過、就算是 0 才照算）
+  const unknownT = inp.free && inp.free.set === false;
+  const overW = T > 0 && isNum(x.w) && x.w > cap + OVER_TOL && isNum(x.mv);
+  const over = overW && !unknownT ? Math.min(sh, Math.ceil((x.mv - cap * T) / px - 1e-9)) : 0;
   it.over = Math.max(0, over);
+  if (overW && unknownT) why(`只算持股的話占 ${pctS(x.w)}，超過上限 ${pctS(cap, 0)}；但還沒設定自由資金，總資產算不準，先不照比重賣`);
   const n = Math.min(sh, Math.max(need, it.over));
   if (n > 0) {
     const fromMob = Math.min(n, mob);
@@ -173,6 +187,7 @@ function forceItem(x, inp) {
       if (n - fromMob > 0) why(`機動不夠，要動到定期定額買的核心 ${sharesText(n - fromMob)}`);
     }
     if (cat === 'lev' || cat === 'inv') why('槓桿／反向型每天重新平衡，長期持有會偏離指數');
+    it.noAdd = it.sell.by === 'trim' ? it.sig.why : `占總資產 ${pctS(x.w)}，超過你的上限 ${pctS(cap, 0)}`;
     it.wait = waitLine(r, px);
     return done();
   }
@@ -182,7 +197,7 @@ function forceItem(x, inp) {
   const p = a && a.plan;
   if (p && p.n > 0 && a.key === 'add') {
     it.act = 'buy';
-    it.buy = buyOf(p);
+    it.buy = buyOf(p, cat);
     it.chip = [`買 ${sharesText(p.n)}`, 'go'];
     it.say = `用${inp.cashName || '自由資金'}買 ${sharesText(p.n)}，分 ${p.parts.length} 批`;
     why(planWhy(p, { cat }));
@@ -190,7 +205,7 @@ function forceItem(x, inp) {
     if (core > 0) why(`定期定額照扣，${sharesText(core)}核心不動`);
     return done();
   }
-  if (p && p.n > 0 && a.key === 'hold') it.small = buyOf(p);
+  if (p && p.n > 0 && a.key === 'hold') it.small = buyOf(p, cat);
 
   if (r.ps === 'trim') {
     const tr = it.trim;
@@ -198,21 +213,31 @@ function forceItem(x, inp) {
       it.chip = ['已減碼', 'mute'];
       it.say = `這一輪已經減過（${md(tr.from)} 起賣了 ${sharesText(tr.sold)}），剩下的續抱`;
       if (!inp.coreFollow && core > 0) why(`${sharesText(core)}是定期定額買的核心：照扣、不賣`);
-    } else {
+    } else if (!inp.coreFollow && core > 0) {
       it.chip = ['核心照扣', 'core'];
-      it.say = '定期定額的核心照扣、不賣';
-      why(`${sharesText(core)}都是定期定額買的核心：核心不跟減碼訊號賣${inp.coreFollow ? '' : '（要跟的話，在兵力分頁打開）'}`);
+      it.say = mob > 0 ? `核心照扣、不賣；機動是這一輪減碼（${md(tr.from)} 起）之後才買的，這一輪不減` : '定期定額的核心照扣、不賣';
+      why(`${sharesText(core)}${mob > 0 ? '是' : '都是'}定期定額買的核心：核心不跟減碼訊號賣（要跟的話，在兵力分頁打開）`);
+    } else {
+      // 這一輪開始之前沒有可以減的股數：都是這一輪開始之後才買的
+      it.chip = ['續抱', 'mute'];
+      it.say = `這一輪減碼從 ${md(tr.from)} 開始，之後才買的這一輪不減`;
     }
+    it.noAdd = it.sig.why;
   } else if (r.ps === 'caution') {
     it.chip = ['不動', 'mute'];
     it.say = core > 0 ? '先不加碼：不買也不賣，定期定額照扣' : '先不加碼：不買也不賣';
+    it.noAdd = it.sig.why;
   } else if (r.ps === 'add' || r.ps === 'wait') {
     it.chip = ['續抱', 'mute'];
-    it.say = p ? `可以加碼，但${planWhy(p, { cat })}` : `可以加碼，但這次沒有分到${inp.cashName || '自由資金'}`;
+    // 0 股的原因：加碼計畫算得出來的照 planWhy；比重已經到上限（續抱）的沒有計畫
+    const cant = p ? planWhy(p, { cat }) : a && a.key === 'full' ? '已經到你設定的比重上限' : `這次沒有分到${inp.cashName || '自由資金'}`;
+    it.say = `可以加碼，但${cant}`;
+    it.noAdd = it.say;
     if (core > 0) why('定期定額照扣');
   } else {
     it.chip = ['續抱', 'mute'];
     it.say = core > 0 ? '續抱，定期定額照扣' : '續抱';
+    it.noAdd = `觀點中性，不是加碼訊號${it.small ? `；想加碼的話小額就好，最多 ${sharesText(it.small.n)}` : ''}`;
     if (it.small) why(`想加碼的話，小額就好：最多 ${sharesText(it.small.n)}`);
   }
   if ((cat === 'lev' || cat === 'inv') && core > 0) why('槓桿／反向型每天重新平衡，長期持有會偏離指數，不適合定期定額');
@@ -227,14 +252,18 @@ function forceItem(x, inp) {
  *   holdings：buildPortfolio 的 holdings（code, name, row, px, h, mv, w, cat）；lots：這一本的交易；splitsOf(code)：分割
  *   adv(code)：加碼計畫給這一檔的建議（allocAdds 的 adv）；order：加碼計畫的順序（持有＋關注）；rowOf(code)：summary 的一列
  *   T、profile、fee、today、coreFollow（核心也跟減碼訊號）、cashName（真實部位「自由資金」、模擬倉「模擬倉現金」）
- *   free：{ now, reserve, usable }（自由資金、緊急預備金、可動用）
+ *   free：{ now, reserve, dca, usable, set }（自由資金、緊急預備金、定期定額保留款、可動用、設定過自由資金沒有（模擬倉一律 true））
  *   since(code)：這一輪減碼從哪天開始（trimFrom；null＝還不知道，當作今天）
  * }
  * 回傳 {
- *   items：每一檔（act：sell／buy／keep／pause／none；sell／buy 的股數與金額；core、mob；hold：{ now, after, max }；chip、say、why、wait），
+ *   items：每一檔（act：sell／buy／keep／pause／none；sell／buy 的股數與金額；core、mob；hold：{ now, after, max }；chip、say、why、wait；
+ *          sig：{ k, t, why } 規則訊號與原因；noAdd：今天為什麼不加碼（買的那一檔是空字串）），
  *   buys：關注清單裡（還沒持有）照加碼計畫要買的，
- *   free：{ now, reserve, usable, use：今天的指令用掉的, left：可動用剩下的, back：賣出約拿回的, keep：自由資金留下的 },
- *   orders：照順序要做的事 [{ k: 'sell'|'buy'|'core'|'free', … }]，head：一句結論，quiet：今天不用動
+ *   free：{ now, reserve, dca, usable, set, use：今天的指令用掉的, left：可動用剩下的, back：賣出約拿回的, keep：自由資金留下的 },
+ *   orders：照順序要做的事 [{ k: 'sell'|'buy', … }]（買的 lim：為什麼只買這麼多），
+ *   ans：直接回答「今天加多少、減多少」——add：{ k: buy／unset（還沒設定自由資金）／zero（可動用的是 0）／none（有錢、沒有可加碼的）, t }、
+ *        sell：{ k: sell／none, t, why }（文字不寫金額，畫面再照「隱藏金額」補上），
+ *   head：一句結論（「加碼：…。減碼：…。」），quiet：今天不用買也不用賣
  * }
  */
 export function forceOrders(inp) {
@@ -246,7 +275,7 @@ export function forceOrders(inp) {
     const a = inp.adv ? inp.adv(code) : null;
     if (!a || a.key !== 'add' || !a.plan || !(a.plan.n > 0)) continue;
     const row = inp.rowOf ? inp.rowOf(code) : null;
-    buys.push({ code, name: row ? row.n : code, cat: row ? row.k : null, row, buy: buyOf(a.plan), why: [signalWhy(row || { ps: 'add' }, null), planWhy(a.plan, { cat: row && row.k })].filter(Boolean) });
+    buys.push({ code, name: row ? row.n : code, cat: row ? row.k : null, row, buy: buyOf(a.plan, row && row.k), why: [signalWhy(row || { ps: 'add' }, null), planWhy(a.plan, { cat: row && row.k })].filter(Boolean) });
   }
   // 買的順序照加碼計畫（可加碼的先、信心高的先）
   const rank = new Map((inp.order || []).map((c, i) => [c, i]));
@@ -255,40 +284,68 @@ export function forceOrders(inp) {
   const heldBuys = items.filter((i) => i.buy).sort(byPlan);
   const allBuys = [...heldBuys.map((i) => ({ code: i.code, name: i.name, buy: i.buy, held: true })), ...buys.map((b) => ({ code: b.code, name: b.name, buy: b.buy, held: false }))].sort(byPlan);
   const fr = inp.free || {};
+  const cn = inp.cashName || '自由資金';
+  const now = isNum(fr.now) ? fr.now : 0;
   const use = allBuys.reduce((t, b) => t + b.buy.spend, 0);
   const back = sells.reduce((t, i) => t + i.sell.net, 0);
   const free = {
-    now: isNum(fr.now) ? fr.now : 0, reserve: fr.reserve || 0, usable: Math.max(0, fr.usable || 0),
-    use, left: Math.max(0, (fr.usable || 0) - use), back, keep: (isNum(fr.now) ? fr.now : 0) - use,
+    now, reserve: fr.reserve || 0, dca: fr.dca || 0, usable: Math.max(0, fr.usable || 0), set: fr.set !== false,
+    use, left: Math.max(0, (fr.usable || 0) - use), back, keep: now - use,
   };
   const orders = [];
   for (const i of sells) orders.push({ k: 'sell', code: i.code, name: i.name, n: i.sell.n, mob: i.sell.mob, core: i.sell.core, net: i.sell.net, by: i.sell.by });
-  for (const b of allBuys) orders.push({ k: 'buy', code: b.code, name: b.name, n: b.buy.n, spend: b.buy.spend, parts: b.buy.parts, stop: b.buy.stop, held: b.held });
-  const coreKeep = items.filter((i) => i.core > 0 && !(i.sell && i.sell.core > 0));
-  if (coreKeep.length) orders.push({ k: 'core', items: coreKeep.map((i) => ({ code: i.code, name: i.name, n: i.core })) });
-  if (free.now > 0 || free.usable > 0) orders.push({ k: 'free', usable: free.usable, use, left: free.left, reserve: free.reserve });
+  for (const b of allBuys) orders.push({ k: 'buy', code: b.code, name: b.name, n: b.buy.n, spend: b.buy.spend, parts: b.buy.parts, stop: b.buy.stop, held: b.held, lim: b.buy.lim });
 
-  // 一句結論
+  // ---- 加碼：用多少自由資金、買哪幾檔；沒有的話為什麼
   const nm = (xs) => list(xs.map((x) => x.name));
-  const parts = [];
-  if (sells.length) parts.push(`賣 ${list(sells.map((i) => `${i.name} ${sharesText(i.sell.n)}`))}`);
-  const cn = inp.cashName || '自由資金';
-  if (allBuys.length) parts.push(`用${cn}買 ${list(allBuys.map((b) => `${b.name} ${sharesText(b.buy.n)}`))}`);
-  const trimCore = items.filter((i) => i.ps === 'trim' && !i.sell && i.trim && i.trim.target === 0 && i.core > 0);
-  const trimDone = items.filter((i) => i.ps === 'trim' && !i.sell && i.trim && i.trim.target > 0);
-  const coreTail = coreKeep.length ? '，定期定額照扣' : '';
-  let head;
-  if (parts.length) {
-    head = `今天：${parts.join('；')}${coreTail}。`;
-  } else {
-    const why = [];
-    if (trimCore.length) why.push(`${nm(trimCore)}轉減碼，但都是定期定額買的核心，照扣、不賣`);
-    if (trimDone.length) why.push(`${nm(trimDone)}這一輪已經減過`);
-    if (!why.length && coreKeep.length) why.push('定期定額照扣，持股都不用賣');
-    if (free.usable > 0) why.push(`${cn}沒有可加碼的，先留著`);
-    head = `今天不用動${why.length ? `：${why.join('；')}` : ''}。`;
-  }
-  return { items, buys, free, orders, head, quiet: !parts.length };
+  let add;
+  if (allBuys.length) add = { k: 'buy', t: `用${cn}買 ${list(allBuys.map((b) => `${b.name} ${sharesText(b.buy.n)}`))}` };
+  else if (!free.set) add = { k: 'unset', t: `還沒設定${cn}，算不出能加碼多少` };
+  else if (!(free.usable > 0)) {
+    const kept = [free.reserve > 0 ? '緊急預備金' : null, free.dca > 0 ? '定期定額' : null].filter(Boolean);
+    add = { k: 'zero', t: `今天不加碼，${now < 0 ? `${cn}已經用完了` : now > 0 && kept.length ? `${cn}都要留給${kept.join('和')}` : `${cn}是 0`}` };
+  } else add = { k: 'none', t: `今天不加碼，${noAddWhy(items, inp)}` };
+
+  // ---- 減碼：賣哪幾檔；不用賣的話，有減碼訊號的為什麼不賣
+  const trimKeep = items.filter((i) => i.ps === 'trim' && !i.sell);
+  const trimCore = trimKeep.filter((i) => i.chip && i.chip[1] === 'core' && i.mob === 0);
+  const trimDone = trimKeep.filter((i) => i.trim && i.trim.target > 0);
+  const trimMix = trimKeep.filter((i) => i.chip && i.chip[1] === 'core' && i.mob > 0);
+  const trimLate = trimKeep.filter((i) => !trimCore.includes(i) && !trimDone.includes(i) && !trimMix.includes(i));
+  const coreKeep = items.filter((i) => i.core > 0 && !(i.sell && i.sell.core > 0));
+  const sw = [];
+  if (trimCore.length) sw.push(`${nm(trimCore)}轉減碼，但都是定期定額買的核心，照扣`);
+  if (trimDone.length) sw.push(`${nm(trimDone)}這一輪已經減過`);
+  if (trimMix.length) sw.push(`${nm(trimMix)}的核心照扣，機動是這一輪減碼開始之後才買的，這一輪不減`);
+  if (trimLate.length) sw.push(`${nm(trimLate)}是這一輪減碼開始之後才買的，這一輪不減`);
+  if (!sw.length && coreKeep.length) sw.push('定期定額照扣');
+  const sell = sells.length
+    ? { k: 'sell', t: `賣 ${list(sells.map((i) => `${i.name} ${sharesText(i.sell.n)}`))}`, why: sw.join('；') }
+    : { k: 'none', t: '不用賣', why: sw.join('；') };
+
+  const head = `加碼：${add.t}。減碼：${sell.t}${sell.why ? `，${sell.why}` : ''}。`;
+  return { items, buys, free, orders, ans: { add, sell }, head, quiet: !sells.length && !allBuys.length };
+}
+
+/** 有可動用的錢、卻沒有要買的：持有和關注的都沒有「可加碼」訊號，或有訊號的為什麼沒分到（不寫金額） */
+function noAddWhy(items, inp) {
+  const mine = new Map(items.map((i) => [i.code, i]));
+  const codes = inp.order && inp.order.length ? inp.order : items.map((i) => i.code);
+  const cs = codes.map((code) => {
+    const it = mine.get(code) || null;
+    const row = inp.rowOf ? inp.rowOf(code) : null;
+    return { code, it, row, name: it ? it.name : row ? row.n : code, ps: it ? it.ps : row ? row.ps : null, a: inp.adv ? inp.adv(code) : null };
+  });
+  if (!cs.length) return '還沒有持股或關注的 ETF';
+  const want = cs.filter((x) => x.ps === 'add' || x.ps === 'wait');
+  const nw = cs.filter((x) => !x.it).length;
+  if (!want.length) return cs.length === 1 ? `${cs[0].name}沒有「可加碼」訊號` : `${nw ? (items.length ? '持有和關注' : '關注') : '持有'}的 ${cs.length} 檔都沒有「可加碼」訊號`;
+  const why = [...new Set(want.map((x) => {
+    if (x.a && x.a.plan) return planWhy(x.a.plan, { cat: x.row && x.row.k });
+    if (x.a && x.a.key === 'full') return '已經到你設定的比重上限';
+    return (x.a && noPlanWhy(x.a, x.row)) || `這次沒有分到${inp.cashName || '自由資金'}`;
+  }))];
+  return `「可加碼」的${want.length > 3 ? `${want.slice(0, 3).map((x) => x.name).join('、')}等 ${want.length} 檔` : list(want.map((x) => x.name))}這次沒有分到：${why.join('；')}`;
 }
 
 // ------------------------------------------------------------------ 核心要不要跟減碼訊號：回測

@@ -18,14 +18,14 @@ let seq = 0;
 const dcaLot = (c, d, sh, px = 100) => ({ id: `d${++seq}`, c, side: 'buy', d, sh, px, fee: 1, at: `${String(d).slice(0, 4)}-${String(d).slice(4, 6)}-${String(d).slice(6)}T07:00:00.000Z`, dca: { plan: `p${c}`, s: d, est: false } });
 const myLot = (c, d, sh, px = 100, side = 'buy', o = {}) => ({ id: `m${++seq}`, c, side, d, sh, px, fee: 20, tax: side === 'sell' ? Math.floor(sh * px * 0.001) : 0, at: `${String(d).slice(0, 4)}-${String(d).slice(4, 6)}-${String(d).slice(6)}T08:00:00.000Z`, ...o });
 /** 照 App 的順序算：自由資金 → 部位 → 兵力（加碼計畫的建議用 adv 直接給） */
-function run({ rows, lots, cash = 0, adv = {}, order = null, coreFollow = false, since = {}, profile = 'mid' }) {
+function run({ rows, lots, cash = 0, adv = {}, order = null, coreFollow = false, since = {}, profile = 'mid', reserve = 0, set = true }) {
   const R = new Map(rows.map((r) => [r.c, r]));
   const book = { cash, cashD: 20261001, cashAt: '2026-10-01T00:00:00.000Z', lots };
   const fc = freeCash(book, { today: TODAY });
   const P = PF.buildPortfolio({ ...book, cash: Math.max(0, fc.now) }, R, (r) => ({ px: r.p, ch: r.ch, pc: r.pc, date: r.d }), {}, cfg, TODAY);
   return forceOrders({
     holdings: P.holdings, lots, splitsOf: () => [], adv: (c) => adv[c] || null, order: order || rows.map((r) => r.c), rowOf: (c) => R.get(c),
-    T: P.totals.T, profile, fee: cfg, today: TODAY, coreFollow, free: { now: fc.now, reserve: 0, usable: Math.max(0, fc.now) },
+    T: P.totals.T, profile, fee: cfg, today: TODAY, coreFollow, free: { now: fc.now, reserve, usable: Math.max(0, fc.now - reserve), set },
     since: (c) => since[c] ?? null,
   });
 }
@@ -93,9 +93,13 @@ t('全部是定期定額買的：減碼訊號也照扣、不賣（核心照扣�
   assert.equal(a.mob, 0);
   assert.equal(a.hold.after, 1200);
   assert.ok(a.wait.includes('108.00'), '等什麼：轉多線');
-  assert.ok(F.head.startsWith('今天不用動'), F.head);
-  assert.ok(F.head.includes('照扣、不賣'), F.head);
-  assert.ok(F.orders.some((o) => o.k === 'core' && o.items[0].n === 1200));
+  assert.ok(F.quiet);
+  assert.equal(F.ans.sell.k, 'none');
+  assert.ok(F.head.startsWith('加碼：今天不加碼，測試A沒有「可加碼」訊號。'), F.head);
+  assert.ok(F.head.endsWith('減碼：不用賣，測試A轉減碼，但都是定期定額買的核心，照扣。'), F.head);
+  // 今日指令卡「持有的為什麼不加碼」：規則訊號、原因、等什麼
+  assert.deepEqual([a.sig.k, a.sig.t], ['trim', '減碼']);
+  assert.equal(a.noAdd, '觀點偏空，收盤 100.00 跌破移動防守線 110.00');
 });
 
 t('核心＋機動：減碼只減機動的三分之一（無條件進位），核心不動', () => {
@@ -108,7 +112,9 @@ t('核心＋機動：減碼只減機動的三分之一（無條件進位），�
   assert.equal(a.hold.after, 1400);
   assert.deepEqual(a.chip, ['賣 200 股', 'warn2']);
   assert.ok(a.why.some((w) => w.includes('核心：照扣、不賣')));
-  assert.ok(F.head.includes('賣 測試A 200 股'), F.head);
+  assert.ok(F.head.includes('減碼：賣 測試A 200 股'), F.head);
+  assert.equal(F.ans.sell.k, 'sell');
+  assert.equal(F.orders.length, 1, '指令只有要賣、要買的');
   const c = PF.sellValue(200, 100, 'broad', TODAY, cfg);
   assert.equal(a.sell.net, c.net);
   assert.equal(F.free.back, c.net);
@@ -121,7 +127,7 @@ t('這一輪已經賣過：不再叫你賣；只賣了一部分：補到三分�
   assert.equal(a.act, 'keep');
   assert.deepEqual(a.chip, ['已減碼', 'mute']);
   assert.equal(a.trim.sold, 200);
-  assert.ok(done.head.startsWith('今天不用動'), done.head);
+  assert.ok(done.head.includes('減碼：不用賣，測試A這一輪已經減過。'), done.head);
   const half = run({ rows: [rowOf('A', 'broad')], lots: [...lots, myLot('A', 20261105, 120, 100, 'sell')], cash: 200000, since: { A: 20261101 } });
   assert.equal(item(half, 'A').sell.n, 80);
   // 歷史檔還沒載入（since 不知道）：當作今天才開始，前幾天賣的不算
@@ -164,6 +170,13 @@ t('比重超過上限：賣回上限以內，機動不夠就動到核心', () =>
   // 剛好在容許範圍內（多 2 個百分點以內）：不動
   const G = run({ rows: [hold], lots: [dcaLot('A', 20260113, 6150)], cash: 385000 });
   assert.equal(item(G, 'A').act, 'keep');
+  // 還沒設定自由資金：總資產只有持股，比重被高估，先不照比重賣；設定成 0 才照算
+  const U = run({ rows: [hold], lots: [dcaLot('A', 20260113, 6500), myLot('A', 20260301, 500)], cash: 0, set: false });
+  assert.equal(item(U, 'A').act, 'keep');
+  assert.ok(item(U, 'A').why.some((w) => w.includes('還沒設定自由資金，總資產算不準，先不照比重賣')));
+  assert.ok(U.head.includes('減碼：不用賣'), U.head);
+  const Z = run({ rows: [hold], lots: [dcaLot('A', 20260113, 6500), myLot('A', 20260301, 500)], cash: 0 });
+  assert.equal(item(Z, 'A').act, 'sell', '設定過（就算是 0）照比重上限算');
 });
 
 t('可加碼：照加碼計畫用自由資金買；續抱裡想加碼的只寫小額、不列成指令', () => {
@@ -177,13 +190,18 @@ t('可加碼：照加碼計畫用自由資金買；續抱裡想加碼的只寫�
   assert.equal(a.hold.after, 1300);
   assert.equal(F.free.use, 30060);
   assert.equal(F.free.left, 300000 - 30060);
-  assert.ok(F.head.includes('用自由資金買 測試A 300 股'), F.head);
+  assert.ok(F.head.startsWith('加碼：用自由資金買 測試A 300 股。'), F.head);
+  assert.equal(F.ans.add.k, 'buy');
+  assert.equal(a.noAdd, '', '要買的那一檔沒有「為什麼不加碼」');
+  assert.equal(F.orders.find((o) => o.k === 'buy').lim, PF.planWhy(plan, { cat: 'broad' }), '買的那一列寫為什麼只買這麼多');
   const hold = rowOf('A', 'broad', { st: 0, ps: 'hold' });
   const G = run({ rows: [hold], lots: [dcaLot('A', 20260113, 1000)], cash: 300000, adv: { A: { key: 'hold', plan: { ...plan, n: 100 } } } });
   const b = item(G, 'A');
   assert.equal(b.act, 'keep');
   assert.equal(b.small.n, 100);
   assert.equal(G.orders.filter((o) => o.k === 'buy').length, 0);
+  assert.equal(b.noAdd, '觀點中性，不是加碼訊號；想加碼的話小額就好，最多 100 股');
+  assert.ok(G.head.startsWith('加碼：今天不加碼，測試A沒有「可加碼」訊號。'), G.head);
 });
 
 t('關注清單（還沒持有）可加碼的：也列進今天要買的', () => {
@@ -195,7 +213,7 @@ t('關注清單（還沒持有）可加碼的：也列進今天要買的', () =>
   assert.equal(o.held, false);
   assert.equal(o.n, 2000);
   assert.ok(F.head.includes('用自由資金買 測試B 2,000 股') || F.head.includes('用自由資金買 測試B 2 張'), F.head);
-  assert.ok(F.head.includes('定期定額照扣'), F.head);
+  assert.ok(F.head.includes('減碼：不用賣，測試A轉減碼，但都是定期定額買的核心，照扣'), F.head);
 });
 
 t('注意／處置、資料不足：不加也不減', () => {
@@ -210,8 +228,46 @@ t('自由資金的摘要：可動用、今天用掉、留下；賣出約拿回',
   assert.equal(F.free.usable, 400000);
   assert.equal(F.free.use, 0);
   assert.equal(F.free.keep, 400000);
-  assert.ok(F.orders.some((o) => o.k === 'free' && o.left === 400000));
-  assert.ok(F.head.includes('自由資金沒有可加碼的，先留著'), F.head);
+  assert.equal(F.free.left, 400000);
+  assert.equal(F.ans.add.k, 'none');
+  assert.ok(F.head.startsWith('加碼：今天不加碼，'), F.head);
+});
+
+t('加碼這一句：還沒設定自由資金、可動用的是 0、買超過了、有訊號卻沒分到', () => {
+  const lots = [dcaLot('A', 20260113, 1000)];
+  const unset = run({ rows: [rowOf('A', 'broad')], lots, cash: 0, set: false });
+  assert.equal(unset.ans.add.k, 'unset');
+  assert.ok(unset.head.startsWith('加碼：還沒設定自由資金，算不出能加碼多少。'), unset.head);
+  const res = run({ rows: [rowOf('A', 'broad')], lots, cash: 100000, reserve: 100000 });
+  assert.equal(res.ans.add.k, 'zero');
+  assert.ok(res.head.startsWith('加碼：今天不加碼，自由資金都要留給緊急預備金。'), res.head);
+  const zero = run({ rows: [rowOf('A', 'broad')], lots, cash: 0 });
+  assert.ok(zero.head.startsWith('加碼：今天不加碼，自由資金是 0。'), zero.head);
+  const neg = run({ rows: [rowOf('A', 'broad')], lots: [...lots, myLot('A', 20261105, 100)], cash: 5000 });
+  assert.ok(neg.free.now < 0);
+  assert.ok(neg.head.startsWith('加碼：今天不加碼，自由資金已經用完了。'), neg.head);
+  // 有「可加碼」訊號、卻沒分到錢：照加碼計畫的原因寫
+  const p0 = { n: 0, spend: 0, parts: [], limit: 'cash', cuts: [], slice: 30, cashShare: 30, cash: 90, cashAll: 90 };
+  const G = run({ rows: [rowOf('A', 'broad'), rowOf('B', 'bond', { st: 1, ps: 'add', cf: 80 })], lots, cash: 90, adv: { B: { key: 'add', plan: p0 } }, order: ['B', 'A'] });
+  assert.equal(G.ans.add.k, 'none');
+  assert.ok(G.head.startsWith(`加碼：今天不加碼，「可加碼」的測試B這次沒有分到：${PF.planWhy(p0, { cat: 'bond' })}。`), G.head);
+  // 持有的「可加碼」到了比重上限（續抱）：寫上限，不寫「沒有分到自由資金」
+  const full = run({ rows: [rowOf('A', 'broad', { st: 1, ps: 'add' })], lots: [myLot('A', 20260301, 6000)], cash: 400000, adv: { A: { key: 'full', plan: null } } });
+  assert.equal(item(full, 'A').noAdd, '可以加碼，但已經到你設定的比重上限');
+  assert.ok(full.head.includes('「可加碼」的測試A這次沒有分到：已經到你設定的比重上限'), full.head);
+});
+
+t('減碼訊號、但機動是這一輪開始之後才買的：這一輪不減，文字照實說', () => {
+  const F = run({ rows: [rowOf('A', 'broad')], lots: [myLot('A', 20261105, 300)], cash: 200000, since: { A: 20261101 } });
+  const a = item(F, 'A');
+  assert.equal(a.act, 'keep');
+  assert.ok(a.say.includes('11/1 開始，之後才買的這一輪不減'), a.say);
+  assert.ok(F.head.endsWith('減碼：不用賣，測試A是這一輪減碼開始之後才買的，這一輪不減。'), F.head);
+  const G = run({ rows: [rowOf('A', 'broad')], lots: [dcaLot('A', 20260113, 500), myLot('A', 20261105, 300)], cash: 200000, since: { A: 20261101 } });
+  const g = item(G, 'A');
+  assert.deepEqual(g.chip, ['核心照扣', 'core']);
+  assert.ok(g.say.includes('機動是這一輪減碼（11/1 起）之後才買的'), g.say);
+  assert.ok(G.head.endsWith('減碼：不用賣，測試A的核心照扣，機動是這一輪減碼開始之後才買的，這一輪不減。'), G.head);
 });
 
 // ================================================================== 回測：核心要不要跟減碼訊號

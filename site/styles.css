@@ -1919,14 +1919,6 @@ body.nofx .xr-map.scan .xr-tile, body.nofx .xpf.scanning .xp-row { animation: no
 .ap-temp { display: grid; grid-template-columns: auto minmax(0, 1fr) 14px; gap: 10px; align-items: center; width: 100%; padding: 10px 12px; border: 0; color: var(--frost-2); background: var(--hull-2); text-align: left; font-size: 13px; line-height: 1.55; }
 .ap-temp b { color: var(--frost); }
 .ap-temp > svg { width: 14px; height: 14px; color: var(--frost-3); }
-.ap-bt { display: grid; gap: 6px; width: 100%; padding: 12px; border: 0; background: none; color: inherit; text-align: left; box-shadow: inset 0 0 0 1px var(--seam); }
-.ap-bt-h { font-size: 12px; color: var(--frost-3); letter-spacing: .02em; }
-.ap-bt-r { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "k v" "s s"; gap: 0 10px; align-items: baseline; font-size: 13.5px; }
-.ap-bt-r > span { grid-area: k; color: var(--frost-2); }
-.ap-bt-r b { grid-area: v; font: 600 17px/1.3 var(--f-num); }
-.ap-bt-r small { grid-area: s; color: var(--frost-3); font-size: 12px; }
-.ap-bt-r.me > span, .ap-bt-r.me b { color: var(--aurora); }
-.ap-bt-n { font-size: 12.5px; color: var(--frost-2); line-height: 1.65; }
 /* 每一檔旁邊：可加碼多少 */
 .ap-tag { display: inline-flex; align-items: stretch; font-size: 12px; line-height: 1; white-space: nowrap; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--aurora) 55%, transparent); }
 .ap-tag i { font-style: normal; padding: 5px 6px; color: var(--aurora); background: var(--aurora-wash); font-weight: 700; }
@@ -1991,6 +1983,7 @@ table.t.mt-sim tr.grp td { white-space: normal; }
 table.t.mt-bt td:first-child, table.t.mt-sim td:first-child, table.t.mt-bt th:first-child, table.t.mt-sim th:first-child { padding-left: 12px; }
 table.t.mt-bt td:last-child, table.t.mt-sim td:last-child, table.t.mt-bt th:last-child, table.t.mt-sim th:last-child { padding-right: 12px; }
 .mt-note { padding-top: 10px; line-height: 1.7; }
+.mt-assume { margin: 0; padding: 12px 12px 10px; font-size: 13.5px; line-height: 1.7; color: var(--frost); }
 table.t.mt-bt tr.now td { background: var(--glacier-wash); }
 table.t.mt-bt tr.base td { color: var(--frost-2); }
 table.t.mt-sim tr.grp td { background: var(--hull-2); font-size: 13px; }
@@ -2003,8 +1996,6 @@ table.t.mt-sim tr.me td { color: var(--aurora); font-weight: 600; }
 @media (min-width: 1100px) {
   .mt-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .ap-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .ap-bt { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 28px; }
-  .ap-bt-h, .ap-bt-n { grid-column: 1 / -1; }
 }
 @media (prefers-reduced-motion: reduce) { .mt-ring.anim .seg.lit { animation: none; } }
 body.nofx .mt-ring.anim .seg.lit { animation: none; }
@@ -2490,9 +2481,6 @@ body.nofx .st-hero .st-rain { opacity: .3; }
     linear-gradient(var(--tone), var(--tone)) bottom left / 16px 2px no-repeat,
     linear-gradient(var(--tone), var(--tone)) bottom left / 2px 16px no-repeat;
 }
-.fz-cmd-h { display: grid; gap: 4px; }
-.fz-k { font-size: 11.5px; letter-spacing: .14em; color: var(--frost-3); }
-.fz-head { margin: 0; font: 900 18px/1.5 var(--f-serif); color: var(--frost); letter-spacing: .02em; }
 .fz-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .fz-o {
   display: grid; grid-template-columns: auto minmax(0, 1fr) 14px; gap: 10px; align-items: center; width: 100%;
@@ -2505,7 +2493,7 @@ button.fz-o:hover { background: var(--hull-3); }
 .fz-tag { font: 900 13px/1 var(--f-serif); padding: 7px 7px 6px; min-width: 2.7em; text-align: center; letter-spacing: .04em; clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px); }
 .fz-tag.sell { color: var(--amber-ink); background: var(--amber); }
 .fz-tag.buy { color: var(--glacier-ink); background: var(--glacier); }
-.fz-tag.self { color: var(--aurora-ink); background: var(--aurora); }
+.fz-tag.off { color: var(--frost-3); box-shadow: inset 0 0 0 1px var(--seam-2); }
 .fz-tag.free { color: var(--aurora); background: var(--aurora-wash); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--aurora) 50%, transparent); }
 .fz-b { display: grid; gap: 2px; min-width: 0; }
 .fz-t { display: flex; align-items: baseline; gap: 4px 8px; flex-wrap: wrap; }
@@ -2515,6 +2503,32 @@ button.fz-o:hover { background: var(--hull-3); }
 .fz-o.buy .fz-n { color: var(--glacier); }
 .fz-b small { font-size: 12px; color: var(--frost-3); line-height: 1.55; }
 .fz-foot { margin: 0; font-size: 12px; color: var(--frost-3); line-height: 1.6; }
+/* 加碼／減碼／留著：第一眼回答今天加多少、減多少、留多少；要做的那幾檔放在各自那一列底下 */
+.fz-ans { margin: 0; display: grid; }
+.fz-a { display: grid; grid-template-columns: 3em minmax(0, 1fr); gap: 12px; padding: 11px 0; border-top: 1px dashed var(--seam-2); }
+.fz-a:first-child { border-top: 0; padding-top: 4px; }
+.fz-a dt { padding-top: 1px; }
+.fz-a dt .fz-tag { display: block; min-width: 0; }
+.fz-a dd { margin: 0; display: grid; gap: 7px; min-width: 0; }
+.fz-am { font: 800 17px/1.45 var(--f-serif); color: var(--frost); letter-spacing: .02em; }
+.fz-am .num { font: 600 18px/1.2 var(--f-num); margin-left: 1px; }
+.fz-a.add .fz-am .num { color: var(--glacier); }
+.fz-a.sell .fz-am .num { color: var(--amber); }
+.fz-a.keep .fz-am .num { color: var(--aurora); }
+.fz-a dd > small { font-size: 12.5px; color: var(--frost-2); line-height: 1.65; }
+.fz-go { display: inline-flex; align-items: center; gap: 6px; justify-self: start; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
+.fz-go svg { width: 13px; height: 13px; color: var(--frost-3); flex: none; }
+.fz-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.fz-btns svg { width: 13px; height: 13px; }
+.fz-o.bare { grid-template-columns: minmax(0, 1fr) 14px; }
+.fz-b small.fz-lim { color: var(--frost-2); }
+.fz-b small.fz-why1 { color: var(--frost-2); font-size: 12.5px; }
+.fz-o.held .fz-t .chip { font-size: 11.5px; }
+.fz-b small.fz-wt b { font: 600 13.5px/1 var(--f-num); color: var(--frost); }
+/* 持有的其他幾檔：為什麼今天不加碼、要等到什麼價位 */
+.fz-held { display: grid; gap: 7px; padding-top: 11px; border-top: 1px dashed var(--seam-2); }
+.fz-hh { margin: 0; font-size: 12px; letter-spacing: .08em; color: var(--frost-3); }
+@media (min-width: 1100px) { .fz-held .fz-list { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); } }
 
 /* 自由資金 */
 .fz-free { padding: 14px 16px; display: grid; gap: 10px; }
@@ -2564,6 +2578,7 @@ body.dm-deep .fz-row { gap: 3px; padding-top: 6px; }
 .fz-core .switch[aria-checked="true"] { background: var(--aurora); }
 .fz-bt { padding: 0 16px 14px; }
 .fz-bt-body { display: grid; gap: 10px; margin-top: 10px; }
+.fz-bt-as { margin: 0; font-size: 13px; color: var(--frost-2); line-height: 1.65; }
 .fz-bt-sum { margin: 0; font-size: 13.5px; color: var(--frost); line-height: 1.65; }
 .fz-bt-row { display: grid; gap: 6px; padding: 10px 12px; background: var(--hull-2); clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px); }
 .fz-bt-h { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; }
