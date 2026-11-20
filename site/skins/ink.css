@@ -69,6 +69,9 @@ html[data-skin="ink"] .seg button[aria-pressed="true"] { background: var(--glaci
 html[data-skin="ink"] .switch { border-radius: 999px; background: #d5cbb7; }
 html[data-skin="ink"] .switch::after { border-radius: 50%; background: #fbf8f1; box-shadow: 0 1px 2px rgba(0, 0, 0, .2); }
 html[data-skin="ink"] .switch[aria-checked="true"] { background: var(--glacier); }
+html[data-skin="ink"] .vol-sl input[type="range"]::-webkit-slider-runnable-track { border-radius: 999px; }
+html[data-skin="ink"] .vol-sl input[type="range"]::-webkit-slider-thumb { width: 22px; height: 22px; margin-top: -8px; border-radius: 50%; background: #fbf8f1; box-shadow: 0 1px 3px rgba(0, 0, 0, .25), 0 0 0 1.5px var(--glacier); }
+html[data-skin="ink"] .vol-sl input[type="range"]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: #fbf8f1; box-shadow: 0 1px 3px rgba(0, 0, 0, .25), 0 0 0 1.5px var(--glacier); }
 html[data-skin="ink"] .input { border-radius: 6px; background: rgba(252, 249, 242, .8); box-shadow: inset 0 0 0 1px rgba(36, 32, 26, .22); }
 html[data-skin="ink"] .mine-dot { border-radius: 50%; transform: none; }
 html[data-skin="ink"] .iris-legend i { border-radius: 50%; }

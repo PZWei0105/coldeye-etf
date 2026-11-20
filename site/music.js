@@ -125,7 +125,8 @@ const lastBar = new Map(); // 每首歌上次停在第幾小節（回到 App 接
 const LOOK = 0.3;          // 往前排多少秒
 const FADE_OUT = 1.4, FADE_IN = 1.6;
 
-function level() { return (VOLS[vol] || VOLS[2]) * MOODS[mood].gain * (ducked ? 0.22 : 1); }
+const VOLS_AT = [0, VOLS[1], VOLS[2], VOLS[3]];   // 拉桿 0～3（1、2、3＝以前的小、中、大）
+function level() { return FX.volAt(VOLS_AT, vol) * MOODS[mood].gain * (ducked ? 0.22 : 1); }
 function graph() {
   const c = FX.audioCtx();
   if (!c) return null;
@@ -208,8 +209,8 @@ function tick() {
 }
 const playing = () => players.some((pl) => !pl.stopAt);
 function startLoop() { if (!timer) timer = setInterval(tick, 50); tick(); }
-/** 現在可以出聲嗎：打開了、沒有選「不用聲音」、有歌、App 在前景、音效引擎醒著 */
-const canPlay = () => want && !held && !!song && !document.hidden && FX.audioReady();
+/** 現在可以出聲嗎：打開了、沒有選「不用聲音」、音量不是 0、有歌、App 在前景、音效引擎醒著 */
+const canPlay = () => want && !held && vol > 0 && !!song && !document.hidden && FX.audioReady();
 
 /** 該播就播（點一下畫面、回到 App、改設定時呼叫；重複呼叫沒關係） */
 export function kick() {
@@ -239,9 +240,11 @@ export function setOn(on) {
   want = !!on;
   if (want) { held = false; kick(); } else halt(0.6);
 }
+/** 音量 0～3（拉桿；拉到 0 就停下來，不在背景空轉） */
 export function setVol(v) {
-  vol = [1, 2, 3].includes(v) ? v : 2;
+  vol = FX.volNorm(v);
   if (master) ramp(master.gain, level(), 0.3);
+  if (vol > 0) kick(); else halt(0.4);
 }
 /** 先不要放（開機畫面待命時；按「不用聲音，直接進入」就一直不放，到設定再打開才放） */
 export function hold() { held = true; halt(0.4); }

@@ -78,6 +78,9 @@ html[data-skin="sonar"] .input { border-radius: 12px; }
 html[data-skin="sonar"] .switch { border-radius: 999px; }
 html[data-skin="sonar"] .switch::after { border-radius: 50%; }
 html[data-skin="sonar"] .switch[aria-checked="true"] { box-shadow: 0 0 12px rgba(56, 225, 230, .4); }
+html[data-skin="sonar"] .vol-sl input[type="range"]::-webkit-slider-runnable-track { border-radius: 999px; }
+html[data-skin="sonar"] .vol-sl input[type="range"]::-webkit-slider-thumb { border-radius: 999px; }
+html[data-skin="sonar"] .vol-sl input[type="range"]::-moz-range-thumb { border-radius: 999px; }
 html[data-skin="sonar"] .mine-dot { border-radius: 50%; transform: none; }
 html[data-skin="sonar"] .iris-legend i { border-radius: 50%; }
 

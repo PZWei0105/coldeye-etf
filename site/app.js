@@ -32,7 +32,7 @@ import { forceOrdersHTML, freeCardHTML, forceChipHTML, forceRowHTML, coreFollowH
 import { investHTML, bindInvest } from './invest.js';
 import { stormCardHTML, bindStormCard, openStorm } from './storm.js';
 import { eyeStart, eyeSitHTML, EYE_STYLES } from './eye.js';
-import { initSkin, skinOpening, skinScheme, skinColor, skinInfo, skinSettingsHTML, bindSkinSettings, skinHooks, skinLive, holdMusic, releaseMusic, musicOn } from './skin.js';
+import { initSkin, skinOpening, skinScheme, skinColor, skinInfo, skinSettingsHTML, bindSkinSettings, skinHooks, skinLive, holdMusic, releaseMusic, musicOn, volSliderHTML, bindVolSlider } from './skin.js';
 import { lockGate, lockWatch, lockSettingsHTML, bindLockSettings } from './lock.js';
 import { openLesson } from './lessons.js';
 import { AIDE } from './aide.js';
@@ -1466,7 +1466,7 @@ function drawSettings() {
     <div class="sec-h"><h2>副官與聲光</h2></div>
     <section class="panel set">
       <div class="srow"><div><div class="h">音效</div><div class="d">點按、切換、檢查、上鎖、到價警報都有聲音（iPhone 側邊靜音開關打開時不出聲）</div></div><button class="switch" role="switch" id="s-sfx" aria-checked="${settings.sfx !== false}" aria-label="音效"></button></div>
-      <div class="srow"><div><div class="h">音量</div></div><div class="seg mini">${[[1, '小'], [2, '中'], [3, '大']].map(([k, t]) => `<button data-vol="${k}" aria-pressed="${settings.vol === k}">${t}</button>`).join('')}</div></div>
+      <div class="srow col"><div><div class="h">音效音量</div><div class="d">按鍵、切換、檢查、到價警報的聲音，副官念晨報也跟著大小聲；拉的時候馬上聽得到，音效關著時往右拉會直接打開</div></div>${volSliderHTML('s-vol', settings.vol, '音效音量')}</div>
       <div class="srow"><div><div class="h">語音播報</div><div class="d">${FX.hasVoice() ? '每天開機時，副官把晨報念給你聽（只用裝置內建的國語語音，台灣口音優先、不用粵語；不連網，只有網路語音的裝置不會念）' : esc(FX.voiceWhy())}</div></div><span class="row-btns"><button class="btn small ghost" id="s-say"${FX.hasVoice() ? '' : ' disabled'}>${ICON.speaker}試聽</button><button class="switch" role="switch" id="s-voice" aria-checked="${settings.voice !== false}" aria-label="語音播報"></button></span></div>
       ${voiceRowHTML()}
       <div class="srow"><div><div class="h">開機要點一下啟動</div><div class="d">手機規定要先點一下才能出聲。打開：每天第一次開啟時按「啟動」，有完整的點火音效和語音；關掉：自動開機、不出聲</div></div><button class="switch" role="switch" id="s-ignite" aria-checked="${settings.ignite !== false}" aria-label="開機要點一下啟動"></button></div>
@@ -1638,13 +1638,14 @@ function bindSettings() {
   flip('#s-fx', 'fx', (on) => { paintMode(); if (on) FX.stamp('特效開啟', 'glacier'); });
   flip('#s-haptic', 'haptic', (on) => { if (on) FX.haptic('lock'); });
   flip('#s-autoj', 'autoJ');
-  $$('[data-vol]', sh).forEach((b) => b.addEventListener('click', () => {
-    settings.vol = +b.dataset.vol;
-    saveSettings();
-    $$('[data-vol]', sh).forEach((z) => z.setAttribute('aria-pressed', z === b));
+  let volTap = 0;
+  bindVolSlider($('#s-vol', sh), (v) => {
+    settings.vol = v;
+    if (v > 0 && settings.sfx === false) { settings.sfx = true; $('#s-sfx', sh).setAttribute('aria-checked', 'true'); }   // 音效關著時往右拉：直接打開
     FX.unlock();
-    FX.sfx('ok');
-  }));
+    const now = performance.now();
+    if (now - volTap > 110) { volTap = now; FX.sfx('tap'); }   // 邊拉邊聽（太密會吵，最多 0.11 秒一聲）
+  });
   $('#s-say', sh).addEventListener('click', () => {
     if (FX.isSpeaking()) { FX.stopSpeak(); return; }
     FX.sfx('comms');

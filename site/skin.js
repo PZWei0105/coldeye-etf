@@ -5,6 +5,7 @@
    - 顏色的意思每一套都一樣：紅漲綠跌（只用在價格、損益、多空）、琥珀＝小心、紫＝你自己（持有、成本、模擬倉）；各套只調色調。
      所以聲納艙不做整片綠色（台股綠色＝跌），交易終端的琥珀只當邊框、標題列與掃描線，要小心的東西照樣是亮琥珀加斜紋。
    - 換裝、配樂開關與音量只存在這支手機（settings.skin、settings.bgm、settings.bgmVol），不進備份。
+   - 音量是 0～3 的拉桿（fx.js 的 volNorm；1、2、3＝以前的小、中、大）；設定頁的音效、配樂音量拉桿都用這裡的 volSliderHTML。
    - 「回到原本」：機甲 HUD、配樂關掉＝11/20 的樣子（styles.css 一行都沒有因為換裝改變；機甲 HUD 不載入任何換裝檔案）。
    檔案：skins/base.css（四套共用：拿掉機甲的切角與角落刻度）、skins/{代號}.css（畫面）、skins/{代號}.js（sfx 音效組、song 配樂、opening 開場）。
    index.html 開頭有一小段程式先把這一套的 CSS 放進去，打開時不會先閃一下機甲 HUD。 */
@@ -29,7 +30,7 @@ export const skinScheme = () => skinInfo().scheme || null;
 export const skinColor = () => skinInfo().color || null;
 /** 配樂打開了嗎（預設打開；「回到原本」會關掉） */
 export const musicOn = () => settings.bgm !== false;
-const bgmVol = () => ([1, 2, 3].includes(settings.bgmVol) ? settings.bgmVol : 2);
+const bgmVol = () => FX.volNorm(settings.bgmVol);
 
 /** app.js 給：theme()＝重套外觀（深淺色、狀態列顏色）、replay()＝重播開機畫面、after()＝換裝後重畫 */
 export const skinHooks = { theme: () => {}, replay: () => {}, after: () => {} };
@@ -160,7 +161,30 @@ export function setMusic(on) {
   MUSIC.setOn(!!on);
   if (on) FX.unlock();
 }
-export function setMusicVol(v) { settings.bgmVol = [1, 2, 3].includes(v) ? v : 2; saveSettings(); MUSIC.setVol(settings.bgmVol); }
+export function setMusicVol(v, save = true) { settings.bgmVol = FX.volNorm(v); if (save) saveSettings(); MUSIC.setVol(settings.bgmVol); }
+
+// ------------------------------------------------------------------ 音量拉桿（設定頁：音效、配樂）
+/** 0～3 → 畫面上的百分比（1、2、3＝以前的小、中、大＝33%、67%、100%） */
+export const volPct = (v) => Math.round(FX.volNorm(v) / 3 * 100);
+export function volSliderHTML(id, v, label) {
+  const x = FX.volNorm(v), p = volPct(x);
+  return `<div class="vol-sl"><input type="range" id="${id}" min="0" max="3" step="0.05" value="${x}" aria-label="${esc(label)}" aria-valuetext="${p}%" style="--vp:${p}%"><output class="num" for="${id}">${p}%</output></div>`;
+}
+/** 拉的時候馬上變（onInput 收到 0～3）；放開、或停下來 0.4 秒才存（不會每動一格就寫一次） */
+export function bindVolSlider(el, onInput) {
+  if (!el) return;
+  const out = el.parentElement && el.parentElement.querySelector('output');
+  let t = 0;
+  el.addEventListener('input', () => {
+    const v = FX.volNorm(+el.value), p = volPct(v);
+    el.style.setProperty('--vp', `${p}%`);
+    el.setAttribute('aria-valuetext', `${p}%`);
+    if (out) out.textContent = `${p}%`;
+    onInput(v);
+    clearTimeout(t); t = setTimeout(saveSettings, 400);
+  });
+  el.addEventListener('change', () => { clearTimeout(t); saveSettings(); });
+}
 /** 開機畫面待命時先不放；按「啟動」才放（releaseMusic），按「不用聲音，直接進入」這次打開就不放（到設定再打開就會放） */
 export const holdMusic = () => MUSIC.hold();
 export const releaseMusic = () => MUSIC.release();
@@ -183,6 +207,7 @@ function moodText() {
 
 // ------------------------------------------------------------------ 設定頁：換裝與配樂
 const original = () => skinId() === 'hud' && !musicOn();
+const origText = () => (original() ? '現在就是原本的樣子（機甲 HUD、沒有配樂）' : '一次換回機甲 HUD、關掉配樂，和 11/20 一模一樣；之後想換再來這裡選');
 export function skinSettingsHTML() {
   const cur = skinId();
   const v = bgmVol();
@@ -192,10 +217,10 @@ export function skinSettingsHTML() {
       <div class="skin-grid" role="radiogroup" aria-label="換裝">${SKINS.map((s) => `<button type="button" class="skin-card" role="radio" data-skin-pick="${s.k}" aria-checked="${cur === s.k}" style="--sa:${s.sw[0]};--sb:${s.sw[1]};--sc:${s.sw[2]}">
         <span class="sk-sw" aria-hidden="true"><i></i><i></i><i></i></span><span class="sk-t"><b>${esc(s.t)}</b><small class="num">${esc(s.en)}</small></span><span class="sk-d">${esc(s.d)}</span></button>`).join('')}</div>
       <div class="srow"><div><div class="h">配樂</div><div class="d">每一套有自己的配樂，全部在手機上即時合成。副官念晨報時自動壓低；App 到背景、iPhone 側邊靜音時不出聲</div></div><button class="switch" role="switch" id="s-bgm" aria-checked="${musicOn()}" aria-label="配樂"></button></div>
-      <div class="srow"><div><div class="h">配樂音量</div><div class="d">和按鍵音效的音量分開調</div></div><div class="seg mini" role="group" aria-label="配樂音量">${[[1, '小'], [2, '中'], [3, '大']].map(([k, t]) => `<button data-bgmvol="${k}" aria-pressed="${v === k}">${t}</button>`).join('')}</div></div>
+      <div class="srow col"><div><div class="h">配樂音量</div><div class="d">和按鍵音效的音量分開調；拉的時候馬上聽得到，配樂關著時往右拉會直接打開</div></div>${volSliderHTML('s-bgmvol', v, '配樂音量')}</div>
       <div class="srow"><div><div class="h">配樂跟著盤勢讓你冷靜</div><div class="d" id="s-mood">${esc(moodText())}</div></div></div>
       <div class="srow"><div><div class="h">看這一套的開場</div><div class="d">每天第一次打開時播；換了新的一套也可以在這裡先看</div></div><button class="btn small ghost" id="s-skin-boot">播放</button></div>
-      <div class="srow"><div><div class="h">回到原本</div><div class="d">${original() ? '現在就是原本的樣子（機甲 HUD、沒有配樂）' : '一次換回機甲 HUD、關掉配樂，和 11/20 一模一樣；之後想換再來這裡選'}</div></div><button class="btn small ghost" id="s-skin-orig"${original() ? ' disabled' : ''}>回到原本</button></div>
+      <div class="srow"><div><div class="h">回到原本</div><div class="d" id="s-orig-d">${origText()}</div></div><button class="btn small ghost" id="s-skin-orig"${original() ? ' disabled' : ''}>回到原本</button></div>
     </section>`;
 }
 export function bindSkinSettings(sh, redraw) {
@@ -209,11 +234,17 @@ export function bindSkinSettings(sh, redraw) {
   }));
   const bgm = $('#s-bgm', sh);
   if (bgm) bgm.addEventListener('click', () => { setMusic(!musicOn()); bgm.setAttribute('aria-checked', musicOn()); redraw(); });
-  $$('[data-bgmvol]', sh).forEach((b) => b.addEventListener('click', () => {
-    setMusicVol(+b.dataset.bgmvol);
-    $$('[data-bgmvol]', sh).forEach((z) => z.setAttribute('aria-pressed', z === b));
-    if (musicOn()) MUSIC.kick();
-  }));
+  bindVolSlider($('#s-bgmvol', sh), (v) => {
+    FX.unlock();
+    setMusicVol(v, false);
+    if (v > 0 && !musicOn()) {   // 配樂關著時往右拉：直接打開（拉到一半不能整頁重畫，開關和「回到原本」就地改）
+      setMusic(true);
+      if (bgm) bgm.setAttribute('aria-checked', 'true');
+      const ob2 = $('#s-skin-orig', sh), od = $('#s-orig-d', sh);
+      if (ob2) ob2.disabled = original();
+      if (od) od.textContent = origText();
+    }
+  });
   const rb = $('#s-skin-boot', sh);
   if (rb) rb.addEventListener('click', () => skinHooks.replay());
   const ob = $('#s-skin-orig', sh);

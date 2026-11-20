@@ -1019,6 +1019,17 @@ label.btn.file { cursor: pointer; }
 .srow .h { font-weight: 700; font-size: 14.5px; }
 .srow .d { font-size: 12.5px; color: var(--frost-3); line-height: 1.5; }
 .srow .v-warn { color: var(--amber); }
+/* 音量拉桿（音效、配樂；2026/11/21）：左邊亮起來的就是現在的大小；推鈕像混音台的推桿，手機好抓。換裝照各自的系統色 */
+.vol-sl { display: flex; align-items: center; gap: 14px; }
+.vol-sl input[type="range"] { flex: 1; min-width: 0; height: 34px; margin: 0; padding: 0; background: none; -webkit-appearance: none; appearance: none; cursor: pointer; }
+.vol-sl input[type="range"]:focus { outline: none; }
+.vol-sl input[type="range"]:focus-visible { outline: 1px solid var(--glacier); outline-offset: 4px; }
+.vol-sl input[type="range"]::-webkit-slider-runnable-track { height: 6px; background: linear-gradient(90deg, var(--glacier) var(--vp, 67%), var(--seam-2) var(--vp, 67%)); }
+.vol-sl input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 28px; margin-top: -11px; border: 0; border-radius: 0; background: #fff; box-shadow: 0 0 0 2px var(--glacier), 0 0 12px var(--frame-2); }
+.vol-sl input[type="range"]::-moz-range-track { height: 6px; border: 0; background: var(--seam-2); }
+.vol-sl input[type="range"]::-moz-range-progress { height: 6px; background: var(--glacier); }
+.vol-sl input[type="range"]::-moz-range-thumb { width: 14px; height: 28px; border: 0; border-radius: 0; background: #fff; box-shadow: 0 0 0 2px var(--glacier), 0 0 12px var(--frame-2); }
+.vol-sl output { flex: none; min-width: 3.3em; text-align: right; font-size: 18px; font-weight: 700; color: var(--glacier); }
 #s-vname { width: 100%; }
 table.caps td.on { color: var(--glacier); font-weight: 700; background: var(--glacier-wash); }
 .rules-ed { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }

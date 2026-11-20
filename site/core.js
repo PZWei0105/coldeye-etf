@@ -67,7 +67,7 @@ function cleanPlans(rawPlans, rawSkip, rawNoAsk) {
   if (c.changed) store.set('settings', settings);
 }
 if (!['real', 'paper'].includes(settings.mode)) settings.mode = 'real';
-if (![1, 2, 3].includes(settings.vol)) settings.vol = 2;
+if (!(typeof settings.vol === 'number' && isFinite(settings.vol) && settings.vol >= 0 && settings.vol <= 3)) settings.vol = 2;   // 0～3（拉桿；1、2、3＝以前的小、中、大）
 if (!PF.PROFILES[settings.risk]) settings.risk = 'mid';
 settings.reserve = normReserve(settings.reserve);
 if (!['sep', 'free'].includes(settings.dcaFund)) settings.dcaFund = 'sep';

@@ -13,7 +13,18 @@ export const fxOn = () => prefs().fx !== false && !reduce();
 
 // ------------------------------------------------------------------ 音效引擎
 let ctx = null, master = null, wet = null, noiseBuf = null, comp = null, H = null, musicIn = null;
-const VOL = { 1: 0.45, 2: 0.85, 3: 1.35 };
+/* 音量（設定的 vol 音效、bgmVol 配樂）：0～3 的連續數字（設定頁的拉桿，2026/11/21）。
+   1、2、3 剛好是以前「小、中、大」三格，舊的設定照樣一模一樣；中間照表直線內插，0＝沒聲音。 */
+export const volOK = (v) => typeof v === 'number' && isFinite(v) && v >= 0 && v <= 3;
+export const volNorm = (v, d = 2) => (volOK(v) ? v : d);
+/** tab＝音量 0、1、2、3 四個點的值，回傳 v 的值（內插） */
+export function volAt(tab, v) {
+  const x = volNorm(v);
+  const i = Math.min(2, Math.floor(x));
+  return tab[i] + (tab[i + 1] - tab[i]) * (x - i);
+}
+const VOL = [0, 0.45, 0.85, 1.35];      // 音效的總音量（1、2、3 和以前一樣）
+const SPEAK_VOL = [0.6, 0.6, 0.9, 1];   // 語音播報（1、2、3 和以前一樣；音效拉到 0 晨報照念，要關用「語音播報」）
 function ensure() {
   if (ctx) return ctx;
   const AC = window.AudioContext || window.webkitAudioContext;
@@ -26,7 +37,7 @@ function ensure() {
   comp = ctx.createDynamicsCompressor();
   comp.threshold.value = -18; comp.knee.value = 12; comp.ratio.value = 4; comp.attack.value = 0.003; comp.release.value = 0.2;
   master = ctx.createGain();
-  master.gain.value = VOL[prefs().vol] || VOL[2];
+  master.gain.value = volAt(VOL, prefs().vol);
   master.connect(comp).connect(ctx.destination);
   // 一點點「機艙迴音」：短延遲＋回授＋低通，讓上鎖、揭曉的聲音有尾巴
   const dly = ctx.createDelay(0.5); dly.delayTime.value = 0.13;
@@ -294,7 +305,7 @@ export function sfx(name) {
   if (recent.length >= 8) return;
   lastAt.set(name, now);
   recent.push(now);
-  master.gain.value = VOL[p.vol] || VOL[2];
+  master.gain.value = volAt(VOL, p.vol);
   const fn = (bank && bank[name]) || SOUNDS[name];
   try { fn(H); } catch { /* 不讓音效影響 App */ }
 }
@@ -445,7 +456,7 @@ export function speak(text, { force = false } = {}) {
   if (!voices.length) loadVoices();
   const v = pickVoice();
   if (!v) return false;   // 沒有內建的中文語音：寧可不念，也不用網路語音
-  const vol = { 1: 0.6, 2: 0.9, 3: 1 }[prefs().vol] || 0.9;
+  const vol = volAt(SPEAK_VOL, prefs().vol);
   setSpeaking(true);
   parts.forEach((p, i) => {
     const u = new SpeechSynthesisUtterance(p);

@@ -158,5 +158,22 @@ for (const k of ids.slice(1)) {
   ok(m && m[1].split('|').sort().join() === ids.slice(1).sort().join(), 'index.html 開頭先放換裝 CSS 的清單和 SKINS 一樣');
 }
 
+// ------------------------------------------------------------------ 6 音量拉桿（音效 vol、配樂 bgmVol：0～3，2026/11/21）
+{
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  const T = [0, 0.45, 0.85, 1.35];
+  ok(near(FX.volAt(T, 1), 0.45) && near(FX.volAt(T, 2), 0.85) && near(FX.volAt(T, 3), 1.35), '1、2、3 和以前的小、中、大一模一樣');
+  ok(FX.volAt(T, 0) === 0 && near(FX.volAt(T, 1.5), 0.65) && near(FX.volAt(T, 2.5), 1.1), '中間直線內插，0 沒聲音');
+  ok([undefined, null, NaN, -0.1, 3.2, '2', Infinity].every((v) => near(FX.volAt(T, v), 0.85)), '壞掉或超出範圍的值當「中」');
+  ok(FX.volNorm(0) === 0 && FX.volNorm(2.35) === 2.35 && FX.volNorm(4) === 2 && FX.volNorm(undefined, 1) === 1, 'volNorm：0～3 照收，其他用預設');
+  ok(SK.volPct(1) === 33 && SK.volPct(2) === 67 && SK.volPct(3) === 100 && SK.volPct(0) === 0 && SK.volPct('x') === 67, '畫面百分比：小 33%、中 67%、大 100%');
+  const h = SK.volSliderHTML('s-x', 2, '音效音量');
+  ok(/type="range"/.test(h) && /min="0" max="3"/.test(h) && /value="2"/.test(h) && /--vp:67%/.test(h) && />67%<\/output>/.test(h) && !/undefined|NaN/.test(h), `拉桿的 HTML：${h}`);
+  ok(/value="2"/.test(SK.volSliderHTML('s-x', 9, 'x')), '壞掉的值畫成「中」');
+  const app = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8'), skin = fs.readFileSync(path.join(ROOT, 'skin.js'), 'utf8');
+  ok(!/data-vol=|data-bgmvol=/.test(app + skin), '小／中／大三格已經換成拉桿');
+  ok(/volSliderHTML\('s-vol'/.test(app) && /volSliderHTML\('s-bgmvol'/.test(skin), '設定頁音效、配樂各一條拉桿');
+}
+
 if (fails.length) { console.log(`失敗 ${fails.length}／${n}：\n- ${fails.join('\n- ')}`); process.exit(1); }
 console.log(`${n} 個測試通過`);
