@@ -230,7 +230,9 @@ const MASK = '••••';
 export function money(x, sign = false) {
   if (!isNum(x)) return '—';
   if (settings.privacy) return MASK;
-  const v = Math.round(x);
+  // 四捨五入不看正負（Math.round(-0.5) 是 0、Math.round(0.5) 是 1）：
+  // 同一個數字有的地方用 money(x, true)、有的地方用 money(Math.abs(x))，兩邊才不會差 1 元
+  const v = Math.sign(x) * Math.round(Math.abs(x));
   const s = Math.abs(v).toLocaleString('en-US');
   if (!sign) return (v < 0 ? '−' : '') + s;
   return (v > 0 ? '+' : v < 0 ? '−' : '') + s;

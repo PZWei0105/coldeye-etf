@@ -44,7 +44,7 @@ export function dayReportHTML(P) {
   return `<div class="sec-h"><h2 data-term="dayrep">${isToday ? '今日戰報' : `${fmt.d(R.date)} 戰報`}</h2><span class="aside">${esc(when)}・每一檔賺賠多少（含息）</span>${haloHTML('live')}</div>
     <section class="panel dr-card" aria-label="${isToday ? '今日戰報' : `${fmt.d(R.date)} 戰報`}">
       <div class="dr-top">
-        <div class="dr-total"><span class="k">${isToday ? '今天' : `${fmt.d(R.date)} `}合計</span><b class="num ${dirCls(R.total)}" id="dr-sum"${settings.privacy ? '' : ` data-v="${Math.round(R.total)}"`}>${money(R.total, true)}</b>${isNum(pc) ? `<small class="num ${dirCls(pc)}">持股 ${fmt.r(R.pct, 2)}</small>` : ''}<span class="dr-cnt">漲 <b class="num up">${R.up}</b>・跌 <b class="num down">${R.down}</b>${R.flat ? `・平 <b class="num">${R.flat}</b>` : ''}${R.wait ? `・沒成交 <b class="num">${R.wait}</b>` : ''}</span></div>
+        <div class="dr-total"><span class="k">${isToday ? '今天' : `${fmt.d(R.date)} `}合計</span><b class="num ${dirCls(R.total)}" id="dr-sum"${settings.privacy ? '' : ` data-v="${R.total}"`}>${money(R.total, true)}</b>${isNum(pc) ? `<small class="num ${dirCls(pc)}">持股 ${fmt.r(R.pct, 2)}</small>` : ''}<span class="dr-cnt">漲 <b class="num up">${R.up}</b>・跌 <b class="num down">${R.down}</b>${R.flat ? `・平 <b class="num">${R.flat}</b>` : ''}${R.wait ? `・沒成交 <b class="num">${R.wait}</b>` : ''}</span></div>
         ${cmp}
       </div>
       <ol class="dr-list">${rows}</ol>

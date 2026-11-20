@@ -60,6 +60,13 @@ t('今日戰報：今天還沒成交的算 0；今天有買賣的只算買賣的
   near(by.D.day, 500); assert.equal(by.D.held, false); assert.equal(by.D.traded, true);
   assert.equal(R.up, 2); assert.equal(R.down, 1); assert.equal(R.flat, 0); assert.equal(R.wait, 1);   // C 還沒成交：不算「平」
 });
+t('今日戰報：合計就是 P.totals.day（自己再加一次的小數誤差不會讓四捨五入差 1 元）', () => {
+  const P2 = { totals: { day: -33848.5, dayPct: -0.0571 }, holdings: [
+    { code: 'X', name: 'X', day: -28737.7, q: { date: 20261120, pc: -6.37 } },
+    { code: 'Y', name: 'Y', day: -5250.2, q: { date: 20261120, pc: -5.88 } },
+    { code: 'Z', name: 'Z', day: 139.4, q: { date: 20261120, pc: 0.27 } }], closed: [] };
+  assert.equal(C.dayReport(P2, null, []).total, -33848.5);
+});
 t('今日戰報：0050 同一天才比，日期不同不比', () => {
   assert.deepEqual(C.dayReport(P, { pc: 1.1, date: 20261027 }, lotsPF).bench, { pc: 1.1 });
   assert.equal(C.dayReport(P, { pc: 1.1, date: 20261026 }, lotsPF).bench, null);

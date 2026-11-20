@@ -1090,7 +1090,8 @@ export function dayReport(P, bench, lots = []) {
     items.push({ code: x.code, name: x.name, day: x.day, pc: stale ? null : (isNum(q.pc) ? q.pc : null), stale, traded: true, held: false, slot: null });
   }
   items.sort((a, b) => Math.abs(b.day || 0) - Math.abs(a.day || 0) || (a.code < b.code ? -1 : 1));
-  const total = items.reduce((t, x) => t + (x.day || 0), 0);
+  // 合計直接用 P.totals.day（同樣這幾檔加起來）：自己再照金額大小的順序加一次，小數的誤差會讓四捨五入差 1 元
+  const total = isNum(P.totals.day) ? P.totals.day : items.reduce((t, x) => t + (x.day || 0), 0);
   const sign = (v) => (Math.abs(v || 0) < 0.5 ? 0 : v > 0 ? 1 : -1);
   // 還沒成交（或停止交易）而且當天沒有買賣的那幾檔另外數（wait），不算「平」
   const wait = (x) => x.stale && sign(x.day) === 0;
