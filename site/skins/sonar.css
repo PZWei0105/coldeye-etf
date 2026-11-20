@@ -1,0 +1,107 @@
+/* 冷眼換裝 — 聲納艙（深海潛艇的聲納螢幕）
+   系統與動作＝聲納的藍綠光（偏藍，和「跌」的綠分得開；台股綠色＝跌，所以不做整片綠）、紫＝你自己、琥珀＝小心、紅漲綠跌。
+   形狀：圓角的玻璃螢幕；背景是距離環和一道很慢的掃描光（畫面特效關掉、減少動態效果時不轉）。 */
+html:root[data-skin="sonar"] {
+  color-scheme: dark;
+  --void: #00060a; --abyss: #010b12; --abyss-2: #021019; --hull: #04141d; --hull-2: #061b26; --hull-3: #0a2532;
+  --seam: #0b2a36; --seam-2: #13404f;
+  --frame: rgba(56, 225, 230, .2); --frame-2: rgba(56, 225, 230, .42); --tick: rgba(56, 225, 230, .72);
+  --frost: #dbf6f7; --frost-2: #92bec6; --frost-3: #5f8c96;
+  --glacier: #38e1e6; --glacier-ink: #001b1d; --glacier-wash: rgba(56, 225, 230, .1);
+  --aurora: #b9a2ff; --aurora-ink: #160d3a; --aurora-wash: rgba(185, 162, 255, .13);
+  --up: #ff5470; --up-wash: rgba(255, 84, 112, .14); --down: #45dd7c; --down-wash: rgba(69, 221, 124, .13);
+  --flat: #8aa4ad; --flat-wash: rgba(138, 164, 173, .13);
+  --amber: #ffb547; --amber-ink: #241500; --amber-wash: rgba(255, 181, 71, .12);
+  --ring-neu: #2d5260; --track: rgba(56, 225, 230, .09);
+  --heat-base: #04141d; --heat-0: #0d2531; --heat-na: #071922;
+  --glow-1: rgba(56, 225, 230, .13); --glow-2: rgba(70, 110, 255, .08);
+  --f-serif: 'Noto Sans TC', -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  --f-num: 'Share Tech Mono', 'Noto Sans TC', ui-monospace, monospace;
+  --cut: 0px;
+  --rad: 16px;
+}
+/* 背景：越深越暗的海、距離環、一道慢慢轉的掃描光 */
+html[data-skin="sonar"] .bg {
+  background:
+    repeating-radial-gradient(circle at 50% 26%, transparent 0 95px, rgba(56, 225, 230, .05) 96px 97px),
+    radial-gradient(70% 50% at 50% 26%, rgba(56, 225, 230, .09), transparent 75%),
+    linear-gradient(180deg, #032130 0%, #010b12 55%, #00050a 100%);
+  overflow: hidden;
+}
+html[data-skin="sonar"] .bg::before {
+  content: ""; position: absolute; left: 50%; top: 26%; width: 130vmin; height: 130vmin; margin: -65vmin 0 0 -65vmin; border-radius: 50%;
+  background: conic-gradient(from 0deg, rgba(56, 225, 230, .16), rgba(56, 225, 230, 0) 16%, transparent 100%);
+  -webkit-mask-image: radial-gradient(circle, #000 30%, transparent 70%); mask-image: radial-gradient(circle, #000 30%, transparent 70%);
+  animation: snSweep 14s linear infinite;
+}
+html[data-skin="sonar"] .bg::after { background: repeating-linear-gradient(to bottom, rgba(120, 240, 255, .018) 0 1px, transparent 1px 4px); }
+@keyframes snSweep { to { transform: rotate(360deg); } }
+html[data-skin="sonar"] body.nofx .bg::before { animation: none; opacity: .5; }
+@media (prefers-reduced-motion: reduce) { html[data-skin="sonar"] .bg::before { animation: none; opacity: .5; } }
+html[data-skin="sonar"] .num { letter-spacing: .01em; }
+
+/* 抬頭 */
+html[data-skin="sonar"] .top { background: color-mix(in srgb, #010b12 70%, transparent); }
+html[data-skin="sonar"] .seal { border-radius: 50%; background: radial-gradient(circle, rgba(56, 225, 230, .25), rgba(56, 225, 230, .05) 70%); box-shadow: inset 0 0 0 1.5px var(--glacier), 0 0 14px rgba(56, 225, 230, .35); font: 700 11.5px/1 var(--f-sans); }
+html[data-skin="sonar"] .seal::before { display: none; }
+html[data-skin="sonar"] .hi { font: 700 17px/1.25 var(--f-sans); letter-spacing: .06em; }
+html[data-skin="sonar"] .avatar { clip-path: none; border-radius: 50%; background: transparent; box-shadow: inset 0 0 0 1.5px var(--aurora), 0 0 12px rgba(185, 162, 255, .25); }
+html[data-skin="sonar"] .avatar::before { display: none; }
+html[data-skin="sonar"] .icon-btn { border-radius: 50%; background: rgba(4, 20, 29, .7); }
+html[data-skin="sonar"] .status i { border-radius: 50%; transform: none; }
+
+/* 段落標題：前面一個聲納接觸點，會一圈一圈擴散 */
+html[data-skin="sonar"] .sec-h h2 { font: 700 16.5px/1.3 var(--f-sans); letter-spacing: .08em; padding-left: 18px; }
+html[data-skin="sonar"] .sec-h h2::before { width: 8px; height: 8px; top: 50%; bottom: auto; margin-top: -4px; border-radius: 50%; background: var(--glacier); box-shadow: 0 0 0 0 rgba(56, 225, 230, .55); animation: snDot 3.2s ease-out infinite; }
+@keyframes snDot { 0% { box-shadow: 0 0 0 0 rgba(56, 225, 230, .5); } 70% { box-shadow: 0 0 0 9px rgba(56, 225, 230, 0); } 100% { box-shadow: 0 0 0 0 rgba(56, 225, 230, 0); } }
+html[data-skin="sonar"] body.nofx .sec-h h2::before { animation: none; }
+html[data-skin="sonar"] .sec-h::after { background: linear-gradient(90deg, rgba(56, 225, 230, .4), transparent); }
+html[data-skin="sonar"] .w-name, html[data-skin="sonar"] .ttl-b, html[data-skin="sonar"] .d-hero h1 { letter-spacing: .03em; }
+
+/* 面板：圓角玻璃螢幕 */
+html[data-skin="sonar"] .panel { border-radius: var(--rad); background: linear-gradient(180deg, rgba(56, 225, 230, .42), rgba(56, 225, 230, .12) 40%, rgba(56, 225, 230, .2)); box-shadow: 0 8px 30px rgba(0, 0, 0, .35), 0 0 24px rgba(56, 225, 230, .05); }
+html[data-skin="sonar"] .panel::before { border-radius: calc(var(--rad) - 1px); background: radial-gradient(120% 80% at 50% 0%, rgba(56, 225, 230, .07), transparent 60%), var(--hull); }
+html[data-skin="sonar"] .panel.hazard { background: color-mix(in srgb, var(--amber) 55%, transparent); }
+html[data-skin="sonar"] .panel.hazard::before { background: repeating-linear-gradient(-45deg, var(--amber) 0 7px, transparent 7px 14px) top / 100% 5px no-repeat, var(--hull); }
+html[data-skin="sonar"] .panel.hazard-soft { background: color-mix(in srgb, var(--aurora) 45%, transparent); }
+html[data-skin="sonar"] :is(.plan, .tool-btn, .tool-card, .ph-grid > div, .c-grid > div, .co-card, .ap-row, .fz-o, .fz-bt-row, .sc-tile, .st-hero, .hm-clock, .modal-card, .toast, .speak-pill, .tip, .picked, .ck-box, .oc, .mt-ix, .gl-row, .search, .bt-sit .bs-c, .boot.eyed .bt-log) { border-radius: 12px; }
+
+/* 按鈕：圓角膠囊 */
+html[data-skin="sonar"] .btn { border-radius: 999px; background: rgba(56, 225, 230, .06); }
+html[data-skin="sonar"] .btn.primary { background: var(--glacier); box-shadow: 0 0 18px rgba(56, 225, 230, .35); }
+html[data-skin="sonar"] .btn.ghost { background: transparent; }
+html[data-skin="sonar"] :is(.pill, .chip, .mode-tag, .fz-tag, .badge, .jt-st, .dm-chip, .mini-btn, .sugg button, .dc-next button, .conf-pick button, .tg) { border-radius: 999px; }
+html[data-skin="sonar"] .seg { border-radius: 999px; padding: 3px; }
+html[data-skin="sonar"] .seg button { border-radius: 999px; }
+html[data-skin="sonar"] .seg button[aria-pressed="true"] { box-shadow: none; background: rgba(56, 225, 230, .18); }
+html[data-skin="sonar"] .input { border-radius: 12px; }
+html[data-skin="sonar"] .switch { border-radius: 999px; }
+html[data-skin="sonar"] .switch::after { border-radius: 50%; }
+html[data-skin="sonar"] .switch[aria-checked="true"] { box-shadow: 0 0 12px rgba(56, 225, 230, .4); }
+html[data-skin="sonar"] .mine-dot { border-radius: 50%; transform: none; }
+html[data-skin="sonar"] .iris-legend i { border-radius: 50%; }
+
+/* 分頁列：圓角的玻璃，現在這一頁的圖示下面亮一顆接觸點 */
+html[data-skin="sonar"] .dock { border-radius: 24px; background: rgba(56, 225, 230, .35); box-shadow: 0 10px 34px rgba(0, 0, 0, .5); }
+html[data-skin="sonar"] .dock .in { border-radius: 23px; background: rgba(2, 16, 24, .9); }
+html[data-skin="sonar"] .dock button[aria-current="page"]::after { top: auto; bottom: 6px; left: 50%; right: auto; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; box-shadow: 0 0 8px var(--glacier); }
+@media (min-width: 1100px) { html[data-skin="sonar"] .dock, html[data-skin="sonar"] .dock .in { border-radius: 0; } html[data-skin="sonar"] .dock button[aria-current="page"]::after { bottom: auto; top: 50%; left: 6px; margin: -2.5px 0 0; } }
+
+/* 全螢幕頁 */
+html[data-skin="sonar"] .sheet { background: linear-gradient(180deg, #032130 0%, #010b12 45%, #00050a 100%); }
+html[data-skin="sonar"] .sheet::before { background: repeating-radial-gradient(circle at 80% -10%, transparent 0 95px, rgba(56, 225, 230, .045) 96px 97px), radial-gradient(70% 40% at 80% -10%, var(--glow-1), transparent 70%); }
+
+/* 開機：聲納螢幕，冷眼是螢幕中心（skins/sonar.js 的畫布畫距離環、掃描光、接觸點） */
+html[data-skin="sonar"] .boot { background: radial-gradient(70% 50% at 50% 32%, rgba(56, 225, 230, .1), transparent 75%), linear-gradient(180deg, #032130, #00060a); }
+html[data-skin="sonar"] .bt-mark { border-radius: 50%; background: var(--glacier); width: 88px; height: 88px; font: 700 26px/1 var(--f-sans); }
+html[data-skin="sonar"] .bt-mark::before { inset: 2px; border-radius: 50%; background: radial-gradient(circle, rgba(56, 225, 230, .28), #011018 75%); }
+html[data-skin="sonar"] .bt-mark::after { display: none; }
+html[data-skin="sonar"] .bt-name { letter-spacing: .32em; }
+html[data-skin="sonar"] .bt-ign-in { border-radius: 50%; background: radial-gradient(circle, rgba(56, 225, 230, .3), #011018 72%); }
+html[data-skin="sonar"] .bt-ign-in b { font: 700 22px/1.1 var(--f-sans); }
+html[data-skin="sonar"] .bt-ring { border-style: solid; border-width: 1px; border-color: rgba(56, 225, 230, .6); }
+html[data-skin="sonar"] .bt-sit .bs-hello { font: 700 21px/1.3 var(--f-sans); letter-spacing: .1em; }
+
+/* 換裝那一下：一聲聲納，一圈光從中間擴散出去 */
+.skin-flash[data-k="sonar"] i { left: 50%; top: 40%; right: auto; bottom: auto; width: 60vmax; height: 60vmax; margin: -30vmax 0 0 -30vmax; border-radius: 50%; border: 2px solid rgba(56, 225, 230, .9); box-shadow: 0 0 30px rgba(56, 225, 230, .45), inset 0 0 30px rgba(56, 225, 230, .3); animation: sfRing .95s cubic-bezier(.2, .7, .3, 1) forwards; }
+@keyframes sfRing { from { transform: scale(.02); opacity: 1; } to { transform: scale(3.2); opacity: 0; } }

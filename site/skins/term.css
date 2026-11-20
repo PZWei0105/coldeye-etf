@@ -1,0 +1,125 @@
+/* 冷眼換裝 — 交易終端（黑底、等寬字、琥珀終端機）
+   顏色的意思不變：系統與動作＝米白磷光（按鈕是反白方塊）、邊框與掃描線＝橘色的終端機外殼（只是外殼，不代表任何事）、
+   要小心＝亮黃琥珀（加斜紋、反白，和外殼的橘色分得開）、紫＝你自己、紅漲綠跌。 */
+html:root[data-skin="term"] {
+  color-scheme: dark;
+  --void: #000000; --abyss: #020201; --abyss-2: #060504; --hull: #090705; --hull-2: #100d09; --hull-3: #19140d;
+  --seam: #241b10; --seam-2: #3d2e19;
+  --chrome: #ff9a1f;
+  --frame: rgba(255, 154, 31, .3); --frame-2: rgba(255, 154, 31, .58); --tick: rgba(255, 154, 31, .9);
+  --frost: #f3ead7; --frost-2: #cbb894; --frost-3: #8f7d5e;
+  --glacier: #f3ead7; --glacier-ink: #000000; --glacier-wash: rgba(243, 234, 215, .1);
+  --aurora: #c4a8ff; --aurora-ink: #12082e; --aurora-wash: rgba(196, 168, 255, .13);
+  --up: #ff4f64; --up-wash: rgba(255, 79, 100, .15); --down: #2fe08e; --down-wash: rgba(47, 224, 142, .13);
+  --flat: #9a8e78; --flat-wash: rgba(154, 142, 120, .13);
+  --amber: #ffc61a; --amber-ink: #000000; --amber-wash: rgba(255, 198, 26, .14);
+  --ring-neu: #574832; --track: rgba(255, 154, 31, .1);
+  --heat-base: #0b0906; --heat-0: #1d170f; --heat-na: #110d09;
+  --glow-1: rgba(255, 154, 31, .09); --glow-2: rgba(255, 154, 31, .04);
+  --f-serif: 'IBM Plex Mono', 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', monospace;
+  --f-sans: 'IBM Plex Mono', 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', monospace;
+  --f-num: 'IBM Plex Mono', 'Noto Sans TC', ui-monospace, monospace;
+  --cut: 0px;
+}
+html[data-skin="term"] body { font-size: 14.5px; text-shadow: 0 0 7px rgba(255, 170, 60, .16); }
+html[data-skin="term"] .num { letter-spacing: -.01em; }
+/* 背景：黑、四周暗角、掃描線 */
+html[data-skin="term"] .bg { background: radial-gradient(125% 90% at 50% 38%, transparent 52%, rgba(0, 0, 0, .7) 100%), radial-gradient(80% 45% at 50% -8%, var(--glow-1), transparent 70%), #000; }
+html[data-skin="term"] .bg::after { background: repeating-linear-gradient(to bottom, rgba(255, 190, 110, .05) 0 1px, transparent 1px 3px); mix-blend-mode: normal; display: block; }
+
+/* 抬頭 */
+html[data-skin="term"] .top { background: rgba(0, 0, 0, .9); border-bottom: 1px solid var(--frame-2); backdrop-filter: none; -webkit-backdrop-filter: none; }
+html[data-skin="term"] .seal { background: var(--chrome); color: #000; font: 700 12px/1 var(--f-sans); width: 40px; height: 40px; text-shadow: none; }
+html[data-skin="term"] .seal::before { display: none; }
+html[data-skin="term"] .hi { font: 700 16px/1.25 var(--f-sans); }
+html[data-skin="term"] .hello .hi::after { content: "▋"; flex: none; color: var(--chrome); font: 600 15px/1 var(--f-num); animation: tCur 1.06s steps(1) infinite; margin-left: -4px; }
+@keyframes tCur { 50% { opacity: 0; } }
+html[data-skin="term"] .avatar { clip-path: none; background: transparent; color: var(--aurora); box-shadow: inset 0 0 0 1px var(--aurora); font-family: var(--f-num); }
+html[data-skin="term"] .avatar::before { display: none; }
+html[data-skin="term"] .icon-btn { background: transparent; box-shadow: inset 0 0 0 1px var(--frame-2); }
+html[data-skin="term"] .explain-btn span { font: 700 15px/1 var(--f-sans); }
+html[data-skin="term"] .status i { transform: none; width: 7px; height: 11px; }
+/* 跑馬燈：抬頭最下面一排 */
+html[data-skin="term"] .sk-ticker { background: #000; border-top: 1px solid var(--frame); }
+html[data-skin="term"] .sk-ticker .tk-i { color: var(--frost-2); }
+html[data-skin="term"] .sk-ticker .tk-i b { color: var(--frost); }
+html[data-skin="term"] .sk-ticker .tk-i::before { content: "|"; color: var(--chrome); margin-right: 10px; opacity: .7; }
+
+/* 段落標題：> 指令提示 */
+html[data-skin="term"] .sec-h h2 { font: 700 15px/1.3 var(--f-sans); letter-spacing: .02em; padding-left: 16px; }
+html[data-skin="term"] .sec-h h2::before { content: ">"; width: auto; top: 0; bottom: auto; background: none; color: var(--chrome); font: 700 15px/1.3 var(--f-num); }
+html[data-skin="term"] .sec-h::after { background: repeating-linear-gradient(90deg, var(--frame-2) 0 5px, transparent 5px 9px); }
+html[data-skin="term"] .w-name, html[data-skin="term"] .ttl-b, html[data-skin="term"] .d-hero h1 { font-family: var(--f-sans); letter-spacing: 0; }
+
+/* 面板：一條橘色細框，像終端機的視窗 */
+html[data-skin="term"] .panel { background: var(--frame-2); }
+html[data-skin="term"] .panel::before { background: var(--hull); }
+html[data-skin="term"] .panel.hazard::before { background: repeating-linear-gradient(-45deg, var(--amber) 0 7px, transparent 7px 14px) top / 100% 5px no-repeat, var(--hull); }
+
+/* 按鈕：反白方塊 */
+html[data-skin="term"] .btn { background: transparent; box-shadow: inset 0 0 0 1px var(--frame-2); font-weight: 600; text-shadow: none; }
+html[data-skin="term"] .btn.primary { background: var(--glacier); color: #000; }
+html[data-skin="term"] .btn.primary:hover { filter: none; background: #fff6e2; }
+html[data-skin="term"] .btn.danger { box-shadow: inset 0 0 0 1px var(--amber); }
+html[data-skin="term"] .link { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+html[data-skin="term"] .pill { background: transparent; box-shadow: inset 0 0 0 1px var(--seam-2); }
+html[data-skin="term"] .pill[aria-pressed="true"] { background: var(--glacier); color: #000; text-shadow: none; }
+html[data-skin="term"] .seg { background: transparent; box-shadow: inset 0 0 0 1px var(--frame-2); padding: 2px; }
+html[data-skin="term"] .seg button[aria-pressed="true"] { background: var(--glacier); color: #000; box-shadow: none; text-shadow: none; }
+html[data-skin="term"] .switch { background: transparent; box-shadow: inset 0 0 0 1px var(--frame-2); }
+html[data-skin="term"] .switch::after { background: var(--frost-3); }
+html[data-skin="term"] .switch[aria-checked="true"] { background: var(--glacier); box-shadow: none; }
+html[data-skin="term"] .switch[aria-checked="true"]::after { background: #000; }
+html[data-skin="term"] .input { background: #000; box-shadow: inset 0 0 0 1px var(--frame-2); caret-color: var(--chrome); }
+html[data-skin="term"] .input:focus { box-shadow: inset 0 0 0 1.5px var(--glacier); }
+html[data-skin="term"] .chip { text-shadow: none; }
+html[data-skin="term"] .mine-dot { transform: none; }
+
+/* 分頁列：功能鍵 F1–F6 */
+html[data-skin="term"] .dock { background: var(--frame-2); }
+html[data-skin="term"] .dock .in { background: rgba(0, 0, 0, .94); backdrop-filter: none; -webkit-backdrop-filter: none; counter-reset: fk; }
+html[data-skin="term"] .dock button { counter-increment: fk; font-family: var(--f-sans); }
+html[data-skin="term"] .dock button::before { content: "F" counter(fk); position: absolute; top: 5px; left: 7px; font: 600 9.5px/1 var(--f-num); color: var(--chrome); opacity: .85; }
+html[data-skin="term"] .dock button[aria-current="page"] { background: var(--glacier); color: #000; text-shadow: none; }
+html[data-skin="term"] .dock button[aria-current="page"] svg { color: #000; filter: none; }
+html[data-skin="term"] .dock button[aria-current="page"]::before { color: #000; }
+html[data-skin="term"] .dock button[aria-current="page"]::after { display: none; }
+
+/* 全螢幕頁、提示、對話框 */
+html[data-skin="term"] .sheet { background: #000; }
+html[data-skin="term"] .sheet::before { background: radial-gradient(125% 90% at 50% 38%, transparent 52%, rgba(0, 0, 0, .7) 100%), repeating-linear-gradient(to bottom, rgba(255, 190, 110, .04) 0 1px, transparent 1px 3px); }
+html[data-skin="term"] .sheet-top { background: rgba(0, 0, 0, .92); border-bottom-color: var(--frame-2); backdrop-filter: none; -webkit-backdrop-filter: none; }
+html[data-skin="term"] .toast { background: #000; box-shadow: inset 0 0 0 1px var(--frame-2), inset 3px 0 0 var(--chrome); }
+html[data-skin="term"] .modal-card { box-shadow: inset 0 0 0 1px var(--frame-2); }
+html[data-skin="term"] .hm-t:hover { outline-color: var(--glacier); }
+
+/* 開機：黑底的終端機，冷眼兩個字由方塊點出來（skins/term.js 的畫布） */
+html[data-skin="term"] .boot { background: radial-gradient(125% 90% at 50% 38%, transparent 50%, rgba(0, 0, 0, .75) 100%), #000; }
+html[data-skin="term"] .boot::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(to bottom, rgba(255, 190, 110, .05) 0 1px, transparent 1px 3px); z-index: 2; }
+html[data-skin="term"] .bt-mark { background: var(--chrome); color: #000; font: 700 28px/1 var(--f-sans); width: 84px; height: 84px; }
+html[data-skin="term"] .bt-mark::before { display: none; }
+html[data-skin="term"] .bt-mark::after { background: #fff3d6; box-shadow: 0 0 14px var(--chrome); }
+html[data-skin="term"] .boot.eyed .bt-mark { visibility: hidden; }
+html[data-skin="term"] .bt-name { font: 600 13px/1 var(--f-sans); letter-spacing: .18em; color: var(--chrome); }
+html[data-skin="term"] .bt-log { font-size: 12.5px; }
+html[data-skin="term"] .bt-log li::before { content: ">"; color: var(--chrome); margin-right: -2px; }
+html[data-skin="term"] .bt-log li { grid-template-columns: auto auto minmax(0, 1fr) auto; }
+html[data-skin="term"] .bt-s::before { content: "[ "; font-size: inherit; }
+html[data-skin="term"] .bt-s::after { content: " ]"; }
+html[data-skin="term"] .boot.eyed .bt-log { background: rgba(0, 0, 0, .82); box-shadow: inset 0 0 0 1px var(--frame-2); }
+html[data-skin="term"] .bt-ring { border-radius: 0; border-color: var(--chrome); animation: none; border-style: dashed; }
+html[data-skin="term"] .bt-ring::before { border-radius: 0; }
+html[data-skin="term"] .bt-ring::after { border-radius: 0; }
+html[data-skin="term"] .bt-ign-in { background: #000; box-shadow: inset 0 0 0 2px var(--chrome); }
+html[data-skin="term"] .bt-ign-in b { font: 700 22px/1.1 var(--f-sans); letter-spacing: .14em; }
+html[data-skin="term"] .bt-ign-in small { color: var(--chrome); font-family: var(--f-num); }
+html[data-skin="term"] .bt-ign:active .bt-ign-in { background: var(--glacier); color: #000; }
+html[data-skin="term"] .bt-sit .bs-hello { font: 700 20px/1.3 var(--f-sans); letter-spacing: .04em; }
+html[data-skin="term"] .bt-sit .bs-tx b { text-shadow: 0 0 18px rgba(255, 170, 60, .45); }
+html[data-skin="term"] .bt-sit .bs-c { background: rgba(0, 0, 0, .8); }
+
+/* 換裝那一下：映像管開機的一條亮線 */
+.skin-flash[data-k="term"] { background: #000; animation: tfBg .8s steps(8) forwards; }
+.skin-flash[data-k="term"] i { top: 50%; bottom: auto; height: 2px; background: #fff3d6; box-shadow: 0 0 24px 6px var(--chrome); animation: tfLine .55s cubic-bezier(.3, .8, .2, 1) forwards; }
+@keyframes tfLine { 0% { transform: scaleX(0); opacity: 1; } 45% { transform: scaleX(1); height: 2px; top: 50%; opacity: 1; } 100% { transform: scaleX(1); height: 100%; top: 0; opacity: 0; } }
+@keyframes tfBg { 0% { opacity: 1; } 60% { opacity: .85; } 100% { opacity: 0; } }

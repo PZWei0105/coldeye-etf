@@ -12,7 +12,7 @@ const reduce = () => { try { return window.matchMedia('(prefers-reduced-motion: 
 export const fxOn = () => prefs().fx !== false && !reduce();
 
 // ------------------------------------------------------------------ 音效引擎
-let ctx = null, master = null, wet = null, noiseBuf = null;
+let ctx = null, master = null, wet = null, noiseBuf = null, comp = null, H = null, musicIn = null;
 const VOL = { 1: 0.45, 2: 0.85, 3: 1.35 };
 function ensure() {
   if (ctx) return ctx;
@@ -23,7 +23,7 @@ function ensure() {
     if (navigator.audioSession) navigator.audioSession.type = 'ambient';
   } catch { /* 舊版 Safari */ }
   try { ctx = new AC({ latencyHint: 'interactive' }); } catch { ctx = new AC(); }
-  const comp = ctx.createDynamicsCompressor();
+  comp = ctx.createDynamicsCompressor();
   comp.threshold.value = -18; comp.knee.value = 12; comp.ratio.value = 4; comp.attack.value = 0.003; comp.release.value = 0.2;
   master = ctx.createGain();
   master.gain.value = VOL[prefs().vol] || VOL[2];
@@ -34,19 +34,29 @@ function ensure() {
   const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 3200;
   wet = ctx.createGain(); wet.gain.value = 1;
   wet.connect(dly); dly.connect(lp); lp.connect(fb); fb.connect(dly); lp.connect(master);
-  const len = Math.floor(ctx.sampleRate * 1.2);
-  noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
-  const ch = noiseBuf.getChannelData(0);
-  let seed = 7;   // 固定種子的雜訊：每次聽起來都一樣
-  for (let i = 0; i < len; i++) { seed = (seed * 16807) % 2147483647; ch[i] = (seed / 2147483647) * 2 - 1; }
+  noiseBuf = makeNoise(ctx);
+  H = makeSynth(ctx, master, wet, noiseBuf);
   return ctx;
 }
+/** 固定種子的雜訊（1.2 秒）：每次聽起來都一樣 */
+export function makeNoise(c) {
+  const len = Math.floor(c.sampleRate * 1.2);
+  const b = c.createBuffer(1, len, c.sampleRate);
+  const ch = b.getChannelData(0);
+  let seed = 7;
+  for (let i = 0; i < len; i++) { seed = (seed * 16807) % 2147483647; ch[i] = (seed / 2147483647) * 2 - 1; }
+  return b;
+}
 let unlocked = false;
-/** 第一次點擊時呼叫（app.js 掛在整個頁面上）：建立並喚醒音效引擎 */
+const unlockSubs = new Set();
+/** 音效引擎喚醒之後通知（配樂 music.js 用：手機要先點一下才能出聲） */
+export function onUnlock(fn) { unlockSubs.add(fn); return () => unlockSubs.delete(fn); }
+/** 每一次點擊或按鍵時呼叫（app.js 掛在整個頁面上）：建立並喚醒音效引擎 */
 export function unlock() {
   const c = ensure();
   if (!c) return;
-  if (c.state === 'suspended') c.resume().catch(() => {});
+  // iPhone 從背景回來時是 interrupted（不是 suspended），一樣要在點擊當下叫醒
+  if (c.state !== 'running') c.resume().then(() => { for (const fn of unlockSubs) { try { fn(); } catch { /* 不影響音效 */ } } }).catch(() => {});
   if (!unlocked) {
     try {   // iOS 要在點擊當下播一段聲音才算解鎖
       const b = c.createBuffer(1, 1, c.sampleRate);
@@ -54,95 +64,223 @@ export function unlock() {
     } catch { /* 不支援 */ }
     unlocked = true;
   }
+  if (c.state === 'running') for (const fn of unlockSubs) { try { fn(); } catch { /* 不影響音效 */ } }
 }
 export const audioReady = () => !!(ctx && ctx.state === 'running');
-
-function tone(f, at, dur, o = {}) {
-  const t0 = ctx.currentTime + at;
-  const osc = ctx.createOscillator();
-  osc.type = o.type || 'sine';
-  osc.frequency.setValueAtTime(f, t0);
-  if (o.glide) osc.frequency.exponentialRampToValueAtTime(Math.max(20, o.glide), t0 + dur);
-  const g = ctx.createGain();
-  const peak = o.gain ?? 0.1;
-  const a = o.attack ?? 0.004;
-  g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(peak, t0 + a);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-  let node = osc;
-  if (o.lp) { const fl = ctx.createBiquadFilter(); fl.type = 'lowpass'; fl.frequency.value = o.lp; osc.connect(fl); node = fl; }
-  node.connect(g);
-  g.connect(master);
-  if (o.wet) { const w = ctx.createGain(); w.gain.value = o.wet; g.connect(w); w.connect(wet); }
-  osc.start(t0);
-  osc.stop(t0 + dur + 0.05);
+/** 配樂用：同一個音效引擎（跟著 iPhone 靜音開關），自己的音量與壓縮，不經過音效的音量 */
+export function audioCtx() { return ensure(); }
+export function musicOut() {
+  const c = ensure();
+  if (!c) return null;
+  if (!musicIn) {
+    const lim = c.createDynamicsCompressor();
+    lim.threshold.value = -10; lim.knee.value = 6; lim.ratio.value = 6; lim.attack.value = 0.005; lim.release.value = 0.25;
+    musicIn = c.createGain();
+    musicIn.gain.value = 1;
+    musicIn.connect(lim).connect(c.destination);
+  }
+  return musicIn;
 }
-function noise(at, dur, o = {}) {
-  const t0 = ctx.currentTime + at;
-  const src = ctx.createBufferSource();
-  src.buffer = noiseBuf;
-  const fl = ctx.createBiquadFilter();
-  fl.type = o.type || 'bandpass';
-  fl.frequency.setValueAtTime(o.f || 1200, t0);
-  if (o.glide) fl.frequency.exponentialRampToValueAtTime(o.glide, t0 + dur);
-  fl.Q.value = o.q ?? 1;
-  const g = ctx.createGain();
-  g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(o.gain ?? 0.08, t0 + (o.attack ?? 0.01));
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-  src.connect(fl).connect(g).connect(master);
-  if (o.wet) { const w = ctx.createGain(); w.gain.value = o.wet; g.connect(w); w.connect(wet); }
-  src.start(t0, Math.random() * 0.2);
-  src.stop(t0 + dur + 0.05);
+export const noiseBuffer = () => (ensure() ? noiseBuf : null);
+
+/**
+ * 合成器：c＝AudioContext（或離線的 OfflineAudioContext，測試量音量用），out＝輸出，wetIn＝殘響／迴音的入口，nb＝雜訊。
+ * 時間一律是「從現在起幾秒後」（at）。tone／noise 是原本機甲 HUD 的配方，參數和以前完全一樣；
+ * 加了幾個選用的參數給換裝與配樂用（rel 起落包絡、det 微調、pan 左右、lpTo 濾波掃動、vib 顫音、out 另外的輸出），沒給就和以前一模一樣。
+ */
+export function makeSynth(c, out, wetIn, nb) {
+  const T = (at) => c.currentTime + at;
+  const route = (node, o) => {
+    let n = node;
+    if (o.pan) { try { const p = c.createStereoPanner(); p.pan.value = o.pan; n.connect(p); n = p; } catch { /* 舊瀏覽器 */ } }
+    n.connect(o.out || out);
+    if (o.wet && (o.wetTo || wetIn)) { const w = c.createGain(); w.gain.value = o.wet; n.connect(w); w.connect(o.wetTo || wetIn); }
+    if (o.sends) for (const [dst, amt] of o.sends) { if (!dst || !amt) continue; const w = c.createGain(); w.gain.value = amt; n.connect(w); w.connect(dst); }
+  };
+  // 包絡：預設（原本的）＝指數起音、指數衰減到 dur；rel＝起音後維持，最後 rel 秒收掉（墊音、持續音用）
+  const env = (g, t0, dur, peak, a, o) => {
+    if (o.rel) {
+      const r = Math.min(o.rel, dur * 0.95);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(peak, t0 + a);
+      g.gain.setValueAtTime(peak, Math.max(t0 + a, t0 + dur - r));
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    } else {
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(peak, t0 + a);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    }
+  };
+  function tone(f, at, dur, o = {}) {
+    const t0 = T(at);
+    const osc = c.createOscillator();
+    if (o.wave) osc.setPeriodicWave(o.wave); else osc.type = o.type || 'sine';
+    osc.frequency.setValueAtTime(f, t0);
+    if (o.det) osc.detune.setValueAtTime(o.det, t0);
+    if (o.glide) osc.frequency.exponentialRampToValueAtTime(Math.max(20, o.glide), t0 + (o.glideT || dur));
+    let lfo = null;
+    if (o.vib) {
+      lfo = c.createOscillator(); lfo.frequency.value = o.vib.rate || 5.5;
+      const d = c.createGain(); d.gain.setValueAtTime(0, t0); d.gain.linearRampToValueAtTime(o.vib.depth || 12, t0 + (o.vib.delay || 0.15));
+      lfo.connect(d).connect(osc.detune); lfo.start(t0); lfo.stop(t0 + dur + 0.05);
+    }
+    const g = c.createGain();
+    env(g, t0, dur, o.gain ?? 0.1, o.attack ?? 0.004, o);
+    let node = osc;
+    if (o.lp) {
+      const fl = c.createBiquadFilter(); fl.type = 'lowpass'; fl.frequency.setValueAtTime(o.lp, t0);
+      if (o.q) fl.Q.value = o.q;
+      if (o.lpTo) fl.frequency.exponentialRampToValueAtTime(Math.max(40, o.lpTo), t0 + (o.lpT || dur));
+      osc.connect(fl); node = fl;
+    }
+    node.connect(g);
+    route(g, o);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.05);
+  }
+  function noise(at, dur, o = {}) {
+    const t0 = T(at);
+    const src = c.createBufferSource();
+    src.buffer = nb;
+    const fl = c.createBiquadFilter();
+    fl.type = o.type || 'bandpass';
+    fl.frequency.setValueAtTime(o.f || 1200, t0);
+    if (o.glide) fl.frequency.exponentialRampToValueAtTime(o.glide, t0 + dur);
+    fl.Q.value = o.q ?? 1;
+    const g = c.createGain();
+    env(g, t0, dur, o.gain ?? 0.08, o.attack ?? 0.01, o);
+    src.connect(fl).connect(g);
+    route(g, o);
+    src.start(t0, o.off ?? Math.random() * 0.2);
+    src.stop(t0 + dur + 0.05);
+  }
+  // 撥弦（Karplus–Strong）：雜訊在一圈延遲裡越磨越圓，像古琴、吉他的弦；同一個音高只算一次
+  const plucks = new Map();
+  function pluckBuf(f, damp, soft, len) {
+    const key = `${Math.round(f * 10)}|${damp}|${soft}|${len}|${c.sampleRate}`;
+    let b = plucks.get(key);
+    if (b) return b;
+    const sr = c.sampleRate, N = Math.max(2, Math.round(sr / f)), L = Math.floor(sr * len);
+    b = c.createBuffer(1, L, sr);
+    const y = b.getChannelData(0);
+    const ring = new Float32Array(N);
+    let seed = 1234 + N;
+    for (let i = 0; i < N; i++) { seed = (seed * 16807) % 2147483647; ring[i] = (seed / 2147483647) * 2 - 1; }
+    for (let k = 0; k < soft; k++) for (let i = 0; i < N; i++) ring[i] = 0.5 * (ring[i] + ring[(i + 1) % N]);   // 起音柔一點
+    let mx = 0;
+    for (let i = 0; i < N; i++) mx = Math.max(mx, Math.abs(ring[i]));
+    const sc = mx > 0 ? 1 / mx : 1;
+    let idx = 0;
+    for (let i = 0; i < L; i++) {
+      const cur = ring[idx], nxt = ring[(idx + 1) % N];
+      y[i] = cur * sc;
+      ring[idx] = damp * 0.5 * (cur + nxt);
+      idx = (idx + 1) % N;
+    }
+    if (plucks.size > 80) plucks.delete(plucks.keys().next().value);
+    plucks.set(key, b);
+    return b;
+  }
+  function pluck(f, at, o = {}) {
+    const t0 = T(at);
+    const len = o.len || 2.2;
+    const src = c.createBufferSource();
+    src.buffer = pluckBuf(f, o.damp ?? 0.996, o.soft ?? 1, len);
+    const g = c.createGain();
+    const peak = o.gain ?? 0.12;
+    g.gain.setValueAtTime(peak, t0);
+    if (o.dur) { g.gain.setValueAtTime(peak, t0 + Math.max(0.01, o.dur - 0.08)); g.gain.exponentialRampToValueAtTime(0.0001, t0 + o.dur); }
+    let node = src;
+    if (o.lp) { const fl = c.createBiquadFilter(); fl.type = 'lowpass'; fl.frequency.value = o.lp; src.connect(fl); node = fl; }
+    node.connect(g);
+    route(g, o);
+    src.start(t0);
+    src.stop(t0 + (o.dur || len) + 0.05);
+  }
+  // 電鋼琴（FM）：調變器的深度一開始大、很快變小，聽起來像敲在金屬片上的琴
+  function fm(f, at, dur, o = {}) {
+    const t0 = T(at);
+    const car = c.createOscillator(); car.frequency.setValueAtTime(f, t0);
+    const mod = c.createOscillator(); mod.frequency.setValueAtTime(f * (o.ratio || 1), t0);
+    const mg = c.createGain();
+    const idx = (o.idx ?? 2.2) * f;
+    mg.gain.setValueAtTime(idx, t0);
+    mg.gain.exponentialRampToValueAtTime(Math.max(1, idx * (o.idxEnd ?? 0.12)), t0 + Math.min(dur, o.idxT || 0.7));
+    mod.connect(mg).connect(car.frequency);
+    const g = c.createGain();
+    env(g, t0, dur, o.gain ?? 0.08, o.attack ?? 0.003, o);
+    car.connect(g);
+    route(g, o);
+    car.start(t0); mod.start(t0);
+    car.stop(t0 + dur + 0.05); mod.stop(t0 + dur + 0.05);
+  }
+  // 鐘、磬、缽：幾個不成整數倍的泛音，各自慢慢消失
+  function bell(f, at, dur, o = {}) {
+    const parts = o.parts || [[1, 1], [2.0, 0.42], [2.76, 0.3], [5.4, 0.14], [8.93, 0.06]];
+    const peak = o.gain ?? 0.06;
+    for (const [r, a] of parts) {
+      const fr = f * r;
+      if (fr > 16000) continue;
+      tone(fr, at, dur * (1.1 - Math.min(0.75, r * 0.07)), { gain: peak * a, attack: o.attack ?? 0.002, out: o.out, wet: o.wet, wetTo: o.wetTo, pan: o.pan, sends: o.sends });
+    }
+  }
+  return { c, tone, noise, pluck, fm, bell, now: () => c.currentTime };
 }
 
-/** 每個聲音的配方：同一組音高（A 小調五聲）讓整套聲音像同一台機體 */
+/** 每個聲音的配方：同一組音高（A 小調五聲）讓整套聲音像同一台機體（這是機甲 HUD 的音效組；換裝可以換掉，見 setBank） */
 const SOUNDS = {
-  tap: () => tone(1850, 0, 0.035, { type: 'triangle', gain: 0.06 }),
-  nav: () => { tone(1318.5, 0, 0.05, { gain: 0.07 }); tone(1760, 0.045, 0.07, { gain: 0.06, wet: 0.2 }); },
-  open: () => { tone(392, 0, 0.16, { type: 'sawtooth', gain: 0.035, glide: 1250, lp: 2600 }); noise(0, 0.14, { gain: 0.035, f: 2500, glide: 7000, q: 2 }); tone(2349, 0.12, 0.05, { gain: 0.035 }); },
-  close: () => { tone(1046.5, 0, 0.11, { type: 'sawtooth', gain: 0.03, glide: 330, lp: 2000 }); },
-  ok: () => { tone(880, 0, 0.11, { gain: 0.09 }); tone(1318.5, 0.07, 0.22, { gain: 0.08, wet: 0.35 }); },
-  scan: () => {
-    [659.3, 784, 987.8, 1174.7, 1318.5, 1568, 1760, 1975.5].forEach((f, i) => tone(f, i * 0.055, 0.045, { type: 'square', gain: 0.018, lp: 3200 }));
-    noise(0, 0.55, { gain: 0.03, f: 700, glide: 5200, q: 5 });
+  tap: (A) => A.tone(1850, 0, 0.035, { type: 'triangle', gain: 0.06 }),
+  nav: (A) => { A.tone(1318.5, 0, 0.05, { gain: 0.07 }); A.tone(1760, 0.045, 0.07, { gain: 0.06, wet: 0.2 }); },
+  open: (A) => { A.tone(392, 0, 0.16, { type: 'sawtooth', gain: 0.035, glide: 1250, lp: 2600 }); A.noise(0, 0.14, { gain: 0.035, f: 2500, glide: 7000, q: 2 }); A.tone(2349, 0.12, 0.05, { gain: 0.035 }); },
+  close: (A) => { A.tone(1046.5, 0, 0.11, { type: 'sawtooth', gain: 0.03, glide: 330, lp: 2000 }); },
+  ok: (A) => { A.tone(880, 0, 0.11, { gain: 0.09 }); A.tone(1318.5, 0.07, 0.22, { gain: 0.08, wet: 0.35 }); },
+  scan: (A) => {
+    [659.3, 784, 987.8, 1174.7, 1318.5, 1568, 1760, 1975.5].forEach((f, i) => A.tone(f, i * 0.055, 0.045, { type: 'square', gain: 0.018, lp: 3200 }));
+    A.noise(0, 0.55, { gain: 0.03, f: 700, glide: 5200, q: 5 });
   },
-  good: () => tone(1568, 0, 0.07, { gain: 0.05, wet: 0.2 }),
-  warn: () => { tone(523.3, 0, 0.07, { type: 'square', gain: 0.025, lp: 1500 }); tone(493.9, 0.085, 0.08, { type: 'square', gain: 0.022, lp: 1500 }); },
-  stop: () => { tone(220, 0, 0.18, { type: 'sawtooth', gain: 0.05, lp: 900 }); tone(207.7, 0.2, 0.22, { type: 'sawtooth', gain: 0.045, lp: 900 }); },
-  lock: () => { tone(147, 0, 0.18, { gain: 0.2, glide: 70 }); noise(0, 0.05, { type: 'lowpass', f: 1800, gain: 0.08 }); tone(1760, 0.06, 0.28, { gain: 0.06, wet: 0.5 }); tone(2637, 0.11, 0.32, { gain: 0.035, wet: 0.5 }); },
-  alert: () => { for (let k = 0; k < 3; k++) tone(987.8, k * 0.13, 0.075, { type: 'square', gain: 0.035, lp: 2600 }); },
-  err: () => tone(155, 0, 0.17, { type: 'sawtooth', gain: 0.055, lp: 700 }),
-  ping: () => tone(1318.5, 0, 0.09, { gain: 0.035, wet: 0.25 }),
-  pxUp: () => { tone(1568, 0, 0.05, { gain: 0.03 }); tone(2093, 0.04, 0.06, { gain: 0.025 }); },
-  pxDown: () => { tone(784, 0, 0.05, { gain: 0.03 }); tone(587.3, 0.04, 0.06, { gain: 0.025 }); },
-  hit: () => [523.3, 659.3, 784, 1046.5].forEach((f, i) => tone(f, i * 0.07, 0.2, { gain: 0.07, wet: 0.35 })),
-  miss: () => [440, 349.2, 293.7].forEach((f, i) => tone(f, i * 0.09, 0.24, { type: 'triangle', gain: 0.06, wet: 0.25 })),
-  comms: () => { noise(0, 0.08, { gain: 0.03, f: 3000, q: 3 }); tone(1046.5, 0.05, 0.05, { gain: 0.05 }); tone(1568, 0.11, 0.08, { gain: 0.05 }); },
-  tick: () => tone(2400, 0, 0.022, { type: 'square', gain: 0.014, lp: 4200 }),
-  ignite: () => {
-    noise(0, 1.15, { type: 'lowpass', f: 90, glide: 700, gain: 0.12, attack: 0.25 });
-    tone(55, 0, 1.15, { type: 'sawtooth', gain: 0.05, glide: 110, lp: 420, attack: 0.2 });
-    tone(110, 0.15, 0.95, { gain: 0.06, glide: 440, attack: 0.1 });
-    [220, 329.6, 440, 554.4].forEach((f, i) => tone(f, 0.98 + i * 0.03, 1.4, { type: 'triangle', gain: 0.04, attack: 0.05, wet: 0.4 }));
-    tone(1760, 1.05, 0.6, { gain: 0.03, wet: 0.5 });
+  good: (A) => A.tone(1568, 0, 0.07, { gain: 0.05, wet: 0.2 }),
+  warn: (A) => { A.tone(523.3, 0, 0.07, { type: 'square', gain: 0.025, lp: 1500 }); A.tone(493.9, 0.085, 0.08, { type: 'square', gain: 0.022, lp: 1500 }); },
+  stop: (A) => { A.tone(220, 0, 0.18, { type: 'sawtooth', gain: 0.05, lp: 900 }); A.tone(207.7, 0.2, 0.22, { type: 'sawtooth', gain: 0.045, lp: 900 }); },
+  lock: (A) => { A.tone(147, 0, 0.18, { gain: 0.2, glide: 70 }); A.noise(0, 0.05, { type: 'lowpass', f: 1800, gain: 0.08 }); A.tone(1760, 0.06, 0.28, { gain: 0.06, wet: 0.5 }); A.tone(2637, 0.11, 0.32, { gain: 0.035, wet: 0.5 }); },
+  alert: (A) => { for (let k = 0; k < 3; k++) A.tone(987.8, k * 0.13, 0.075, { type: 'square', gain: 0.035, lp: 2600 }); },
+  err: (A) => A.tone(155, 0, 0.17, { type: 'sawtooth', gain: 0.055, lp: 700 }),
+  ping: (A) => A.tone(1318.5, 0, 0.09, { gain: 0.035, wet: 0.25 }),
+  pxUp: (A) => { A.tone(1568, 0, 0.05, { gain: 0.03 }); A.tone(2093, 0.04, 0.06, { gain: 0.025 }); },
+  pxDown: (A) => { A.tone(784, 0, 0.05, { gain: 0.03 }); A.tone(587.3, 0.04, 0.06, { gain: 0.025 }); },
+  hit: (A) => [523.3, 659.3, 784, 1046.5].forEach((f, i) => A.tone(f, i * 0.07, 0.2, { gain: 0.07, wet: 0.35 })),
+  miss: (A) => [440, 349.2, 293.7].forEach((f, i) => A.tone(f, i * 0.09, 0.24, { type: 'triangle', gain: 0.06, wet: 0.25 })),
+  comms: (A) => { A.noise(0, 0.08, { gain: 0.03, f: 3000, q: 3 }); A.tone(1046.5, 0.05, 0.05, { gain: 0.05 }); A.tone(1568, 0.11, 0.08, { gain: 0.05 }); },
+  tick: (A) => A.tone(2400, 0, 0.022, { type: 'square', gain: 0.014, lp: 4200 }),
+  ignite: (A) => {
+    A.noise(0, 1.15, { type: 'lowpass', f: 90, glide: 700, gain: 0.12, attack: 0.25 });
+    A.tone(55, 0, 1.15, { type: 'sawtooth', gain: 0.05, glide: 110, lp: 420, attack: 0.2 });
+    A.tone(110, 0.15, 0.95, { gain: 0.06, glide: 440, attack: 0.1 });
+    [220, 329.6, 440, 554.4].forEach((f, i) => A.tone(f, 0.98 + i * 0.03, 1.4, { type: 'triangle', gain: 0.04, attack: 0.05, wet: 0.4 }));
+    A.tone(1760, 1.05, 0.6, { gain: 0.03, wet: 0.5 });
   },
-  online: () => [880, 1108.7, 1318.5, 1760].forEach((f, i) => tone(f, i * 0.065, 0.18, { gain: 0.05, wet: 0.4 })),
-  stamp: () => { noise(0, 0.07, { type: 'lowpass', f: 900, gain: 0.14 }); tone(98, 0, 0.22, { gain: 0.18, glide: 55 }); tone(1975.5, 0.08, 0.3, { gain: 0.03, wet: 0.5 }); },
+  online: (A) => [880, 1108.7, 1318.5, 1760].forEach((f, i) => A.tone(f, i * 0.065, 0.18, { gain: 0.05, wet: 0.4 })),
+  stamp: (A) => { A.noise(0, 0.07, { type: 'lowpass', f: 900, gain: 0.14 }); A.tone(98, 0, 0.22, { gain: 0.18, glide: 55 }); A.tone(1975.5, 0.08, 0.3, { gain: 0.03, wet: 0.5 }); },
   // 2026/11/18 超級大更新：冷眼睜開（虹膜轉起來的一串亮音＋一口氣）、戰況揭曉、歷史風暴的雷聲
-  iris: () => {
-    noise(0, 0.6, { f: 400, glide: 6000, q: 3, gain: 0.04, attack: 0.18 });
-    [440, 554.4, 659.3, 880, 1108.7, 1318.5].forEach((f, i) => tone(f, 0.08 + i * 0.05, 0.5, { type: 'triangle', gain: 0.035, attack: 0.02, wet: 0.45 }));
-    tone(2637, 0.42, 0.7, { gain: 0.025, wet: 0.6 });
+  iris: (A) => {
+    A.noise(0, 0.6, { f: 400, glide: 6000, q: 3, gain: 0.04, attack: 0.18 });
+    [440, 554.4, 659.3, 880, 1108.7, 1318.5].forEach((f, i) => A.tone(f, 0.08 + i * 0.05, 0.5, { type: 'triangle', gain: 0.035, attack: 0.02, wet: 0.45 }));
+    A.tone(2637, 0.42, 0.7, { gain: 0.025, wet: 0.6 });
   },
-  reveal: () => { tone(110, 0, 0.5, { gain: 0.12, glide: 55 }); [659.3, 987.8, 1318.5].forEach((f, i) => tone(f, 0.04 + i * 0.03, 0.9, { gain: 0.045, attack: 0.01, wet: 0.5 })); noise(0, 0.25, { type: 'lowpass', f: 2400, glide: 300, gain: 0.05 }); },
-  storm: () => {
-    noise(0, 0.12, { type: 'highpass', f: 3000, gain: 0.08 });
-    noise(0.05, 1.0, { type: 'lowpass', f: 380, glide: 90, gain: 0.2, attack: 0.03 });
-    noise(0.55, 0.95, { type: 'lowpass', f: 220, glide: 60, gain: 0.14, attack: 0.08 });
-    tone(55, 0.05, 1.3, { type: 'sawtooth', gain: 0.05, glide: 33, lp: 160, attack: 0.05 });
+  reveal: (A) => { A.tone(110, 0, 0.5, { gain: 0.12, glide: 55 }); [659.3, 987.8, 1318.5].forEach((f, i) => A.tone(f, 0.04 + i * 0.03, 0.9, { gain: 0.045, attack: 0.01, wet: 0.5 })); A.noise(0, 0.25, { type: 'lowpass', f: 2400, glide: 300, gain: 0.05 }); },
+  storm: (A) => {
+    A.noise(0, 0.12, { type: 'highpass', f: 3000, gain: 0.08 });
+    A.noise(0.05, 1.0, { type: 'lowpass', f: 380, glide: 90, gain: 0.2, attack: 0.03 });
+    A.noise(0.55, 0.95, { type: 'lowpass', f: 220, glide: 60, gain: 0.14, attack: 0.08 });
+    A.tone(55, 0.05, 1.3, { type: 'sawtooth', gain: 0.05, glide: 33, lp: 160, attack: 0.05 });
   },
 };
+/** 全部聲音的名字（換裝的音效組要每一個都有，tests/skin_test.mjs 會檢查） */
+export const SOUND_NAMES = Object.keys(SOUNDS);
+/** 機甲 HUD 的原始配方（測試量音量用） */
+export const HUD_SOUNDS = SOUNDS;
+// 換裝的音效組：{ 名字: (A) => … }；null＝機甲 HUD 原本的聲音
+let bank = null;
+export function setBank(b) { bank = b && typeof b === 'object' ? b : null; }
 const lastAt = new Map();
 let recent = [];
 /** 播一個音效（沒解鎖、關掉音效、分頁在背景時不播；同一個聲音 45ms 內不重複） */
@@ -157,7 +295,8 @@ export function sfx(name) {
   lastAt.set(name, now);
   recent.push(now);
   master.gain.value = VOL[p.vol] || VOL[2];
-  try { SOUNDS[name](); } catch { /* 不讓音效影響 App */ }
+  const fn = (bank && bank[name]) || SOUNDS[name];
+  try { fn(H); } catch { /* 不讓音效影響 App */ }
 }
 
 // ------------------------------------------------------------------ 震動（Android 有效；iPhone 的網頁不支援）
@@ -178,9 +317,20 @@ const canSpeak = () => typeof window !== 'undefined' && 'speechSynthesis' in win
 const voiceSubs = new Set();
 /** 語音清單載入或改變時通知（設定頁的語音選單用；iPhone、Android 常常晚一點才給清單） */
 export function onVoices(fn) { voiceSubs.add(fn); return () => voiceSubs.delete(fn); }
+// 清單真的變了才通知；通知裡又來讀清單（設定頁重畫語音那一行）不會再觸發一次。
+// 沒有任何語音的裝置（每次讀都是空的）以前會在設定頁重畫時一直互相觸發，卡住畫面
+let voicesKey = null, loadingVoices = false;
 function loadVoices() {
-  try { voices = window.speechSynthesis.getVoices() || []; } catch { voices = []; }
-  for (const fn of voiceSubs) { try { fn(); } catch { /* 不影響播報 */ } }
+  if (loadingVoices) return;
+  loadingVoices = true;
+  try {
+    try { voices = window.speechSynthesis.getVoices() || []; } catch { voices = []; }
+    const key = voices.map((v) => `${v.name}|${v.lang}|${v.localService}`).join(',');
+    if (key !== voicesKey) {
+      voicesKey = key;
+      for (const fn of voiceSubs) { try { fn(); } catch { /* 不影響播報 */ } }
+    }
+  } finally { loadingVoices = false; }
 }
 if (canSpeak()) {
   loadVoices();

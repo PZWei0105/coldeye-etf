@@ -19,6 +19,17 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@700;900&family=Oxanium:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="styles.css">
+<script>
+/* 換裝（skin.js）：這支手機選的那一套，CSS 在畫面出來之前就放進去，打開時不會先閃一下機甲 HUD */
+try {
+  var sk = (JSON.parse(localStorage.getItem('coldeye.settings') || '{}') || {}).skin;
+  if (/^(term|sonar|led|ink)$/.test(sk)) {
+    document.documentElement.setAttribute('data-skin', sk);
+    document.documentElement.setAttribute('data-theme', sk === 'ink' ? 'light' : 'dark');
+    document.write('<link rel="stylesheet" href="skins/base.css" data-skin-css><link rel="stylesheet" href="skins/' + sk + '.css" data-skin-css><link rel="modulepreload" href="skins/' + sk + '.js">');
+  }
+} catch (e) { /* 讀不到設定：用機甲 HUD */ }
+</script>
 <link rel="modulepreload" href="core.js">
 <link rel="modulepreload" href="pf.js">
 <link rel="modulepreload" href="calc.js">
@@ -27,6 +38,8 @@
 <link rel="modulepreload" href="aide.js">
 <link rel="modulepreload" href="desk.js">
 <link rel="modulepreload" href="dca.js">
+<link rel="modulepreload" href="skin.js">
+<link rel="modulepreload" href="music.js">
 </head>
 <body>
 <noscript>冷眼需要開啟 JavaScript 才能使用。</noscript>

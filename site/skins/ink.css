@@ -1,0 +1,110 @@
+/* 冷眼換裝 — 水墨禪（宣紙、留白、墨色）
+   系統與動作＝花青（藍黑色的墨）、紫＝你自己、琥珀＝小心（赭黃）、紅漲綠跌（朱紅、松綠）。
+   左上角的朱紅印章只是冷眼的落款（不代表漲跌）；面板沒有框，用留白和淡淡的紙張分開。 */
+html:root[data-skin="ink"] {
+  color-scheme: light;
+  --void: #e7e0d0; --abyss: #f1ece1; --abyss-2: #ebe5d8; --hull: #f8f4ec; --hull-2: #f0eadf; --hull-3: #e6dece;
+  --seam: #e0d7c5; --seam-2: #cbbfa8;
+  --frame: rgba(36, 32, 26, .14); --frame-2: rgba(36, 32, 26, .3); --tick: rgba(36, 32, 26, .5);
+  --frost: #1d1b18; --frost-2: #4b4640; --frost-3: #736a5e;
+  --glacier: #24496b; --glacier-ink: #f8f4ec; --glacier-wash: rgba(36, 73, 107, .08);
+  --aurora: #6a4a9e; --aurora-ink: #ffffff; --aurora-wash: rgba(106, 74, 158, .09);
+  --up: #bf3426; --up-wash: rgba(191, 52, 38, .09); --down: #2d7a4c; --down-wash: rgba(45, 122, 76, .09);
+  --flat: #736a5e; --flat-wash: rgba(115, 106, 94, .09);
+  --amber: #a86200; --amber-ink: #ffffff; --amber-wash: rgba(168, 98, 0, .09);
+  --seal: #b23a2c;
+  --s1: #3d6fa8; --s2: #c0683a; --s3: #6b5bb5; --s4: #b2860f; --s5: #b85a85; --s-other: #9a9080; --s-cash: #d8cfbd;
+  --ma20: #b2860f; --ma60: #3d6fa8; --ma120: #6b5bb5;
+  --ring-neu: #c7bca8; --track: rgba(36, 32, 26, .07);
+  --heat-base: #f8f4ec; --heat-0: #e7e0d2; --heat-na: #efe9dd;
+  --glow-1: rgba(0, 0, 0, .03); --glow-2: rgba(0, 0, 0, .015);
+  --f-serif: 'LXGW WenKai TC', 'Noto Serif TC', 'Songti TC', serif;
+  --f-sans: 'LXGW WenKai TC', 'Noto Sans TC', 'PingFang TC', sans-serif;
+  --f-num: 'Noto Serif TC', 'LXGW WenKai TC', serif;
+  --cut: 0px;
+  --paper: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .32 0 0 0 0 .27 0 0 0 0 .2 0 0 0 .11 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --hills: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 300' preserveAspectRatio='none'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23000' stop-opacity='.11'/%3E%3Cstop offset='1' stop-color='%23000' stop-opacity='0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M0 200 C110 150 170 110 250 150 S410 80 520 140 S690 50 820 130 S1010 100 1200 160 L1200 300 L0 300Z' fill='url(%23g)'/%3E%3Cpath d='M0 250 C140 205 250 232 360 208 S560 172 700 216 S930 188 1200 228 L1200 300 L0 300Z' fill='%23000' fill-opacity='.05'/%3E%3C/svg%3E");
+}
+html[data-skin="ink"] body { font-size: 15.5px; }
+/* 背景：宣紙的纖維＋遠山 */
+html[data-skin="ink"] .bg { background: var(--hills) bottom / 100% 34vh no-repeat, var(--paper), radial-gradient(90% 60% at 50% 0%, #f7f3ea, #ece5d6 85%); }
+
+/* 抬頭：朱紅的印章落款 */
+html[data-skin="ink"] .top { background: color-mix(in srgb, #f1ece1 86%, transparent); }
+html[data-skin="ink"] .top.scrolled { border-bottom-color: rgba(36, 32, 26, .18); }
+html[data-skin="ink"] .seal { background: var(--seal); color: #fbf6ec; border-radius: 3px; transform: rotate(-4deg); font: 700 13px/1.05 var(--f-serif); box-shadow: inset 0 0 0 2px rgba(251, 246, 236, .55), inset 0 0 0 3.5px var(--seal); }
+html[data-skin="ink"] .seal::before { display: none; }
+html[data-skin="ink"] .hi { font: 700 19px/1.25 var(--f-serif); letter-spacing: .06em; }
+html[data-skin="ink"] .avatar { clip-path: none; border-radius: 50%; background: transparent; color: var(--aurora); box-shadow: inset 0 0 0 1.5px var(--aurora); font-family: var(--f-num); }
+html[data-skin="ink"] .avatar::before { display: none; }
+html[data-skin="ink"] .icon-btn { background: transparent; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(36, 32, 26, .25); }
+html[data-skin="ink"] .explain-btn[aria-pressed="true"] { background: var(--glacier); color: var(--glacier-ink); }
+html[data-skin="ink"] .status i { border-radius: 50%; transform: none; }
+
+/* 段落標題：一點墨、一筆淡淡的線 */
+html[data-skin="ink"] .sec-h h2 { font: 700 20px/1.3 var(--f-serif); letter-spacing: .1em; padding-left: 18px; }
+html[data-skin="ink"] .sec-h h2::before { width: 10px; height: 10px; top: 50%; bottom: auto; margin-top: -5px; border-radius: 52% 46% 55% 44%; background: radial-gradient(circle at 42% 40%, #1d1b18 0 52%, rgba(29, 27, 24, .55) 66%, transparent 72%); }
+html[data-skin="ink"] .sec-h::after { height: 2px; background: linear-gradient(90deg, rgba(29, 27, 24, .5), rgba(29, 27, 24, .14) 45%, transparent 85%); border-radius: 2px; }
+html[data-skin="ink"] .w-name { font-weight: 700; letter-spacing: .04em; }
+html[data-skin="ink"] .d-hero h1 { letter-spacing: .08em; }
+
+/* 面板：沒有框，一張淡淡的紙 */
+html[data-skin="ink"] .panel { background: transparent; }
+html[data-skin="ink"] .panel::before { inset: 0; border-radius: 6px; background: rgba(252, 249, 242, .62); box-shadow: 0 1px 0 rgba(36, 32, 26, .05), 0 14px 28px -22px rgba(70, 50, 20, .45); }
+html[data-skin="ink"] .panel.hazard::before { background: repeating-linear-gradient(-45deg, var(--amber) 0 6px, transparent 6px 12px) top / 100% 4px no-repeat, rgba(252, 249, 242, .7); }
+html[data-skin="ink"] .panel.hazard-soft::before { background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--aurora) 50%, transparent) 0 6px, transparent 6px 12px) top / 100% 3px no-repeat, rgba(252, 249, 242, .62); }
+html[data-skin="ink"] .panel.hud::after { opacity: .5; }
+html[data-skin="ink"] .list > * + * { border-top-color: rgba(36, 32, 26, .09); }
+html[data-skin="ink"] :is(.plan, .tool-btn, .tool-card, .ph-grid > div, .c-grid > div, .co-card, .fz-o, .fz-bt-row, .sc-tile, .st-hero, .hm-clock, .modal-card, .toast, .speak-pill, .gl-row, .search, .bt-sit .bs-c, .boot.eyed .bt-log, .tip, .picked, .ck-box, .oc, .mt-ix, .ap-row) { border-radius: 6px; }
+
+/* 按鈕：細墨線；主要的是花青的實心 */
+html[data-skin="ink"] .btn { border-radius: 6px; background: transparent; box-shadow: inset 0 0 0 1px rgba(36, 32, 26, .32); font-family: var(--f-sans); letter-spacing: .06em; }
+html[data-skin="ink"] .btn.primary { background: var(--glacier); color: var(--glacier-ink); box-shadow: none; }
+html[data-skin="ink"] :is(.pill, .chip, .mode-tag, .fz-tag, .mini-btn, .badge, .dm-chip, .sugg button, .dc-next button, .conf-pick button, .tg, .jt-st) { border-radius: 4px; }
+html[data-skin="ink"] .pill { background: transparent; }
+html[data-skin="ink"] .pill[aria-pressed="true"] { background: var(--frost); color: #f8f4ec; }
+html[data-skin="ink"] .seg { border-radius: 6px; background: transparent; box-shadow: inset 0 0 0 1px rgba(36, 32, 26, .22); }
+html[data-skin="ink"] .seg button { border-radius: 4px; }
+html[data-skin="ink"] .seg button[aria-pressed="true"] { background: var(--glacier-wash); box-shadow: inset 0 -2px 0 var(--glacier); }
+html[data-skin="ink"] .switch { border-radius: 999px; background: #d5cbb7; }
+html[data-skin="ink"] .switch::after { border-radius: 50%; background: #fbf8f1; box-shadow: 0 1px 2px rgba(0, 0, 0, .2); }
+html[data-skin="ink"] .switch[aria-checked="true"] { background: var(--glacier); }
+html[data-skin="ink"] .input { border-radius: 6px; background: rgba(252, 249, 242, .8); box-shadow: inset 0 0 0 1px rgba(36, 32, 26, .22); }
+html[data-skin="ink"] .mine-dot { border-radius: 50%; transform: none; }
+html[data-skin="ink"] .iris-legend i { border-radius: 50%; }
+
+/* 分頁列：一條墨線，這一頁用花青、底下一筆 */
+html[data-skin="ink"] .dock { background: rgba(36, 32, 26, .2); border-radius: 14px; box-shadow: 0 10px 26px -12px rgba(70, 50, 20, .4); }
+html[data-skin="ink"] .dock .in { border-radius: 13px; background: color-mix(in srgb, #f6f1e7 92%, transparent); }
+html[data-skin="ink"] .dock button { font-family: var(--f-sans); font-size: 11.5px; }
+html[data-skin="ink"] .dock button[aria-current="page"] svg { color: var(--glacier); filter: none; }
+html[data-skin="ink"] .dock button[aria-current="page"]::after { top: auto; bottom: 7px; left: 34%; right: 34%; height: 2px; border-radius: 2px; background: var(--frost); opacity: .7; }
+@media (min-width: 1100px) { html[data-skin="ink"] .dock, html[data-skin="ink"] .dock .in { border-radius: 0; } html[data-skin="ink"] .dock button[aria-current="page"]::after { bottom: 30%; top: 30%; left: 6px; right: auto; width: 2px; height: auto; } }
+
+/* 全螢幕頁 */
+html[data-skin="ink"] .sheet { background: var(--paper), #f1ece1; }
+html[data-skin="ink"] .sheet::before { background: var(--hills) bottom / 100% 30vh no-repeat; opacity: .8; }
+html[data-skin="ink"] .sheet-top { background: color-mix(in srgb, #f1ece1 90%, transparent); border-bottom-color: rgba(36, 32, 26, .15); }
+html[data-skin="ink"] .toast { background: #fbf8f1; box-shadow: 0 6px 20px -8px rgba(60, 40, 10, .4), inset 0 0 0 1px rgba(36, 32, 26, .15); }
+
+/* 開機：宣紙上一筆畫出圓相，冷眼的印章蓋在中間（skins/ink.js 的畫布） */
+html[data-skin="ink"] .boot { background: var(--hills) bottom / 100% 36vh no-repeat, var(--paper), radial-gradient(80% 60% at 50% 35%, #f8f4ec, #e9e2d3 90%); }
+html[data-skin="ink"] .bt-mark { background: var(--seal); color: #fbf6ec; border-radius: 6px; width: 78px; height: 78px; font: 700 26px/1.05 var(--f-serif); transform: rotate(-4deg); box-shadow: inset 0 0 0 3px rgba(251, 246, 236, .6), inset 0 0 0 5px var(--seal); }
+html[data-skin="ink"] .bt-mark::before, html[data-skin="ink"] .bt-mark::after { display: none; }
+html[data-skin="ink"] .boot.eyed.go .bt-mark { animation: inkStamp .5s cubic-bezier(.3, 1.6, .5, 1) 1.15s both; }
+@keyframes inkStamp { from { opacity: 0; transform: rotate(-4deg) scale(1.6); } to { opacity: 1; transform: rotate(-4deg) scale(1); } }
+html[data-skin="ink"] .bt-name { font-family: var(--f-serif); letter-spacing: .4em; color: var(--frost-2); }
+html[data-skin="ink"] .boot.eyed .bt-log { background: rgba(252, 249, 242, .78); box-shadow: 0 10px 26px -18px rgba(70, 50, 20, .5); }
+html[data-skin="ink"] .bt-s { font-family: var(--f-sans); }
+html[data-skin="ink"] .bt-ring { border-style: solid; border-width: 2px; border-color: rgba(36, 32, 26, .55); border-radius: 50% 47% 52% 49%; animation: spin 24s linear infinite; }
+html[data-skin="ink"] .bt-ring::before { border-color: rgba(36, 32, 26, .2); }
+html[data-skin="ink"] .bt-ign-in { border-radius: 50%; background: radial-gradient(circle, #fbf8f1, #efe7d7); box-shadow: inset 0 0 0 1.5px rgba(36, 32, 26, .45); color: var(--frost); }
+html[data-skin="ink"] .bt-ign-in b { font: 700 24px/1.1 var(--f-serif); }
+html[data-skin="ink"] .bt-ign-in small { color: var(--frost-3); }
+html[data-skin="ink"] .bt-sit .bs-hello { font: 700 24px/1.3 var(--f-serif); letter-spacing: .14em; }
+html[data-skin="ink"] .bt-sit .bs-tx b { text-shadow: none; }
+
+/* 換裝那一下：一滴墨在紙上暈開，再淡掉 */
+.skin-flash[data-k="ink"] i { left: 50%; top: 42%; right: auto; bottom: auto; width: 70vmax; height: 70vmax; margin: -35vmax 0 0 -35vmax; border-radius: 48% 52% 50% 47%; background: radial-gradient(circle, rgba(29, 27, 24, .55), rgba(29, 27, 24, .3) 38%, rgba(29, 27, 24, .06) 62%, transparent 70%); animation: ifBloom 1s cubic-bezier(.2, .7, .3, 1) forwards; }
+@keyframes ifBloom { 0% { transform: scale(.03); opacity: 1; } 55% { opacity: .85; } 100% { transform: scale(2.4); opacity: 0; } }
+html[data-skin="ink"] .boot.eyed:not(.go) .bt-mark { opacity: 0; }

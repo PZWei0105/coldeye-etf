@@ -1,0 +1,113 @@
+/* 冷眼換裝 — 號子電視牆（90 年代號子：一整面牆的電視、LED 點陣看板、跑馬燈）
+   每一塊面板是一台映像管電視（深灰色外框、圓角螢幕、掃描線），大數字是 LED 點陣；紅漲綠跌照台股的看板。
+   系統與動作＝LED 暖白、紫＝你自己、琥珀＝小心（看板上本來就是黃色警示）。紅、綠只用在漲跌：指示燈、這一頁的燈都是暖白。 */
+html:root[data-skin="led"] {
+  color-scheme: dark;
+  --void: #000000; --abyss: #030303; --abyss-2: #070707; --hull: #070707; --hull-2: #101010; --hull-3: #1a1a1a;
+  --seam: #222222; --seam-2: #363636;
+  --bezel: #232323;
+  --frame: rgba(255, 255, 255, .13); --frame-2: rgba(255, 255, 255, .26); --tick: rgba(255, 255, 255, .5);
+  --frost: #f1eee2; --frost-2: #b9b6aa; --frost-3: #807d72;
+  --glacier: #fff2c9; --glacier-ink: #000000; --glacier-wash: rgba(255, 242, 201, .1);
+  --aurora: #d79cff; --aurora-ink: #1d0a2a; --aurora-wash: rgba(215, 156, 255, .14);
+  --up: #ff3b3b; --up-wash: rgba(255, 59, 59, .16); --down: #2bff6a; --down-wash: rgba(43, 255, 106, .12);
+  --flat: #d0cdc0; --flat-wash: rgba(208, 205, 192, .12);
+  --amber: #ffc000; --amber-ink: #000000; --amber-wash: rgba(255, 192, 0, .14);
+  --ring-neu: #3a3a3a; --track: rgba(255, 255, 255, .08);
+  --heat-base: #070707; --heat-0: #171717; --heat-na: #0e0e0e;
+  --glow-1: rgba(255, 59, 59, .06); --glow-2: rgba(43, 255, 106, .035);
+  --f-serif: 'Noto Sans TC', -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  --f-num: 'DotGothic16', 'Noto Sans TC', ui-monospace, monospace;
+  --cut: 0px;
+  --led: radial-gradient(circle, #000 0 58%, transparent 64%) 0 0 / 3px 3px;
+  --led-s: radial-gradient(circle, #000 0 60%, transparent 66%) 0 0 / 2px 2px;
+}
+/* 背景：還沒亮的 LED 點陣 */
+html[data-skin="led"] .bg { background: radial-gradient(circle, #151515 0 1px, transparent 1.6px) 0 0 / 5px 5px, radial-gradient(90% 60% at 50% 0%, #0d0d0d, #000 70%); }
+html[data-skin="led"] .bg::after { display: none; }
+html[data-skin="led"] .num { letter-spacing: .02em; }
+html[data-skin="led"] :is(.up, .down) { text-shadow: 0 0 6px currentColor; }
+
+/* LED 點陣的大數字（總資產、單檔價格、加權指數、開機的戰況） */
+html[data-skin="led"] :is(.pt-v, .pxline .p, .ic-v, .bt-sit .bs-tx b, .ph-v) { -webkit-mask: var(--led); mask: var(--led); text-shadow: 0 0 8px currentColor; font-weight: 400; }
+html[data-skin="led"] .pt-v { font-size: 38px; }
+
+/* 抬頭：黑色看板，最下面一排是跑馬燈 */
+html[data-skin="led"] .top { background: #000; border-bottom: 2px solid var(--bezel); backdrop-filter: none; -webkit-backdrop-filter: none; }
+html[data-skin="led"] .seal { background: var(--bezel); color: var(--glacier); box-shadow: inset 0 0 0 2px #000, 0 0 0 1px #3a3a3a; font: 900 13px/1 var(--f-sans); text-shadow: 0 0 6px rgba(255, 242, 201, .8); }
+html[data-skin="led"] .seal::before { inset: 3px; background: #000; }
+html[data-skin="led"] .hi { font: 900 17px/1.25 var(--f-sans); letter-spacing: .08em; }
+html[data-skin="led"] .avatar { clip-path: none; border-radius: 4px; background: #000; color: var(--aurora); box-shadow: inset 0 0 0 1.5px var(--aurora); }
+html[data-skin="led"] .avatar::before { display: none; }
+html[data-skin="led"] .icon-btn { background: #0c0c0c; box-shadow: inset 0 0 0 1px #333; border-radius: 4px; }
+html[data-skin="led"] .sk-ticker { background: #000; border-top: 1px solid #1c1c1c; height: 30px; }
+html[data-skin="led"] .sk-ticker .tk-run { -webkit-mask: var(--led-s); mask: var(--led-s); }
+html[data-skin="led"] .sk-ticker .tk-i { font: 700 15px/1 var(--f-sans); color: var(--frost); gap: 8px; padding: 0 22px; }
+html[data-skin="led"] .sk-ticker .tk-i .num { font-family: var(--f-num); font-weight: 400; font-size: 16px; text-shadow: 0 0 6px currentColor; }
+html[data-skin="led"] .sk-ticker .tk-i b { color: var(--glacier); }
+
+/* 段落標題：LED 點陣字 */
+html[data-skin="led"] .sec-h h2 { font: 900 18px/1.3 var(--f-sans); letter-spacing: .12em; padding-left: 16px; color: var(--glacier); text-shadow: 0 0 6px rgba(255, 242, 201, .55); }
+html[data-skin="led"] .sec-h h2::before { width: 8px; height: 8px; top: 50%; bottom: auto; margin-top: -4px; border-radius: 50%; background: var(--glacier); box-shadow: 0 0 8px var(--glacier); animation: ledBlink 2.2s steps(1) infinite; }
+@keyframes ledBlink { 50% { opacity: .25; } }
+html[data-skin="led"] body.nofx .sec-h h2::before { animation: none; }
+html[data-skin="led"] .sec-h::after { background: radial-gradient(circle, #3a3a3a 0 1px, transparent 1.4px) 0 50% / 5px 3px repeat-x; height: 3px; }
+html[data-skin="led"] .w-name { font-weight: 900; letter-spacing: .04em; }
+
+/* 面板：一台一台的映像管電視 */
+html[data-skin="led"] .panel { background: var(--bezel); border-radius: 16px; box-shadow: inset 0 1px 0 #3a3a3a, inset 0 -2px 0 #111, 0 6px 18px rgba(0, 0, 0, .6); }
+html[data-skin="led"] .panel::before { inset: 5px; border-radius: 12px; background: repeating-linear-gradient(to bottom, rgba(255, 255, 255, .025) 0 1px, transparent 1px 3px), radial-gradient(130% 110% at 50% 45%, #0b0b0b 55%, #000 100%); box-shadow: inset 0 0 22px rgba(0, 0, 0, .9); }
+html[data-skin="led"] .panel.hazard { background: linear-gradient(var(--bezel), var(--bezel)) padding-box, repeating-linear-gradient(-45deg, var(--amber) 0 7px, #000 7px 14px); border: 3px solid transparent; }
+html[data-skin="led"] .panel.hazard::before { inset: 2px; background: radial-gradient(130% 110% at 50% 45%, #0b0b0b 55%, #000 100%); }
+html[data-skin="led"] .panel.hazard-soft::before { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--aurora) 60%, transparent), inset 0 0 22px rgba(0, 0, 0, .9); }
+html[data-skin="led"] .list > * + * { border-top-color: #1b1b1b; }
+html[data-skin="led"] .list { padding: 3px 0; }
+
+/* 按鈕：看板的按鍵 */
+html[data-skin="led"] .btn { border-radius: 6px; background: linear-gradient(#1d1d1d, #0d0d0d); box-shadow: inset 0 0 0 1px #3a3a3a, inset 0 1px 0 #444; }
+html[data-skin="led"] .btn.primary { background: var(--glacier); color: #000; box-shadow: 0 0 14px rgba(255, 242, 201, .35); }
+html[data-skin="led"] .btn.ghost { background: transparent; }
+html[data-skin="led"] :is(.pill, .chip, .mode-tag, .fz-tag, .mini-btn, .badge, .dm-chip, .sugg button, .dc-next button, .tg) { border-radius: 4px; }
+html[data-skin="led"] .pill[aria-pressed="true"] { background: var(--glacier); color: #000; }
+html[data-skin="led"] .seg { border-radius: 6px; background: #000; box-shadow: inset 0 0 0 1px #333; }
+html[data-skin="led"] .seg button { border-radius: 4px; }
+html[data-skin="led"] .seg button[aria-pressed="true"] { background: #1c1c1c; color: var(--glacier); box-shadow: inset 0 -2px 0 var(--glacier); text-shadow: 0 0 6px rgba(255, 242, 201, .6); }
+html[data-skin="led"] .switch { border-radius: 4px; background: #262626; }
+html[data-skin="led"] .switch[aria-checked="true"] { background: var(--glacier); box-shadow: 0 0 10px rgba(255, 242, 201, .4); }
+html[data-skin="led"] .switch::after { border-radius: 2px; background: #000; box-shadow: inset 0 0 0 1px #555; }
+html[data-skin="led"] .input { border-radius: 6px; background: #000; box-shadow: inset 0 0 0 1px #3a3a3a; }
+html[data-skin="led"] :is(.plan, .tool-btn, .tool-card, .ph-grid > div, .c-grid > div, .co-card, .fz-o, .fz-bt-row, .sc-tile, .st-hero, .hm-clock, .modal-card, .toast, .speak-pill, .gl-row, .search, .bt-sit .bs-c, .boot.eyed .bt-log) { border-radius: 8px; }
+html[data-skin="led"] .hm-t { box-shadow: inset 0 0 0 1px #000; }
+html[data-skin="led"] .hm-t .num { text-shadow: none; }
+
+/* 分頁列：黑色的控制台，這一頁亮燈 */
+html[data-skin="led"] .dock { background: #2c2c2c; border-radius: 14px; box-shadow: 0 8px 24px rgba(0, 0, 0, .7); }
+html[data-skin="led"] .dock .in { border-radius: 12px; background: #050505; backdrop-filter: none; -webkit-backdrop-filter: none; margin: 3px; }
+html[data-skin="led"] .dock button[aria-current="page"] { color: var(--glacier); text-shadow: 0 0 8px rgba(255, 242, 201, .6); }
+html[data-skin="led"] .dock button[aria-current="page"] svg { color: var(--glacier); filter: drop-shadow(0 0 6px var(--glacier)); }
+html[data-skin="led"] .dock button[aria-current="page"]::after { background: var(--glacier); box-shadow: 0 0 8px var(--glacier); height: 3px; }
+@media (min-width: 1100px) { html[data-skin="led"] .dock, html[data-skin="led"] .dock .in { border-radius: 0; margin: 0; } }
+
+/* 全螢幕頁 */
+html[data-skin="led"] .sheet { background: #000; }
+html[data-skin="led"] .sheet::before { background: radial-gradient(circle, #141414 0 1px, transparent 1.6px) 0 0 / 5px 5px; }
+html[data-skin="led"] .sheet-top { background: #000; border-bottom: 2px solid var(--bezel); backdrop-filter: none; -webkit-backdrop-filter: none; }
+html[data-skin="led"] .ttl-b { letter-spacing: .08em; }
+
+/* 開機：LED 看板一排一排亮起來，「冷眼」兩個字用點陣打出來（skins/led.js 的畫布） */
+html[data-skin="led"] .boot { background: radial-gradient(circle, #121212 0 1px, transparent 1.6px) 0 0 / 5px 5px, #000; }
+html[data-skin="led"] .bt-mark { background: var(--bezel); color: var(--glacier); border-radius: 14px; text-shadow: 0 0 10px rgba(255, 242, 201, .8); }
+html[data-skin="led"] .bt-mark::before { inset: 4px; border-radius: 10px; background: #000; }
+html[data-skin="led"] .bt-mark span { -webkit-mask: var(--led); mask: var(--led); }
+html[data-skin="led"] .boot.eyed .bt-mark { visibility: hidden; }
+html[data-skin="led"] .bt-name { font-weight: 900; color: var(--glacier); letter-spacing: .3em; text-shadow: 0 0 8px rgba(255, 242, 201, .5); }
+html[data-skin="led"] .bt-ring { border-radius: 18px; border-style: solid; border-color: #3a3a3a; animation: none; }
+html[data-skin="led"] .bt-ring::before, html[data-skin="led"] .bt-ring::after { border-radius: 14px; }
+html[data-skin="led"] .bt-ign-in { border-radius: 12px; background: #000; box-shadow: inset 0 0 0 3px var(--bezel), 0 0 18px rgba(255, 242, 201, .18); }
+html[data-skin="led"] .bt-ign-in b { color: var(--glacier); text-shadow: 0 0 10px var(--glacier); font-weight: 900; }
+html[data-skin="led"] .bt-ign-in small { color: var(--frost-2); }
+html[data-skin="led"] .bt-sit .bs-hello { font-weight: 900; letter-spacing: .14em; color: var(--glacier); text-shadow: 0 0 10px rgba(255, 242, 201, .45); }
+
+/* 換裝那一下：整面 LED 由上往下一排一排亮過去 */
+.skin-flash[data-k="led"] i { background: radial-gradient(circle, rgba(255, 242, 201, .95) 0 1.2px, transparent 1.8px) 0 0 / 5px 5px; -webkit-mask: linear-gradient(transparent, #000 45%, #000 55%, transparent) 0 0 / 100% 40% no-repeat; mask: linear-gradient(transparent, #000 45%, #000 55%, transparent) 0 0 / 100% 40% no-repeat; animation: lfWipe .8s steps(16) forwards; }
+@keyframes lfWipe { from { -webkit-mask-position: 0 -40%; mask-position: 0 -40%; } to { -webkit-mask-position: 0 140%; mask-position: 0 140%; opacity: .2; } }

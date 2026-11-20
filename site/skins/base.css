@@ -1,0 +1,41 @@
+/* 冷眼換裝 — 四套共用的底（交易終端、聲納艙、號子電視牆、水墨禪；機甲 HUD 不載入這個檔案）
+   拿掉機甲 HUD 的「斜切角」與面板角落的刻度，各套再加上自己的外框。只改形狀，不改任何顏色的意思。 */
+
+html[data-skin]:not([data-skin="hud"]) :is(
+  .panel, .panel::before, .skeleton, .seal, .seal::before, .mode-tag, .icon-btn, .btn, .btn.small, .input, .pill, .seg, .mini-btn,
+  .switch, .switch::after, .chip, .iris-legend i, .br-ic, .hm-clock, .ph-grid > div, .dc-next button, .tool-btn, .tool-card, .search,
+  .dock, .dock .in, .plan, .c-grid > div, .tip, .slot > i, .picked, .modal-card, .sugg button, .gl-row, .toast, .bt-mark, .bt-mark::before,
+  .jt-st, .badge, .qk, .sp, .ck .ic, .es-n, .conf-pick button, .tg, .ck-box, .ask-ic, .oc, .speak-pill, .bt-ign-in, .ls-rel,
+  .co-pb, .co-opt, .co-rail i, .co-card, .co-lt, .ap-row, .mt-ix, .dm-chip, .boot.eyed .bt-log, .bt-sit .bs-c, .sc-tile, .st-hero,
+  .fz-o, .fz-tag, .fz-bt-row, .sec-h h2::before, .rot-t::before, .dock button[aria-current="page"]::after, .sk-ticker, .skin-card
+) { clip-path: none; }
+/* :is() 不能放偽元素：另外寫一次 */
+html[data-skin]:not([data-skin="hud"]) .panel::before,
+html[data-skin]:not([data-skin="hud"]) .seal::before,
+html[data-skin]:not([data-skin="hud"]) .switch::after,
+html[data-skin]:not([data-skin="hud"]) .bt-mark::before,
+html[data-skin]:not([data-skin="hud"]) .sec-h h2::before,
+html[data-skin]:not([data-skin="hud"]) .rot-t::before,
+html[data-skin]:not([data-skin="hud"]) .dock button[aria-current="page"]::after { clip-path: none; }
+html[data-skin]:not([data-skin="hud"]) .panel::after { display: none; }
+html[data-skin]:not([data-skin="hud"]) .panel.hud::after { display: block; }
+
+/* ---------- 跑馬燈（交易終端、號子電視牆）：關注與持有的報價，放在上方抬頭的最下面一排 ---------- */
+.sk-ticker { display: none; }
+html[data-skin="term"] .top, html[data-skin="led"] .top { flex-wrap: wrap; row-gap: 8px; }
+html[data-skin="term"] .top .hello, html[data-skin="led"] .top .hello { flex: 1 1 0; }
+html[data-skin="term"] .sk-ticker, html[data-skin="led"] .sk-ticker {
+  display: block; order: 99; flex: 0 0 auto; width: calc(100% + var(--gut) + var(--gut-r)); margin: 0 calc(-1 * var(--gut-r)) -10px calc(-1 * var(--gut));
+  overflow: hidden; white-space: nowrap; position: relative; height: 26px;
+}
+.sk-ticker .tk-run { display: inline-flex; gap: 0; height: 100%; align-items: center; will-change: transform; animation: tkRun var(--dur, 60s) linear infinite; }
+.sk-ticker .tk-i { display: inline-flex; align-items: baseline; gap: 6px; padding: 0 16px; font: 600 12.5px/1 var(--f-num); }
+.sk-ticker .tk-i b { font-weight: 700; }
+.sk-ticker .tk-i small { font-size: 10.5px; opacity: .75; }
+@keyframes tkRun { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .sk-ticker .tk-run { animation: none; } }
+html[data-skin]:not([data-skin="hud"]) body.nofx .sk-ticker .tk-run { animation-duration: calc(var(--dur, 60s) * 3); }
+
+/* ---------- 換裝那一下的閃光（每一套在自己的 CSS 裡畫） ---------- */
+.skin-flash { position: fixed; inset: 0; z-index: 200; pointer-events: none; }
+.skin-flash i { position: absolute; inset: 0; display: block; }

@@ -32,6 +32,7 @@ import { forceOrdersHTML, freeCardHTML, forceChipHTML, forceRowHTML, coreFollowH
 import { investHTML, bindInvest } from './invest.js';
 import { stormCardHTML, bindStormCard, openStorm } from './storm.js';
 import { eyeStart, eyeSitHTML, EYE_STYLES } from './eye.js';
+import { initSkin, skinOpening, skinScheme, skinColor, skinInfo, skinSettingsHTML, bindSkinSettings, skinHooks, skinLive, holdMusic, releaseMusic, musicOn } from './skin.js';
 import { openLesson } from './lessons.js';
 import { AIDE } from './aide.js';
 import {
@@ -200,6 +201,7 @@ function freshness() {
 function renderHeader() {
   const hi = $('#hi');
   if (hi) hi.textContent = greeting();
+  skinLive();   // 換裝：跑馬燈的報價、配樂跟著盤勢
   const el = $('#status');
   if (!el || !S.summary) return;
   // 冷眼有新版本、還沒換（使用者正在用）：點一下就換（見 swApply）
@@ -1445,6 +1447,8 @@ function drawSettings() {
     <div class="sec-h"><h2>更新紀錄</h2><span class="aside">${UPDATES.length ? fmt.dy(UPDATES[0].d) : ''}</span></div>
     <section class="panel set"><div class="srow"><div><div class="h">${UPDATES.length ? esc(UPDATES[0].title) : '—'}</div><div class="d">冷眼最近加了什麼、怎麼用</div></div><button class="btn small ghost" id="s-upd">打開</button></div></section>
 
+    ${skinSettingsHTML()}
+
     ${hudSettingsHTML()}
 
     <div class="sec-h"><h2>個人化</h2></div>
@@ -1453,7 +1457,7 @@ function drawSettings() {
       <div class="srow"><div><div class="h">每日開機畫面</div><div class="d">每天第一次打開時，點名官方資料來源的連線狀態</div></div><button class="switch" role="switch" id="s-boot" aria-checked="${settings.boot !== false}" aria-label="每日開機畫面"></button></div>
       <div class="srow"><div><div class="h">看懂模式</div><div class="d">有虛線底線的術語點一下就有白話解釋（右上角「解」也能開關）</div></div><button class="switch" role="switch" id="s-explain" aria-checked="${explainOn()}" aria-label="看懂模式"></button></div>
       <div class="srow"><div><div class="h">隱藏金額與股數</div><div class="d">錄影、截圖、給別人看畫面時用；百分比照常顯示</div></div><button class="switch" role="switch" id="s-priv" aria-checked="${settings.privacy}" aria-label="隱藏金額"></button></div>
-      <div class="srow col"><div class="h">外觀</div><div class="seg">${[['system', '跟隨系統'], ['dark', '夜戰（深色）'], ['light', '日間（淺色）']].map(([k, t]) => `<button data-theme="${k}" aria-pressed="${settings.theme === k}">${t}</button>`).join('')}</div></div>
+      <div class="srow col"><div><div class="h">外觀</div>${skinScheme() ? `<div class="d">現在的換裝「${esc(skinInfo().t)}」固定${skinScheme() === 'dark' ? '深色' : '淺色'}；換回機甲 HUD 才會照這裡</div>` : ''}</div><div class="seg">${[['system', '跟隨系統'], ['dark', '夜戰（深色）'], ['light', '日間（淺色）']].map(([k, t]) => `<button data-theme="${k}" aria-pressed="${settings.theme === k}">${t}</button>`).join('')}</div></div>
     </section>
 
     <div class="sec-h"><h2>副官與聲光</h2></div>
@@ -1644,6 +1648,12 @@ function bindSettings() {
     if (!FX.speak(briefSpeech(true), { force: true })) toast(FX.voiceWhy());
   });
   bindVoiceRow(sh);
+  // 換裝與配樂（skin.js）：換一套、配樂開關與音量、看開場、回到原本。改完這一頁重畫（捲動位置不動）
+  bindSkinSettings(sh, () => {
+    const y = sh.scrollTop;
+    drawSettings();
+    sh.scrollTop = y;
+  });
   // 介面效果：一個一個開關、換顯示模式、一次回到原本的樣子（hud.js）。改完頂端、底下的主畫面、這一頁都重畫
   bindHudSettings(sh, () => {
     paintDmode();
@@ -1710,12 +1720,14 @@ function posRulesHTML() {
 }
 function applyTheme() {
   const r = document.documentElement;
-  if (settings.theme === 'system') r.removeAttribute('data-theme');
-  else r.setAttribute('data-theme', settings.theme);
+  // 換裝固定深色或淺色（交易終端、聲納艙、號子電視牆是深色，水墨禪是淺色）；機甲 HUD 照「外觀」的設定
+  const th = skinScheme() || settings.theme;
+  if (th === 'system') r.removeAttribute('data-theme');
+  else r.setAttribute('data-theme', th);
   for (const m of $$('meta[name="theme-color"]')) {
     const forDark = (m.getAttribute('media') || '').includes('dark');
-    const dark = settings.theme === 'system' ? forDark : settings.theme === 'dark';
-    m.content = dark ? '#050b15' : '#eef3f8';
+    const dark = th === 'system' ? forDark : th === 'dark';
+    m.content = skinColor() || (dark ? '#050b15' : '#eef3f8');
   }
 }
 
@@ -1773,7 +1785,7 @@ function maybeBoot(force = false) {
   const el = $('#boot');
   const tx = S.summary ? liveTaiex() : null;
   const lines = bootLines();
-  const gate = settings.ignite !== false && (settings.sfx !== false || settings.voice !== false);
+  const gate = settings.ignite !== false && (settings.sfx !== false || settings.voice !== false || musicOn());
   el.innerHTML = `<div class="bt-in">
       <div class="bt-mark"><span>冷</span><span>眼</span></div>
       <div class="bt-name">冷眼　台股 ETF 指揮系統</div>
@@ -1788,8 +1800,10 @@ function maybeBoot(force = false) {
   el.classList.toggle('eyemode', eyeMode);
   document.body.classList.add('booting');
   // 冷眼睜開：畫面特效打開、沒有「減少動態效果」才畫（不然就是原本的開機畫面＋戰況板）
+  // 換裝：每一套有自己的開場（機甲 HUD 是原本的睜眼）
+  const opener = skinOpening() || eyeStart;
   const eye = eyeMode && settings.fx !== false && !reduceMotion()
-    ? eyeStart(el, { labels: lines.map((l) => EYE_LABEL[l.k] || l.k), anchor: () => $('.bt-mark', el), bus: () => $('.bt-in', el), log: () => $('.bt-log', el) }) : null;
+    ? opener(el, { labels: lines.map((l) => EYE_LABEL[l.k] || l.k), anchor: () => $('.bt-mark', el), bus: () => $('.bt-in', el), log: () => $('.bt-log', el) }) : null;
   el.classList.toggle('eyed', !!eye);
   let voiced = false;
   const done = () => {
@@ -1829,6 +1843,7 @@ function maybeBoot(force = false) {
     }
     if (eyeMode && tx) setTimeout(() => countUp($('[data-tx]', el), tx.px, (v) => fmt.n(v, 0), 1000), reduceMotion() ? 0 : 550 + lines.length * 150);
     if (withSound) {
+      releaseMusic();
       FX.unlock();
       if (settings.voice !== false) FX.primeSpeech();
       FX.cue('ignite');
@@ -1840,8 +1855,9 @@ function maybeBoot(force = false) {
     setTimeout(done, total + (withSound ? 500 : 0));
   };
   if (gate) {
+    holdMusic();   // 待命時不放配樂：按「啟動」才放
     $('.bt-ign', el).addEventListener('click', (ev) => { ev.stopPropagation(); run(true); }, { once: true });
-    $('.bt-skip', el).addEventListener('click', (ev) => { ev.stopPropagation(); done(); });
+    $('.bt-skip', el).addEventListener('click', (ev) => { ev.stopPropagation(); holdMusic(); done(); });
   } else {
     el.addEventListener('click', done, { once: true });
     run(false);
@@ -2089,6 +2105,11 @@ async function refreshNews(v) {
 async function boot() {
   applyTheme();
   FX.bind(() => settings);
+  // 換裝（skin.js）：先套上這支手機選的那一套（CSS 已經由 index.html 開頭放進去，這裡補上聲音、配樂、開場）
+  skinHooks.theme = applyTheme;
+  skinHooks.after = () => { renderHeader(); if (S.openCode) S.viewStale = true; else render(); };
+  skinHooks.replay = () => maybeBoot(true);
+  await initSkin();
   FX.onVoices(() => {
     if (S.openCode !== '__prefs') return;
     const sh = $('#sheet');
